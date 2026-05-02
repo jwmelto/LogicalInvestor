@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "space.melton.logicalinvestor"
+      "bundleIdentifier": "space.melton.logicalinvestor",
+      "entitlements": {
+        "com.apple.developer.ubiquity-kvstore-identifier": "$(TeamIdentifierPrefix)$(CFBundleIdentifier)"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -41,7 +44,8 @@
         }
       ],
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "@nauverse/expo-cloud-settings"
     ],
     "experiments": {
       "typedRoutes": true,

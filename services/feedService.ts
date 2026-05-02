@@ -9,13 +9,13 @@ const parser = new XMLParser({
 export const FEEDS = {
   membersArea: {
     name: 'Members Area',
-    url: 'https://logicalinvestor.net/members-area/feed/',
+    url: 'https://logicalinvestor.net/feed/',
     priority: 'high',
     alwaysVisible: true,
   },
   membersForum: {
     name: 'Members Forum',
-    url: 'https://logicalinvestor.net/members-forum/feed/',
+    url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',
     priority: 'normal',
     alwaysVisible: true,
     hasSubFeeds: true,
@@ -34,12 +34,12 @@ export const FEEDS = {
     alwaysVisible: false,
     hasSubFeeds: true,
   },
-  investingBasics: {
+/*  investingBasics: {
     name: 'Investing Basics',
     url: 'https://logicalinvestor.net/basic-investing/feed/',
     priority: 'low',
     alwaysVisible: true,
-  },
+  }, */
 } as const;
 
 export type FeedKey = keyof typeof FEEDS;
@@ -79,6 +79,11 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
     }
 
     const xml = await response.text();
+
+if (feedKey === 'membersArea') {
+  console.log('Members Area XML:', xml.substring(0, 500));
+}
+
     const parsed = parser.parse(xml);
     const channel = parsed?.rss?.channel;
     const rawItems = Array.isArray(channel?.item)

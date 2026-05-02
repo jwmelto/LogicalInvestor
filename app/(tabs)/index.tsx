@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,25 +10,54 @@ import {
   RefreshControl,
 } from 'react-native';
 import { router } from 'expo-router';
-import { fetchAllFeeds, FeedItem, FeedResult } from '../../services/feedService';
+import { fetchAllFeeds, fetchSingleFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../../services/feedService';
+import { getUnreadCount, markRead } from '../../services/readStateService';
+
+interface SectionState {
+  feedKey: FeedKey;
+  items: FeedItem[];
+  unreadCount: number;
+  expanded: boolean;
+  accessible: boolean;
+  loading: boolean;
+  error?: string;
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').trim();
+}
 
 export default function FeedScreen() {
-  const [items, setItems] = useState<FeedItem[]>([]);
+  const [sections, setSections] = useState<SectionState[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  async function buildSections(results: FeedResult[]): Promise<SectionState[]> {
+    return Promise.all(
+      results.map(async (result, index) => {
+        const isFirst = index === 0;
+        const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
+        return {
+          feedKey: result.feedKey,
+          items: result.items,
+          unreadCount,
+          expanded: isFirst,
+          accessible: result.accessible,
+          loading: false,
+          error: result.error,
+        };
+      })
+    );
+  }
 
   async function loadFeeds() {
     try {
-      const results: FeedResult[] = await fetchAllFeeds();
-      const allItems = results
-        .filter((r) => r.accessible)
-        .flatMap((r) => r.items)
-        .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-      setItems(allItems);
-      setError(null);
-    } catch (e: any) {
-      setError(e.message);
+      const results = await fetchAllFeeds();
+      results.forEach(r => {
+        console.log(r.feedKey, 'accessible:', r.accessible, 'items:', r.items.length, 'error:', r.error);
+      });
+      const built = await buildSections(results);
+      setSections(built);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -44,7 +73,23 @@ export default function FeedScreen() {
     loadFeeds();
   }
 
-  function onPressItem(item: FeedItem) {
+  function toggleSection(feedKey: FeedKey) {
+    setSections((prev) =>
+      prev.map((s) =>
+        s.feedKey === feedKey ? { ...s, expanded: !s.expanded } : s
+      )
+    );
+  }
+
+  async function onPressItem(item: FeedItem) {
+    await markRead(item.id);
+    setSections((prev) =>
+      prev.map((s) =>
+        s.feedKey === item.feedKey
+          ? { ...s, unreadCount: Math.max(0, s.unreadCount - 1) }
+          : s
+      )
+    );
     router.push({
       pathname: '/post',
       params: { url: item.link, title: item.title },
@@ -59,35 +104,53 @@ export default function FeedScreen() {
     );
   }
 
-  if (error) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity onPress={loadFeeds}>
-          <Text style={styles.retryText}>Tap to retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
-        data={items}
-        keyExtractor={(item) => item.id}
+        data={sections.filter((s) => s.accessible)}
+        keyExtractor={(s) => s.feedKey}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={styles.item} onPress={() => onPressItem(item)}>
-            <Text style={styles.feedName}>{item.feedName}</Text>
-            <Text style={styles.title}>{item.title}</Text>
-            <Text style={styles.meta}>
-              {item.author ? `${item.author} · ` : ''}
-              {new Date(item.pubDate).toLocaleDateString()}
-            </Text>
-          </TouchableOpacity>
+        renderItem={({ item: section }) => (
+          <View>
+            <TouchableOpacity
+              style={styles.sectionHeader}
+              onPress={() => toggleSection(section.feedKey)}
+            >
+              <Text style={styles.sectionTitle}>
+                {section.expanded ? '▼' : '▶'} {FEEDS[section.feedKey].name}
+              </Text>
+              {section.unreadCount > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{section.unreadCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {section.expanded && section.items.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.item}
+                onPress={() => onPressItem(item)}
+              >
+                <Text style={styles.itemTitle}>{item.title}</Text>
+                {item.excerpt ? (
+                  <Text style={styles.itemExcerpt} numberOfLines={2}>
+                    {stripHtml(item.excerpt)}
+                  </Text>
+                ) : null}
+                <Text style={styles.itemMeta}>
+                  {item.author ? `${item.author} · ` : ''}
+                  {new Date(item.pubDate).toLocaleDateString()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+
+            {section.expanded && section.items.length === 0 && (
+              <Text style={styles.empty}>No posts found.</Text>
+            )}
+          </View>
         )}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-        ListEmptyComponent={<Text style={styles.empty}>No posts found.</Text>}
+        ItemSeparatorComponent={() => <View style={styles.sectionSeparator} />}
       />
     </SafeAreaView>
   );
@@ -96,12 +159,30 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  item: { padding: 16 },
-  feedName: { fontSize: 11, color: '#2563eb', fontWeight: '600', marginBottom: 4, textTransform: 'uppercase' },
-  title: { fontSize: 16, fontWeight: '500', color: '#1a1a1a', marginBottom: 4 },
-  meta: { fontSize: 12, color: '#888' },
-  separator: { height: 1, backgroundColor: '#eee' },
-  empty: { textAlign: 'center', padding: 32, color: '#888' },
-  errorText: { color: '#cc0000', marginBottom: 16 },
-  retryText: { color: '#2563eb' },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#f5f5f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
+  badge: {
+    backgroundColor: '#2563eb',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  item: { padding: 16, backgroundColor: '#fff' },
+  itemTitle: { fontSize: 15, fontWeight: '500', color: '#1a1a1a', marginBottom: 4 },
+  itemExcerpt: { fontSize: 13, color: '#555', marginBottom: 4, lineHeight: 18 },
+  itemMeta: { fontSize: 12, color: '#888' },
+  sectionSeparator: { height: 1, backgroundColor: '#e0e0e0' },
+  empty: { padding: 16, color: '#888', fontStyle: 'italic' },
 });
