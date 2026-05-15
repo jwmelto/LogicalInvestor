@@ -1,50 +1,56 @@
-# Welcome to your Expo app 👋
+# LogicalInvestor
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A React Native (Expo) iOS/Android app that serves as a full replacement for visiting logicalinvestor.net. Aggregates paywalled WordPress/bbPress forum content using per-user feed token authentication.
 
-## Get started
+## What This Is
 
-1. Install dependencies
+- Full-featured RSS feed aggregator for logicalinvestor.net
+- Cross-platform (iOS, Android, Web) via React Native
+- Secure token-based authentication
+- iCloud sync on iOS, local storage on other platforms
+- Collapsible feed sections with unread badges
+- WebView post viewer with authenticated links
 
-   ```bash
-   npm install
-   ```
+## Quick Start
 
-2. Start the app
+### First-time setup
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Run the automated setup script:
 
 ```bash
-npm run reset-project
+./setup.sh
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+This installs all dependencies and configures your environment. See `SETUP.md` for manual setup or troubleshooting.
 
-## Learn more
+### Run the app
 
-To learn more about developing your project with Expo, look at the following resources:
+After setup:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npm run ios       # Build and run on iOS simulator
+npm run android   # Build and run on Android emulator
+npm run web       # Run web version
+npm start         # Start Metro bundler (choose platform when prompted)
+```
 
-## Join the community
+## Development
 
-Join our community of developers creating universal apps.
+- **CLAUDE.md** — Architecture overview, tech stack, codebase structure, and known issues
+- **SETUP.md** — Detailed setup instructions and troubleshooting
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Authentication
+
+Uses WordPress login via logicalinvestor.net. Credentials are stored securely on device. Feed token is never synced to iCloud.
+
+## Project Structure
+
+```
+app/                 — Navigation and screens (file-based routing via Expo Router)
+services/            — Business logic (auth, feeds, storage, state)
+components/          — UI components
+constants/           — Theme and configuration
+hooks/               — Custom React hooks
+```
+
+See CLAUDE.md for detailed architecture.
