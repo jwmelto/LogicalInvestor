@@ -235,20 +235,32 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 - ✅ Logout clears token and redirects to login
 - ✅ iCloud/AsyncStorage storage abstraction in place
 - ✅ Topic discovery & display: Auto-discover forum topics from RSS, extract actual slugs from post links, nested hierarchical UI (Forum → Topic → Posts), lazy-load topic feeds, per-topic subscription backend
+- ✅ Topic UX improvements:
+  - Topic previews (author/excerpt) persist across feed refreshes
+  - Tappable [new] badge to mark entire topic as read (works collapsed or expanded)
+  - Topic posts always show snippets (hideSnippetOnRead doesn't apply to topics)
+  - Topic preview hides when preview post is marked as read
+  - Topic posts load during initial build if topic was previously expanded
 
 ### Not Yet Implemented (Prioritized)
 
-1. **Topic Subscription UI** in Settings screen
-   - New "Subscriptions" tab with per-forum default subscription toggles
+1. **Dynamic Forum Tabs** — Replace single-feed view with per-forum tabs
+   - Each forum becomes its own tab (Members Forum, Stock Insights, Options Insights)
+   - Forums can be enabled/disabled via Settings
+   - Disabled forums' tabs are completely hidden (not grayed out)
+   - Only visible forums appear in tab bar
+
+2. **Topic Subscription UI** in Settings screen
+   - Per-forum default subscription toggles
    - List of all discovered topics with individual subscribe/unsubscribe
    - "Silenced Topics" section to restore previously hidden topics
 
-2. **"Thanks" Post Filtering** (filter titles containing "Reply To: Thanks")
-3. **Push Notifications** (Members Area always notifies; forum topics notify if subscribed)
-4. **Android Build** (untested)
-5. **iCloud Sync Testing** on physical device (requires Apple Developer account)
-6. **Search** (deferred; use site's native search via WebView)
-7. **deploymentTarget: "16.0"** not yet set in `app.json` iOS section
+3. **"Thanks" Post Filtering** (filter titles containing "Reply To: Thanks")
+4. **Push Notifications** (Members Area always notifies; forum topics notify if subscribed)
+5. **Android Build** (untested)
+6. **iCloud Sync Testing** on physical device (requires Apple Developer account)
+7. **Search** (deferred; use site's native search via WebView)
+8. **deploymentTarget: "16.0"** not yet set in `app.json` iOS section
 
 ### Known Issues
 
@@ -262,6 +274,8 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 - WebView correctly navigates to post anchor (e.g. `#post-287927`) automatically
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
 - Topic discovery logs each discovered topic with its feed URL (`[Topic Discovery] NVO → https://logicalinvestor.net/forums/topic/nvo/feed/`) — remove before production
+- Topic previews hide `hideSnippetOnRead` setting; individual topic posts always show snippets for conversation context
+- Topic [new] badge is tappable from both collapsed and expanded states to quickly mark all posts read
 
 ## Development Notes
 
