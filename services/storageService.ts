@@ -42,3 +42,13 @@ export async function storageSetObject<T>(key: string, value: T): Promise<void> 
   }
   await AsyncStorage.setItem(key, JSON.stringify(value));
 }
+
+// Display preferences
+export async function getHideSnippetOnRead(): Promise<boolean> {
+  const val = await storageGet('hideSnippetOnRead');
+  return val === 'true';
+}
+
+export async function setHideSnippetOnRead(value: boolean): Promise<void> {
+  await storageSet('hideSnippetOnRead', value ? 'true' : 'false');
+}

@@ -9,9 +9,15 @@ import {
   SafeAreaView,
   RefreshControl,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { fetchAllFeeds, fetchSingleFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../../services/feedService';
-import { getUnreadCount, markRead } from '../../services/readStateService';
+import { getUnreadCount, markRead, isRead } from '../../services/readStateService';
+import { getHideSnippetOnRead } from '../../services/storageService';
+
+interface ItemReadState {
+  [itemId: string]: boolean;
+}
 
 interface SectionState {
   feedKey: FeedKey;
@@ -31,6 +37,8 @@ export default function FeedScreen() {
   const [sections, setSections] = useState<SectionState[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
+  const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
 
   async function buildSections(results: FeedResult[]): Promise<SectionState[]> {
     return Promise.all(
@@ -58,6 +66,14 @@ export default function FeedScreen() {
       });
       const built = await buildSections(results);
       setSections(built);
+
+      // Load read states for all items
+      const allItems = built.flatMap((s) => s.items);
+      const readStates: ItemReadState = {};
+      for (const item of allItems) {
+        readStates[item.id] = await isRead(item.id);
+      }
+      setItemReadStates(readStates);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -65,8 +81,21 @@ export default function FeedScreen() {
   }
 
   useEffect(() => {
+    loadPreferences();
     loadFeeds();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Reload preferences when screen comes into focus (may have changed in Settings)
+      loadPreferences();
+    }, [])
+  );
+
+  async function loadPreferences() {
+    const hideSnippet = await getHideSnippetOnRead();
+    setHideSnippetOnRead(hideSnippet);
+  }
 
   function onRefresh() {
     setRefreshing(true);
@@ -83,6 +112,7 @@ export default function FeedScreen() {
 
   async function onPressItem(item: FeedItem) {
     await markRead(item.id);
+    setItemReadStates((prev) => ({ ...prev, [item.id]: true }));
     setSections((prev) =>
       prev.map((s) =>
         s.feedKey === item.feedKey
@@ -126,24 +156,32 @@ export default function FeedScreen() {
               )}
             </TouchableOpacity>
 
-            {section.expanded && section.items.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                style={styles.item}
-                onPress={() => onPressItem(item)}
-              >
-                <Text style={styles.itemTitle}>{item.title}</Text>
-                {item.excerpt ? (
-                  <Text style={styles.itemExcerpt} numberOfLines={2}>
-                    {stripHtml(item.excerpt)}
+            {section.expanded && section.items.map((item) => {
+              const itemIsRead = itemReadStates[item.id];
+              const showSnippet = !itemIsRead || !hideSnippetOnRead;
+
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  style={styles.item}
+                  onPress={() => onPressItem(item)}
+                >
+                  <View style={styles.titleRow}>
+                    <Text style={styles.itemTitle}>{item.title}</Text>
+                    {!itemIsRead && <Text style={styles.newBadge}>[new]</Text>}
+                  </View>
+                  {showSnippet && item.excerpt ? (
+                    <Text style={styles.itemExcerpt} numberOfLines={2}>
+                      {stripHtml(item.excerpt)}
+                    </Text>
+                  ) : null}
+                  <Text style={styles.itemMeta}>
+                    {item.author ? `${item.author} · ` : ''}
+                    {new Date(item.pubDate).toLocaleDateString()}
                   </Text>
-                ) : null}
-                <Text style={styles.itemMeta}>
-                  {item.author ? `${item.author} · ` : ''}
-                  {new Date(item.pubDate).toLocaleDateString()}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                </TouchableOpacity>
+              );
+            })}
 
             {section.expanded && section.items.length === 0 && (
               <Text style={styles.empty}>No posts found.</Text>
@@ -180,7 +218,9 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   item: { padding: 16, backgroundColor: '#fff' },
-  itemTitle: { fontSize: 15, fontWeight: '500', color: '#1a1a1a', marginBottom: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  itemTitle: { fontSize: 15, fontWeight: '500', color: '#1a1a1a', flex: 1 },
+  newBadge: { fontSize: 11, fontWeight: '600', color: '#22c55e', marginLeft: 8 },
   itemExcerpt: { fontSize: 13, color: '#555', marginBottom: 4, lineHeight: 18 },
   itemMeta: { fontSize: 12, color: '#888' },
   sectionSeparator: { height: 1, backgroundColor: '#e0e0e0' },
