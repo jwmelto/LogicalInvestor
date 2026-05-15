@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { getToken } from './authService';
+import { updateTopicsFromFeedItems } from './topicService';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -102,7 +103,12 @@ if (feedKey === 'membersArea') {
       feedName: feed.name,
       feedKey,
     }));
-    
+
+    // Discover topics from this feed if it has subfeeds
+    if (feed.hasSubFeeds) {
+      await updateTopicsFromFeedItems(items, feedKey);
+    }
+
     return { feedKey, items, accessible: true };
   } catch (e: any) {
     return { feedKey, items: [], accessible: true, error: e.message };

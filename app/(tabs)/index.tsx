@@ -6,22 +6,33 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
-  SafeAreaView,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
-import { fetchAllFeeds, fetchSingleFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../../services/feedService';
+import { fetchAllFeeds, fetchSingleFeed, fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../../services/feedService';
 import { getUnreadCount, markRead, isRead } from '../../services/readStateService';
 import { getHideSnippetOnRead } from '../../services/storageService';
+import { getTopicsForForum, generateTopicFeedUrl, Topic } from '../../services/topicService';
+import { isTopicSubscribed } from '../../services/subscriptionService';
 
 interface ItemReadState {
   [itemId: string]: boolean;
 }
 
+interface TopicSection {
+  topic: Topic;
+  items: FeedItem[];
+  unreadCount: number;
+  expanded: boolean;
+  loading: boolean;
+}
+
 interface SectionState {
   feedKey: FeedKey;
   items: FeedItem[];
+  topics: TopicSection[];
   unreadCount: number;
   expanded: boolean;
   accessible: boolean;
@@ -45,9 +56,37 @@ export default function FeedScreen() {
       results.map(async (result, index) => {
         const isFirst = index === 0;
         const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
+
+        // For forums with topics, build topic sections
+        const feed = FEEDS[result.feedKey];
+        let topicSections: TopicSection[] = [];
+
+        if (feed.hasSubFeeds && result.accessible) {
+          const allTopics = await getTopicsForForum(result.feedKey);
+
+          // Filter to only subscribed topics
+          const subscribedTopics = await Promise.all(
+            allTopics.map(async (topic) => ({
+              topic,
+              subscribed: await isTopicSubscribed(topic.id, result.feedKey),
+            }))
+          );
+
+          topicSections = subscribedTopics
+            .filter(({ subscribed }) => subscribed)
+            .map(({ topic }) => ({
+              topic,
+              items: [], // Will be loaded lazily on expand
+              unreadCount: 0,
+              expanded: false,
+              loading: false,
+            }));
+        }
+
         return {
           feedKey: result.feedKey,
           items: result.items,
+          topics: topicSections,
           unreadCount,
           expanded: isFirst,
           accessible: result.accessible,
@@ -110,6 +149,95 @@ export default function FeedScreen() {
     );
   }
 
+  async function toggleTopic(feedKey: FeedKey, topicId: string) {
+    setSections((prev) =>
+      prev.map((s) => {
+        if (s.feedKey !== feedKey) return s;
+
+        return {
+          ...s,
+          topics: s.topics.map((t) => {
+            if (t.topic.id !== topicId) return t;
+
+            const newExpanded = !t.expanded;
+            const shouldLoad = newExpanded && t.items.length === 0 && !t.loading;
+
+            // Load topic posts if expanding and not already loaded
+            if (shouldLoad) {
+              loadTopicPosts(feedKey, t.topic);
+            }
+
+            return { ...t, expanded: newExpanded, loading: shouldLoad ? true : t.loading };
+          }),
+        };
+      })
+    );
+  }
+
+  async function loadTopicPosts(feedKey: FeedKey, topic: Topic) {
+    setSections((prev) =>
+      prev.map((s) =>
+        s.feedKey === feedKey
+          ? {
+              ...s,
+              topics: s.topics.map((t) =>
+                t.topic.id === topic.id ? { ...t, loading: true } : t
+              ),
+            }
+          : s
+      )
+    );
+
+    try {
+      const feedUrl = generateTopicFeedUrl(topic.slug);
+      const posts = await fetchTopicFeed(feedUrl);
+
+      // Load read states for topic posts
+      const readStates: ItemReadState = {};
+      for (const post of posts) {
+        readStates[post.id] = await isRead(post.id);
+      }
+      setItemReadStates((prev) => ({ ...prev, ...readStates }));
+
+      // Update unread count for topic
+      const topicUnreadCount = await getUnreadCount(posts.map((p) => p.id));
+
+      setSections((prev) =>
+        prev.map((s) =>
+          s.feedKey === feedKey
+            ? {
+                ...s,
+                topics: s.topics.map((t) =>
+                  t.topic.id === topic.id
+                    ? {
+                        ...t,
+                        items: posts,
+                        unreadCount: topicUnreadCount,
+                        loading: false,
+                      }
+                    : t
+                ),
+              }
+            : s
+        )
+      );
+    } catch (error) {
+      console.error(`Failed to load topic posts for ${topic.name}:`, error);
+      setSections((prev) =>
+        prev.map((s) =>
+          s.feedKey === feedKey
+            ? {
+                ...s,
+                topics: s.topics.map((t) =>
+                  t.topic.id === topic.id ? { ...t, loading: false } : t
+                ),
+              }
+            : s
+        )
+      );
+    }
+  }
+
   async function onPressItem(item: FeedItem) {
     await markRead(item.id);
     setItemReadStates((prev) => ({ ...prev, [item.id]: true }));
@@ -156,34 +284,95 @@ export default function FeedScreen() {
               )}
             </TouchableOpacity>
 
-            {section.expanded && section.items.map((item) => {
-              const itemIsRead = itemReadStates[item.id];
-              const showSnippet = !itemIsRead || !hideSnippetOnRead;
-
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.item}
-                  onPress={() => onPressItem(item)}
-                >
-                  <View style={styles.titleRow}>
-                    <Text style={styles.itemTitle}>{item.title}</Text>
-                    {!itemIsRead && <Text style={styles.newBadge}>[new]</Text>}
-                  </View>
-                  {showSnippet && item.excerpt ? (
-                    <Text style={styles.itemExcerpt} numberOfLines={2}>
-                      {stripHtml(item.excerpt)}
+            {section.expanded && section.topics.length > 0 ? (
+              // Nested view: Topics with posts
+              section.topics.map((topicSection) => (
+                <View key={topicSection.topic.id}>
+                  <TouchableOpacity
+                    style={styles.topicHeader}
+                    onPress={() => toggleTopic(section.feedKey, topicSection.topic.id)}
+                  >
+                    <Text style={styles.topicTitle}>
+                      {topicSection.expanded ? '▼' : '▶'} {topicSection.topic.name}
                     </Text>
-                  ) : null}
-                  <Text style={styles.itemMeta}>
-                    {item.author ? `${item.author} · ` : ''}
-                    {new Date(item.pubDate).toLocaleDateString()}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+                    {topicSection.unreadCount > 0 && (
+                      <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{topicSection.unreadCount}</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
 
-            {section.expanded && section.items.length === 0 && (
+                  {topicSection.expanded && topicSection.loading && (
+                    <View style={styles.topicLoading}>
+                      <ActivityIndicator size="small" />
+                    </View>
+                  )}
+
+                  {topicSection.expanded &&
+                    !topicSection.loading &&
+                    topicSection.items.map((item) => {
+                      const itemIsRead = itemReadStates[item.id];
+                      const showSnippet = !itemIsRead || !hideSnippetOnRead;
+
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={styles.topicItem}
+                          onPress={() => onPressItem(item)}
+                        >
+                          <View style={styles.titleRow}>
+                            <Text style={styles.itemTitle}>{item.title}</Text>
+                            {!itemIsRead && <Text style={styles.newBadge}>[new]</Text>}
+                          </View>
+                          {showSnippet && item.excerpt ? (
+                            <Text style={styles.itemExcerpt} numberOfLines={2}>
+                              {stripHtml(item.excerpt)}
+                            </Text>
+                          ) : null}
+                          <Text style={styles.itemMeta}>
+                            {item.author ? `${item.author} · ` : ''}
+                            {new Date(item.pubDate).toLocaleDateString()}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+
+                  {topicSection.expanded && topicSection.items.length === 0 && !topicSection.loading && (
+                    <Text style={styles.empty}>No posts found.</Text>
+                  )}
+                </View>
+              ))
+            ) : section.expanded ? (
+              // Flat view: Posts directly (for non-forum feeds like Members Area)
+              section.items.map((item) => {
+                const itemIsRead = itemReadStates[item.id];
+                const showSnippet = !itemIsRead || !hideSnippetOnRead;
+
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.item}
+                    onPress={() => onPressItem(item)}
+                  >
+                    <View style={styles.titleRow}>
+                      <Text style={styles.itemTitle}>{item.title}</Text>
+                      {!itemIsRead && <Text style={styles.newBadge}>[new]</Text>}
+                    </View>
+                    {showSnippet && item.excerpt ? (
+                      <Text style={styles.itemExcerpt} numberOfLines={2}>
+                        {stripHtml(item.excerpt)}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.itemMeta}>
+                      {item.author ? `${item.author} · ` : ''}
+                      {new Date(item.pubDate).toLocaleDateString()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            ) : null}
+
+            {section.expanded && section.topics.length === 0 && section.items.length === 0 && (
               <Text style={styles.empty}>No posts found.</Text>
             )}
           </View>
@@ -218,6 +407,19 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   item: { padding: 16, backgroundColor: '#fff' },
+  topicHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    backgroundColor: '#fafafa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  topicTitle: { fontSize: 13, fontWeight: '600', color: '#555' },
+  topicItem: { paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#fff' },
+  topicLoading: { paddingVertical: 12, paddingHorizontal: 32, alignItems: 'center' },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
   itemTitle: { fontSize: 15, fontWeight: '500', color: '#1a1a1a', flex: 1 },
   newBadge: { fontSize: 11, fontWeight: '600', color: '#22c55e', marginLeft: 8 },

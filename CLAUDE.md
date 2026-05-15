@@ -225,7 +225,7 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 - ✅ WordPress authentication with secure token storage
 - ✅ Multi-feed RSS aggregation (4 feeds: Members Area, Forum, Stock/Options Insights)
 - ✅ Collapsible feed sections with expand/collapse toggle
-- ✅ Unread count tracking per feed
+- ✅ Unread count tracking per feed (section and topic level)
 - ✅ Read state persistence
 - ✅ Post detail viewer with WebView
 - ✅ Pull-to-refresh on main feed
@@ -234,36 +234,34 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 - ✅ Inaccessible feeds filtered out (Options Insights hidden if no access)
 - ✅ Logout clears token and redirects to login
 - ✅ iCloud/AsyncStorage storage abstraction in place
+- ✅ Topic discovery & display: Auto-discover forum topics from RSS, extract actual slugs from post links, nested hierarchical UI (Forum → Topic → Posts), lazy-load topic feeds, per-topic subscription backend
 
 ### Not Yet Implemented (Prioritized)
 
-1. **Topic Discovery** (decided: RSS inference + HTML scraping)
-   - RSS inference (primary): Derive topics from feed items. Title "NVO" = new topic; "Reply To: NVO" = reply. Group by topic name, derive feed URL from link.
-   - HTML scraping (backstop): Scrape pages 1-3 of each forum on app open. Set intersection with stored topics for validation.
-   - Functions: `discoverTopicsFromRSS(items)`, `discoverTopicsFromHTML(forumUrl)`
-   - **Status**: Architecture decided, implementation pending
+1. **Topic Subscription UI** in Settings screen
+   - New "Subscriptions" tab with per-forum default subscription toggles
+   - List of all discovered topics with individual subscribe/unsubscribe
+   - "Silenced Topics" section to restore previously hidden topics
 
-2. **Topic Subscription UI** in Settings screen
-3. **"Thanks" Post Filtering** (filter titles containing "Reply To: Thanks")
-4. **Push Notifications** (Members Area always notifies; forum topics notify if subscribed)
-5. **Android Build** (untested)
-6. **iCloud Sync Testing** on physical device (requires Apple Developer account)
-7. **Search** (deferred; use site's native search via WebView)
-8. **deploymentTarget: "16.0"** not yet set in `app.json` iOS section
+2. **"Thanks" Post Filtering** (filter titles containing "Reply To: Thanks")
+3. **Push Notifications** (Members Area always notifies; forum topics notify if subscribed)
+4. **Android Build** (untested)
+5. **iCloud Sync Testing** on physical device (requires Apple Developer account)
+6. **Search** (deferred; use site's native search via WebView)
+7. **deploymentTarget: "16.0"** not yet set in `app.json` iOS section
 
 ### Known Issues
 
 **Minor Bugs**:
 - Back button label shows "(tabs)" instead of "Feed" → Fix: add `title: 'Feed'` to `Stack.Screen` for `(tabs)` in `_layout.tsx`
-- `SafeAreaView` deprecation warning → Replace with `react-native-safe-area-context`
-- 14 moderate npm vulnerabilities in toolchain (postcss, uuid) — Expo upstream, do NOT run `npm audit fix --force` (will downgrade Expo)
+- 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, do NOT run `npm audit fix --force` (will downgrade Expo)
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
 
 **Behavior Notes**:
 - reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing
 - WebView correctly navigates to post anchor (e.g. `#post-287927`) automatically
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
-- Debug `console.log` statements in `index.tsx` should be removed before production
+- Topic discovery logs each discovered topic with its feed URL (`[Topic Discovery] NVO → https://logicalinvestor.net/forums/topic/nvo/feed/`) — remove before production
 
 ## Development Notes
 
