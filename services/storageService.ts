@@ -79,3 +79,26 @@ export async function getForumVisibility(): Promise<ForumVisibility> {
 export async function setForumVisibility(visibility: ForumVisibility): Promise<void> {
   await storageSetObject('forumVisibility', visibility);
 }
+
+// Background refresh interval (in minutes, 1-120)
+const DEFAULT_REFRESH_INTERVAL = 30;
+const MIN_REFRESH_INTERVAL = 1;
+const MAX_REFRESH_INTERVAL = 120;
+
+export async function getRefreshInterval(): Promise<number> {
+  const val = await storageGet('refreshInterval');
+  if (!val) return DEFAULT_REFRESH_INTERVAL;
+  const parsed = parseInt(val, 10);
+  if (isNaN(parsed) || parsed < MIN_REFRESH_INTERVAL || parsed > MAX_REFRESH_INTERVAL) {
+    return DEFAULT_REFRESH_INTERVAL;
+  }
+  return parsed;
+}
+
+export async function setRefreshInterval(minutes: number): Promise<void> {
+  const rounded = Math.round(minutes);
+  if (rounded < MIN_REFRESH_INTERVAL || rounded > MAX_REFRESH_INTERVAL) {
+    throw new Error(`Refresh interval must be between ${MIN_REFRESH_INTERVAL} and ${MAX_REFRESH_INTERVAL} minutes.`);
+  }
+  await storageSet('refreshInterval', rounded.toString());
+}

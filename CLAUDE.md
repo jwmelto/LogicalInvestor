@@ -47,6 +47,10 @@ npm run ios         # Build and run on iOS simulator
 
 **Important:** fnm eval must be **LAST** in `~/.zshrc` (after all Homebrew setup)
 
+## Development Workflow
+
+**Feature branches:** Jim uses feature branches for all work (e.g., `feature/push-notifications`). Merge to `main` when complete. This keeps history clean and provides safe rollback.
+
 ## Tech Stack
 
 - **Framework**: Expo 54 (React Native) with New Architecture enabled

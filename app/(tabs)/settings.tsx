@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { logout } from '../../services/authService';
-import { getHideSnippetOnRead, setHideSnippetOnRead } from '../../services/storageService';
+import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../../services/subscriptionService';
@@ -12,6 +13,7 @@ import type { Topic } from '../../services/topicService';
 
 export default function SettingsScreen() {
   const [hideSnippet, setHideSnippet] = useState(false);
+  const [refreshInterval, setRefreshIntervalState] = useState(30);
   const [loading, setLoading] = useState(true);
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
   const [expandedForum, setExpandedForum] = useState<string | null>(null);
@@ -31,6 +33,9 @@ export default function SettingsScreen() {
     const hideValue = await getHideSnippetOnRead();
     setHideSnippet(hideValue);
 
+    const interval = await getRefreshInterval();
+    setRefreshIntervalState(interval);
+
     const allTopics = await getTopics();
     const subscriptions = await getAllTopicSubscriptions();
     const silenced = allTopics.filter((topic) => subscriptions[topic.id] === false);
@@ -42,6 +47,11 @@ export default function SettingsScreen() {
   async function handleToggleHideSnippet(value: boolean) {
     setHideSnippet(value);
     await setHideSnippetOnRead(value);
+  }
+
+  async function handleChangeRefreshInterval(minutes: number) {
+    setRefreshIntervalState(minutes);
+    await setRefreshInterval(minutes);
   }
 
   async function handleToggleForumVisibility(forum: 'stockInsights' | 'optionsInsights', value: boolean) {
@@ -136,6 +146,30 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Notifications</Text>
+          <View style={styles.preferenceColumn}>
+            <View style={styles.intervalLabelRow}>
+              <Text style={styles.preferenceLabel}>Refresh interval</Text>
+              <Text style={styles.intervalValue}>{refreshInterval}m</Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={1}
+              maximumValue={120}
+              step={1}
+              value={refreshInterval}
+              onValueChange={handleChangeRefreshInterval}
+              disabled={loading}
+              minimumTrackTintColor="#0a7ea4"
+              maximumTrackTintColor="#e0e0e0"
+            />
+            <Text style={styles.refreshIntervalHint}>
+              Check for new posts every 1–120 minutes
+            </Text>
+          </View>
+        </View>
+
         <Text style={styles.sectionTitle}>Forums</Text>
 
         {renderForumSection('Members Forum', 'membersForum', membersForumSilenced)}
@@ -160,7 +194,8 @@ const styles = StyleSheet.create({
   section: { marginBottom: 24 },
   sectionTitle: { fontSize: 14, fontWeight: '600', color: '#888', marginBottom: 12, textTransform: 'uppercase' },
   preference: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  preferenceLabel: { fontSize: 16, color: '#1a1a1a' },
+  preferenceColumn: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
+  preferenceLabel: { fontSize: 16, color: '#1a1a1a', marginBottom: 12 },
   forumSection: { marginBottom: 28, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   forumHeaderButton: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, backgroundColor: '#f9f9f9', borderRadius: 8, marginBottom: 12 },
   forumHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
@@ -176,4 +211,8 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   resubscribeButton: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f0f0f0', borderRadius: 4 },
   resubscribeButtonText: { fontSize: 11, fontWeight: '600', color: '#0066cc' },
+  intervalLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  intervalValue: { fontSize: 16, fontWeight: '600', color: '#0a7ea4' },
+  slider: { width: '100%', height: 40 },
+  refreshIntervalHint: { fontSize: 12, color: '#999', fontStyle: 'italic', marginTop: 8 },
 });
