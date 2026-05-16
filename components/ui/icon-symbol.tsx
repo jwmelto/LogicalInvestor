@@ -18,6 +18,9 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'bubble.left.and.bubble.right.fill': 'forum',
+  'chart.line.uptrend.xyaxis': 'trending-up',
+  'gearshape.fill': 'settings',
 } as IconMapping;
 
 /**

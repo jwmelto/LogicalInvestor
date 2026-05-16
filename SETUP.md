@@ -331,12 +331,106 @@ open /Applications/Simulator.app
 
 ---
 
-## 8. First Build: Use `npm run ios`
+## 8. Android Setup (Optional)
+
+This section covers Android development setup. Skip if you only plan to test on iOS.
+
+### What you need
+
+- **Android Studio** (Google's Android IDE)
+- **Java Development Kit (JDK)** version 17 or later
+- **Android SDK** (installed automatically with Android Studio)
+
+### 8a. Install Android Studio
+
+1. Download [Android Studio](https://developer.android.com/studio) from Google
+2. Run the installer
+3. Follow the setup wizard (accept defaults)
+
+**Verify:**
+```bash
+# Check if Android Studio is installed
+ls /Applications/Android\ Studio.app
+```
+
+### 8b. Install Java (JDK 17)
+
+Gradle (Android's build tool) requires Java to compile Android code.
+
+```bash
+brew install openjdk@17
+```
+
+### 8c. Configure Java (required)
+
+Homebrew will output instructions. Follow these steps:
+
+**Step 1: Create symlink** (so system Java wrappers can find JDK 17)
+```bash
+sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+```
+
+**Step 2: Add Java and Android SDK to PATH** — Add these lines to your `~/.zshrc` file (at the end, after fnm setup):
+```bash
+export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+export ANDROID_HOME=$HOME/Library/Android/sdk
+export PATH=$PATH:$ANDROID_HOME/emulator
+export PATH=$PATH:$ANDROID_HOME/platform-tools
+```
+
+**Step 3: Reload shell**
+```bash
+source ~/.zshrc
+```
+
+**Verify:**
+```bash
+java -version
+# Should output: openjdk version "17.0.x" ...
+
+echo $ANDROID_HOME
+# Should output: /Users/jimmelton/Library/Android/sdk
+```
+
+### 8d. Android Emulator Setup
+
+1. Open Android Studio
+2. Click **Device Manager** (right sidebar)
+3. Click **Create Device**
+4. Select a phone (e.g., Pixel 6, Pixel 8)
+5. Select an API level (33 or higher recommended)
+6. Click **Finish**
+
+**Verify:**
+```bash
+# List available emulators
+ls ~/Library/Android/sdk/avd/
+```
+
+### 8e. Start the Emulator
+
+In Android Studio:
+1. Go to **Device Manager**
+2. Click the **Play button** next to your device
+3. Wait for emulator to fully boot (~30 seconds)
+
+Or from command line:
+```bash
+# List available emulators
+~/Library/Android/sdk/emulator/emulator -list-avds
+
+# Start one (replace with your device name)
+~/Library/Android/sdk/emulator/emulator -avd Pixel_8_API_33
+```
+
+---
+
+## 9. First Build: Use `npm run ios` or `npm run android`
 
 ### What it is
-This project uses native modules (`expo-secure-store`, `@nauverse/expo-cloud-settings`, `react-native-webview`) that must be compiled by Xcode. `npm run ios` is the Expo-blessed way to handle this — it manages Xcode compilation, native module linking, simulator setup, and app installation in one command.
+This project uses native modules (`expo-secure-store`, `@nauverse/expo-cloud-settings`, `react-native-webview`) that must be compiled. `npm run ios` and `npm run android` are the Expo-blessed ways to handle this — they manage compilation, native module linking, and app installation in one command.
 
-### Build and run
+### Build and run on iOS
 
 ```bash
 npm run ios
@@ -348,19 +442,33 @@ This:
 3. Launches the app
 4. First build takes 2-3 minutes; subsequent builds are faster
 
+### Build and run on Android
+
+First, start an Android emulator (see section 8d above), then:
+
+```bash
+npm run android
+```
+
+This:
+1. Builds the Android project
+2. Installs the app on the running emulator
+3. Launches the app
+4. First build takes 3-5 minutes; subsequent builds are faster
+
 **Verify:**
-- Simulator shows the LogicalInvestor app loading
+- Simulator/emulator shows the LogicalInvestor app loading
 - You see the login screen
 - No native module errors in the output
 
-**Important:** Use `npm run ios` for the first build, not trying to manually open Xcode or start Metro first. This ensures native modules are properly compiled and linked.
+**Important:** Use `npm run ios` or `npm run android` for the first build, not trying to manually open Xcode/Android Studio or start Metro first. This ensures native modules are properly compiled and linked.
 
 ---
 
-## 9. Metro Bundler (JavaScript Bundler)
+## 11. Metro Bundler (JavaScript Bundler)
 
 ### What it is
-Metro is the JavaScript bundler that converts your React Native code into a format the app can understand. After the initial Xcode build, you can use Metro for faster development iteration.
+Metro is the JavaScript bundler that converts your React Native code into a format the app can understand. After the initial build, you can use Metro for faster development iteration.
 
 ### Start the bundler
 
@@ -382,20 +490,22 @@ Press 'i' to open iOS simulator, 'a' for Android, 'w' for web
 
 ### Using Metro for subsequent builds
 
-After the first Xcode build:
+After the first build:
 
-**Option 1:** Press `i` in the Metro terminal to rebuild and relaunch on simulator
+**Option 1:** Press `i` or `a` in the Metro terminal to rebuild and relaunch on iOS or Android
 
 **Option 2:** In another terminal, run:
 ```bash
 npm run ios
+# or
+npm run android
 ```
 
-Both options rebuild JavaScript and relaunch the app (much faster than the initial Xcode build).
+Both options rebuild JavaScript and relaunch the app (much faster than the initial build).
 
 ---
 
-## 10. Troubleshooting
+## 12. Troubleshooting
 
 ### "fnm: command not found"
 - You added `eval "$(fnm env...)"` to the wrong file (check you edited `~/.zshrc`, not `~/.bashrc`)
@@ -472,9 +582,50 @@ git commit -m "Regenerate package-lock.json for [architecture]"
 
 This is a known limitation of the npm ecosystem when working across Intel and Apple Silicon machines.
 
+### Android: "Unable to locate a Java Runtime"
+
+**Problem:** `npm run android` fails with "Unable to locate a Java Runtime"
+
+**Cause:** Gradle can't find Java (JDK 17)
+
+**Fix:**
+```bash
+# Install Java if not already installed
+brew install openjdk@17
+
+# Add to ~/.zshrc (at the end, after fnm setup)
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+
+# Reload shell
+source ~/.zshrc
+
+# Verify
+java -version
+
+# Try again
+npm run android
+```
+
+### Android: Emulator won't launch
+
+**Problem:** Android emulator won't start or crashes
+
+**Fix:**
+```bash
+# Kill any running emulator processes
+killall qemu-system-aarch64
+
+# Clear Android tooling cache
+rm -rf ~/Library/Android/Sdk/emulator/qemu
+
+# Try again from Android Studio Device Manager or CLI
+```
+
 ---
 
-## 11. Full End-to-End Test
+## 13. Full End-to-End Test
+
+### iOS Test
 
 Once setup is complete, verify everything works:
 
@@ -493,14 +644,33 @@ npm run ios
 # Try to log in (you'll need valid logicalinvestor.net credentials)
 ```
 
+### Android Test
+
+```bash
+# Start emulator first (via Android Studio Device Manager or CLI)
+# Then in a terminal:
+
+# Terminal 1: Start Metro
+cd LogicalInvestor
+npm start
+
+# Terminal 2: Build and run
+cd LogicalInvestor
+npm run android
+# Wait for app to build and launch in emulator
+
+# Emulator should show the login screen
+# Try to log in
+```
+
 **Expected result:**
-- App loads in simulator
+- App loads in simulator/emulator
 - Login screen appears
 - You can enter credentials and proceed
 
 ---
 
-## 12. Next Steps
+## 14. Next Steps
 
 Once setup is verified:
 1. Read `CLAUDE.md` for architecture and codebase overview
@@ -509,7 +679,7 @@ Once setup is verified:
 
 ---
 
-## Machine-Specific Notes
+## 15. Machine-Specific Notes
 
 **Mac Mini:**
 - Xcode: 26.5
@@ -520,16 +690,16 @@ Once setup is verified:
 
 ---
 
-## Reference: Key Commands
+## 16. Reference: Key Commands
 
 ```bash
 # Start development
 npm start
 
-# Run on iOS
+# Run on iOS simulator
 npm run ios
 
-# Run on Android
+# Run on Android emulator
 npm run android
 
 # Run web
@@ -539,14 +709,15 @@ npm run web
 npm run lint
 
 # Clean rebuild (if things are weird)
-rm -rf node_modules ios .expo
+rm -rf node_modules ios android .expo
 npm install
 npx expo prebuild --platform ios
+npx expo prebuild --platform android
 ```
 
 ---
 
-## Getting Help
+## 17. Getting Help
 
 If setup fails:
 1. Check the Troubleshooting section above
