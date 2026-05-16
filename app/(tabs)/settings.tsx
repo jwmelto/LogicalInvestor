@@ -4,24 +4,30 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { logout } from '../../services/authService';
 import { getHideSnippetOnRead, setHideSnippetOnRead } from '../../services/storageService';
+import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 
 export default function SettingsScreen() {
   const [hideSnippet, setHideSnippet] = useState(false);
   const [loading, setLoading] = useState(true);
+  const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
 
   useEffect(() => {
-    loadPreference();
+    loadPreferences();
   }, []);
 
-  async function loadPreference() {
-    const value = await getHideSnippetOnRead();
-    setHideSnippet(value);
+  async function loadPreferences() {
+    const hideValue = await getHideSnippetOnRead();
+    setHideSnippet(hideValue);
     setLoading(false);
   }
 
   async function handleToggleHideSnippet(value: boolean) {
     setHideSnippet(value);
     await setHideSnippetOnRead(value);
+  }
+
+  async function handleToggleForumVisibility(forum: 'stockInsights' | 'optionsInsights', value: boolean) {
+    await updateVisibility(forum, value);
   }
 
   async function handleLogout() {
@@ -32,6 +38,26 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>Settings</Text>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Forums</Text>
+        <View style={styles.preference}>
+          <Text style={styles.preferenceLabel}>Stock Insights</Text>
+          <Switch
+            value={forumVisibility.stockInsights}
+            onValueChange={(value) => handleToggleForumVisibility('stockInsights', value)}
+            disabled={loading}
+          />
+        </View>
+        <View style={styles.preference}>
+          <Text style={styles.preferenceLabel}>Options Insights</Text>
+          <Switch
+            value={forumVisibility.optionsInsights}
+            onValueChange={(value) => handleToggleForumVisibility('optionsInsights', value)}
+            disabled={loading}
+          />
+        </View>
+      </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Display</Text>

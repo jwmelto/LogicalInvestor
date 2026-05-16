@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { isAuthenticated } from '../services/authService';
+import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -23,15 +24,17 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Protected guard={authed}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Feed' }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-          <Stack.Screen name="post" options={{ headerShown: true, title: '' }} />
-        </Stack.Protected>
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style="auto" />
+      <ForumVisibilityProvider>
+        <Stack>
+          <Stack.Protected guard={authed}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Feed' }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+            <Stack.Screen name="post" options={{ headerShown: true, title: '', headerBackTitle: 'Back' }} />
+          </Stack.Protected>
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+        </Stack>
+        <StatusBar style="auto" />
+      </ForumVisibilityProvider>
     </ThemeProvider>
   );
 }

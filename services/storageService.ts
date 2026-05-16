@@ -1,18 +1,24 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as CloudSettings from '@nauverse/expo-cloud-settings';
 
-const useICloud = Platform.OS === 'ios' && CloudSettings.isAvailable();
+let CloudSettings: any = null;
+try {
+  CloudSettings = require('@nauverse/expo-cloud-settings');
+} catch (e) {
+  // CloudSettings not available (e.g., in simulator without proper native build)
+}
+
+const useICloud = Platform.OS === 'ios' && CloudSettings?.isAvailable?.();
 
 export async function storageGet(key: string): Promise<string | null> {
-  if (useICloud) {
+  if (useICloud && CloudSettings) {
     return CloudSettings.getString(key) ?? null;
   }
   return AsyncStorage.getItem(key);
 }
 
 export async function storageSet(key: string, value: string): Promise<void> {
-  if (useICloud) {
+  if (useICloud && CloudSettings) {
     CloudSettings.setString(key, value);
     return;
   }
@@ -20,7 +26,7 @@ export async function storageSet(key: string, value: string): Promise<void> {
 }
 
 export async function storageRemove(key: string): Promise<void> {
-  if (useICloud) {
+  if (useICloud && CloudSettings) {
     CloudSettings.remove(key);
     return;
   }
@@ -28,7 +34,7 @@ export async function storageRemove(key: string): Promise<void> {
 }
 
 export async function storageGetObject<T>(key: string): Promise<T | null> {
-  if (useICloud) {
+  if (useICloud && CloudSettings) {
     return CloudSettings.getObject<T>(key) ?? null;
   }
   const val = await AsyncStorage.getItem(key);
@@ -36,7 +42,7 @@ export async function storageGetObject<T>(key: string): Promise<T | null> {
 }
 
 export async function storageSetObject<T>(key: string, value: T): Promise<void> {
-  if (useICloud) {
+  if (useICloud && CloudSettings) {
     CloudSettings.setObject(key, value as object);
     return;
   }
@@ -51,4 +57,25 @@ export async function getHideSnippetOnRead(): Promise<boolean> {
 
 export async function setHideSnippetOnRead(value: boolean): Promise<void> {
   await storageSet('hideSnippetOnRead', value ? 'true' : 'false');
+}
+
+// Forum visibility preferences
+export interface ForumVisibility {
+  stockInsights: boolean;
+  optionsInsights: boolean;
+  // membersForum and membersArea are always on (not stored)
+}
+
+const DEFAULT_FORUM_VISIBILITY: ForumVisibility = {
+  stockInsights: false,
+  optionsInsights: false,
+};
+
+export async function getForumVisibility(): Promise<ForumVisibility> {
+  const stored = await storageGetObject<ForumVisibility>('forumVisibility');
+  return stored ?? DEFAULT_FORUM_VISIBILITY;
+}
+
+export async function setForumVisibility(visibility: ForumVisibility): Promise<void> {
+  await storageSetObject('forumVisibility', visibility);
 }

@@ -1,5 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
-import { SafeAreaView, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useEffect, useState } from 'react';
 import { getToken } from '../services/authService';
