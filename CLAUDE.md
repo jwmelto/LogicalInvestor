@@ -260,20 +260,17 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 5. **Android Build** (untested)
 6. **iCloud Sync Testing** on physical device (requires Apple Developer account)
 7. **Search** (deferred; use site's native search via WebView)
-8. **deploymentTarget: "16.0"** not yet set in `app.json` iOS section
 
 ### Known Issues
 
-**Minor Bugs**:
-- Back button label shows "(tabs)" instead of "Feed" → Fix: add `title: 'Feed'` to `Stack.Screen` for `(tabs)` in `_layout.tsx`
-- 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, do NOT run `npm audit fix --force` (will downgrade Expo)
+**Minor Issues**:
+- 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
 
 **Behavior Notes**:
 - reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing
 - WebView correctly navigates to post anchor (e.g. `#post-287927`) automatically
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
-- Topic discovery logs each discovered topic with its feed URL (`[Topic Discovery] NVO → https://logicalinvestor.net/forums/topic/nvo/feed/`) — remove before production
 - Topic previews hide `hideSnippetOnRead` setting; individual topic posts always show snippets for conversation context
 - Topic [new] badge is tappable from both collapsed and expanded states to quickly mark all posts read
 

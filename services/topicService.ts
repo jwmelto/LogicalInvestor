@@ -180,15 +180,6 @@ export async function updateTopicsFromFeedItems(
   const newTopics = await discoverTopicsFromFeedItems(items, forumKey);
   const merged = await mergeTopics(newTopics);
   await storeTopics(merged);
-
-  // Debug: log newly discovered topics
-  if (newTopics.length > 0) {
-    newTopics.forEach(topic => {
-      const feedUrl = generateTopicFeedUrl(topic.slug);
-      console.log(`[Topic Discovery] ${topic.name} → ${feedUrl}`);
-    });
-  }
-
   return merged;
 }
 

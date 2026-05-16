@@ -15,7 +15,7 @@ import { fetchSingleFeed, fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey }
 import { getUnreadCount, markRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
 import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic } from '../services/topicService';
-import { isTopicSubscribed } from '../services/subscriptionService';
+import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 
 interface ItemReadState {
   [itemId: string]: boolean;
@@ -82,7 +82,7 @@ async function saveTopicExpandedStates(feedKey: FeedKey, states: Record<string, 
   await storageSetObject(`topic_expanded_${feedKey}`, states);
 }
 
-export function ForumFeed({ feedKey }: { feedKey: FeedKey }) {
+export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string }) {
   const [section, setSection] = useState<SectionState | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -258,7 +258,6 @@ export function ForumFeed({ feedKey }: { feedKey: FeedKey }) {
           : prev
       );
     } catch (error) {
-      console.error(`Failed to load topic posts for ${topic.name}:`, error);
       setSection((prev) =>
         prev
           ? {
@@ -282,6 +281,21 @@ export function ForumFeed({ feedKey }: { feedKey: FeedKey }) {
       pathname: '/post',
       params: { url: item.link, title: item.title },
     });
+  }
+
+  async function unsubscribeTopic(topicId: string) {
+    try {
+      await setTopicSubscription(topicId, false);
+      setSection((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          topics: prev.topics.filter((t) => t.topic.id !== topicId),
+        };
+      });
+    } catch (error) {
+      // Silently fail; topic remains in view until next refresh
+    }
   }
 
   async function markTopicAsRead(topicId: string) {
@@ -347,13 +361,14 @@ export function ForumFeed({ feedKey }: { feedKey: FeedKey }) {
   if (!section.accessible) {
     return (
       <View style={styles.center}>
-        <Text>You don't have access to this feed</Text>
+        <Text>You don&apos;t have access to this feed</Text>
       </View>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
+      {title && <Text style={styles.forumTitle}>{title}</Text>}
       <FlatList
         data={section ? [section] : []}
         keyExtractor={() => feedKey}
@@ -364,24 +379,35 @@ export function ForumFeed({ feedKey }: { feedKey: FeedKey }) {
               {section.topics.length > 0
                 ? section.topics.map((topicSection) => (
                     <View key={topicSection.topic.id}>
-                      <TouchableOpacity
-                        style={styles.topicHeader}
-                        onPress={() => toggleTopic(topicSection.topic.id)}
-                      >
-                        <Text style={styles.topicTitle}>
-                          {topicSection.expanded ? '▼' : '▶'} {decodeHtmlEntities(topicSection.topic.name)}
-                        </Text>
+                      <View style={styles.topicHeader}>
+                        <TouchableOpacity
+                          style={styles.topicTitleButton}
+                          onPress={() => toggleTopic(topicSection.topic.id)}
+                        >
+                          <Text style={styles.topicTitle}>
+                            {topicSection.expanded ? '▼' : '▶'} {decodeHtmlEntities(topicSection.topic.name)}
+                          </Text>
+                        </TouchableOpacity>
                         <View style={styles.topicHeaderRight}>
                           {topicSection.unreadCount > 0 && (
                             <TouchableOpacity onPress={() => {
                               markTopicAsRead(topicSection.topic.id);
-                              toggleTopic(topicSection.topic.id);
+                              // Collapse the topic
+                              if (topicSection.expanded) {
+                                toggleTopic(topicSection.topic.id);
+                              }
                             }}>
                               <Text style={styles.newIndicator}>[new]</Text>
                             </TouchableOpacity>
                           )}
+                          <TouchableOpacity
+                            onPress={() => unsubscribeTopic(topicSection.topic.id)}
+                            style={styles.unsubscribeButton}
+                          >
+                            <Text style={styles.unsubscribeText}>✕</Text>
+                          </TouchableOpacity>
                         </View>
-                      </TouchableOpacity>
+                      </View>
 
                       {!topicSection.expanded && topicSection.topic.latestExcerpt && (() => {
                         const previewPostIsRead = topicSection.topic.latestItemId
@@ -497,6 +523,7 @@ export function ForumFeed({ feedKey }: { feedKey: FeedKey }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  forumTitle: { fontSize: 18, fontWeight: '600', color: '#1a1a1a', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   newIndicator: { fontSize: 11, fontWeight: '600', color: '#22c55e' },
   item: { padding: 16, backgroundColor: '#fff' },
   topicHeader: {
@@ -509,8 +536,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  topicTitle: { fontSize: 13, fontWeight: '600', color: '#555', flex: 1 },
-  topicHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  topicTitleButton: { flex: 1 },
+  topicTitle: { fontSize: 13, fontWeight: '600', color: '#555' },
+  topicHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  unsubscribeButton: { padding: 4 },
+  unsubscribeText: { fontSize: 16, color: '#999', fontWeight: '600' },
   topicPreview: { paddingVertical: 8, paddingHorizontal: 32, backgroundColor: '#fbfbfb', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   topicPreviewMeta: { fontSize: 11, color: '#888', marginBottom: 4 },
   topicPreviewExcerpt: { fontSize: 12, color: '#666', lineHeight: 16 },
