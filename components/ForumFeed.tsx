@@ -151,9 +151,19 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       setSection(built);
 
       const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
+      // Also include topic preview item IDs to get accurate read states
+      const previewItemIds = built.topics
+        .map(t => t.topic.latestItemId)
+        .filter((id): id is string => !!id);
+
       const readStates: ItemReadState = {};
       for (const item of allItems) {
         readStates[item.id] = await isRead(item.id);
+      }
+      for (const id of previewItemIds) {
+        if (!(id in readStates)) {
+          readStates[id] = await isRead(id);
+        }
       }
       setItemReadStates(readStates);
     } finally {
@@ -417,9 +427,8 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           <TouchableOpacity
                             style={styles.topicPreview}
                             onPress={() => {
-                              if (topicSection.topic.latestItemLink && topicSection.topic.latestItemId) {
-                                markRead(topicSection.topic.latestItemId);
-                                setItemReadStates((prev) => ({ ...prev, [topicSection.topic.latestItemId!]: true }));
+                              if (topicSection.topic.latestItemLink) {
+                                markTopicAsRead(topicSection.topic.id);
                                 Linking.openURL(topicSection.topic.latestItemLink);
                               }
                             }}
