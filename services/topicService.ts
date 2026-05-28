@@ -1,16 +1,33 @@
 import { FeedItem, FeedKey, FEEDS } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 
+/**
+ * Parse RFC 2822 or ISO 8601 date string to timestamp.
+ * Returns the timestamp, or 0 if parsing fails.
+ */
+function parsePublishDate(pubDateStr: string): number {
+  if (!pubDateStr) return 0;
+  try {
+    const timestamp = new Date(pubDateStr).getTime();
+    return isNaN(timestamp) ? 0 : timestamp;
+  } catch {
+    return 0;
+  }
+}
+
 export interface Topic {
   id: string; // Unique identifier: "{forumKey}:{topicName}"
   name: string; // Display name (e.g., "NVO", "Tesla Options")
   slug: string; // URL slug extracted from post link (e.g., "unsolicited-options-insights-testimonial")
   forumKey: FeedKey; // Which forum this topic belongs to
   discoveredAt: number; // Timestamp when first discovered
+  lastUpdatedAt: number; // Timestamp when topic was last seen with new activity
   itemCount: number; // Number of posts we know about in this topic
   latestAuthor?: string; // Author of the most recent post
   latestExcerpt?: string; // Excerpt from the most recent post (for preview)
   latestItemId?: string; // ID of the post providing the preview (to check read state)
+  latestItemLink?: string; // Link to the most recent post (for navigation to preview)
+  latestPubDate?: string; // Publication date of the most recent post (RFC 2822 or ISO 8601 format)
 }
 
 const TOPICS_STORAGE_KEY = 'discovered_topics';
@@ -76,6 +93,7 @@ export async function discoverTopicsFromFeedItems(
     if (!topicSlug) continue;
 
     const topicId = generateTopicId(forumKey, topicName);
+    const pubTimestamp = parsePublishDate(item.pubDate);
 
     if (!newTopics.has(topicId)) {
       newTopics.set(topicId, {
@@ -84,10 +102,13 @@ export async function discoverTopicsFromFeedItems(
         slug: topicSlug,
         forumKey,
         discoveredAt: now,
+        lastUpdatedAt: pubTimestamp || now,
         itemCount: 0,
         latestAuthor: item.author,
         latestExcerpt: item.excerpt,
         latestItemId: item.id,
+        latestItemLink: item.link,
+        latestPubDate: item.pubDate,
       });
     } else {
       // Keep the latest (first in RSS order) item's preview
@@ -100,6 +121,12 @@ export async function discoverTopicsFromFeedItems(
       }
       if (!topic.latestItemId) {
         topic.latestItemId = item.id;
+      }
+      if (!topic.latestItemLink) {
+        topic.latestItemLink = item.link;
+      }
+      if (!topic.latestPubDate) {
+        topic.latestPubDate = item.pubDate;
       }
     }
 
@@ -115,7 +142,7 @@ export async function discoverTopicsFromFeedItems(
  * Merge newly discovered topics with existing topics.
  *
  * - Existing topics keep their discoveredAt timestamp
- * - New topics get current timestamp
+ * - lastUpdatedAt uses the actual pubDate of posts, not fetch time
  * - Item counts are cumulative
  */
 async function mergeTopics(newTopics: Topic[]): Promise<Topic[]> {
@@ -123,20 +150,34 @@ async function mergeTopics(newTopics: Topic[]): Promise<Topic[]> {
   const existingMap = new Map(existing.map(t => [t.id, t]));
 
   for (const newTopic of newTopics) {
-    const existing = existingMap.get(newTopic.id);
-    if (existing) {
-      // Keep old discovered time, update item count
-      newTopic.discoveredAt = existing.discoveredAt;
-      newTopic.itemCount = Math.max(existing.itemCount, newTopic.itemCount);
+    const existingTopic = existingMap.get(newTopic.id);
+    if (existingTopic) {
+      // Keep old discovered time
+      newTopic.discoveredAt = existingTopic.discoveredAt;
+
+      // Keep the most recent lastUpdatedAt (prefer existing if it's newer, but newTopic's pubDate should be the actual post date)
+      // Since newTopic.lastUpdatedAt is set to the pubDate of the discovered item, use it unless existing is newer
+      if (existingTopic.lastUpdatedAt && existingTopic.lastUpdatedAt > newTopic.lastUpdatedAt) {
+        newTopic.lastUpdatedAt = existingTopic.lastUpdatedAt;
+      }
+
+      newTopic.itemCount = Math.max(existingTopic.itemCount, newTopic.itemCount);
+
       // Preserve existing preview if new topic's preview is empty
-      if (!newTopic.latestAuthor && existing.latestAuthor) {
-        newTopic.latestAuthor = existing.latestAuthor;
+      if (!newTopic.latestAuthor && existingTopic.latestAuthor) {
+        newTopic.latestAuthor = existingTopic.latestAuthor;
       }
-      if (!newTopic.latestExcerpt && existing.latestExcerpt) {
-        newTopic.latestExcerpt = existing.latestExcerpt;
+      if (!newTopic.latestExcerpt && existingTopic.latestExcerpt) {
+        newTopic.latestExcerpt = existingTopic.latestExcerpt;
       }
-      if (!newTopic.latestItemId && existing.latestItemId) {
-        newTopic.latestItemId = existing.latestItemId;
+      if (!newTopic.latestItemId && existingTopic.latestItemId) {
+        newTopic.latestItemId = existingTopic.latestItemId;
+      }
+      if (!newTopic.latestItemLink && existingTopic.latestItemLink) {
+        newTopic.latestItemLink = existingTopic.latestItemLink;
+      }
+      if (!newTopic.latestPubDate && existingTopic.latestPubDate) {
+        newTopic.latestPubDate = existingTopic.latestPubDate;
       }
     }
     existingMap.set(newTopic.id, newTopic);
@@ -161,11 +202,13 @@ export async function getTopics(): Promise<Topic[]> {
 }
 
 /**
- * Get topics for a specific forum.
+ * Get topics for a specific forum, sorted by most recently updated first.
  */
 export async function getTopicsForForum(forumKey: FeedKey): Promise<Topic[]> {
   const all = await getTopics();
-  return all.filter(t => t.forumKey === forumKey);
+  return all
+    .filter(t => t.forumKey === forumKey)
+    .sort((a, b) => (b.lastUpdatedAt || 0) - (a.lastUpdatedAt || 0));
 }
 
 /**

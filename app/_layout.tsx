@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
 import { isAuthenticated } from '../services/authService';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
 
@@ -12,6 +13,7 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [authed, setAuthed] = useState(false);
   const [loading, setLoading] = useState(true);
+  useNotificationPermissions(); // Request permissions on app launch
 
   useEffect(() => {
     isAuthenticated().then((result) => {
@@ -29,7 +31,6 @@ export default function RootLayout() {
           <Stack.Protected guard={authed}>
             <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Feed' }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-            <Stack.Screen name="post" options={{ headerShown: true, title: '', headerBackTitle: 'Back' }} />
           </Stack.Protected>
           <Stack.Screen name="login" options={{ headerShown: false }} />
         </Stack>

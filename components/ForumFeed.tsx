@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { router } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { fetchSingleFeed, fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
 import { getUnreadCount, markRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
@@ -151,9 +151,19 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       setSection(built);
 
       const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
+      // Also include topic preview item IDs to get accurate read states
+      const previewItemIds = built.topics
+        .map(t => t.topic.latestItemId)
+        .filter((id): id is string => !!id);
+
       const readStates: ItemReadState = {};
       for (const item of allItems) {
         readStates[item.id] = await isRead(item.id);
+      }
+      for (const id of previewItemIds) {
+        if (!(id in readStates)) {
+          readStates[id] = await isRead(id);
+        }
       }
       setItemReadStates(readStates);
     } finally {
@@ -277,10 +287,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     setSection((prev) =>
       prev ? { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) } : prev
     );
-    router.push({
-      pathname: '/post',
-      params: { url: item.link, title: item.title },
-    });
+    Linking.openURL(item.link);
   }
 
   async function unsubscribeTopic(topicId: string) {
@@ -417,16 +424,31 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         if (previewPostIsRead) return null;
 
                         return (
-                          <View style={styles.topicPreview}>
-                            {topicSection.topic.latestAuthor && (
+                          <TouchableOpacity
+                            style={styles.topicPreview}
+                            onPress={() => {
+                              if (topicSection.topic.latestItemLink) {
+                                markTopicAsRead(topicSection.topic.id);
+                                Linking.openURL(topicSection.topic.latestItemLink);
+                              }
+                            }}
+                          >
+                            {(topicSection.topic.latestAuthor || topicSection.topic.latestPubDate) && (
                               <Text style={styles.topicPreviewMeta}>
-                                {decodeHtmlEntities(topicSection.topic.latestAuthor)}
+                                {topicSection.topic.latestAuthor ? `${decodeHtmlEntities(topicSection.topic.latestAuthor)}` : ''}
+                                {topicSection.topic.latestAuthor && topicSection.topic.latestPubDate ? ' · ' : ''}
+                                {topicSection.topic.latestPubDate ? new Date(topicSection.topic.latestPubDate).toLocaleDateString('en-US', {
+                                  month: 'numeric',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                }) : ''}
                               </Text>
                             )}
                             <Text style={styles.topicPreviewExcerpt} numberOfLines={2}>
                               {decodeHtmlEntities(stripHtml(topicSection.topic.latestExcerpt))}
                             </Text>
-                          </View>
+                          </TouchableOpacity>
                         );
                       })()}
 
