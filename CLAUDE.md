@@ -83,6 +83,22 @@ npx expo prebuild --platform ios   # Generate /ios directory, install CocoaPods
 npm run reset-project              # Reset to blank project (moves starter code to app-example/)
 ```
 
+### App Store Distribution (EAS Build)
+For creating production-ready builds to submit to the App Store or TestFlight:
+```bash
+npm install -g eas-cli             # Install globally (one-time)
+eas login                          # Authenticate with Expo account
+eas build:configure                # Configure project for EAS (one-time)
+eas build --platform ios           # Create production build for App Store
+```
+
+**Notes:**
+- Local development continues via `npm run ios` (faster iteration)
+- EAS Build handles app signing, provisioning profiles, and certificates securely
+- Requires Apple Developer Program membership ($99/year) to submit to App Store
+- Free Expo account supported; paid plans offer priority build queue
+- See [Expo EAS Build docs](https://docs.expo.dev/build/setup/) for details
+
 ## Architecture
 
 ### Core Principle

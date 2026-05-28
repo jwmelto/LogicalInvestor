@@ -135,7 +135,7 @@ export default function SettingsScreen() {
         <Text style={styles.title}>Settings</Text>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Display</Text>
+          <Text style={styles.sectionTitle}>Preferences</Text>
           <View style={styles.preference}>
             <Text style={styles.preferenceLabel}>Hide snippets on read items</Text>
             <Switch
@@ -144,13 +144,9 @@ export default function SettingsScreen() {
               disabled={loading}
             />
           </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Notifications</Text>
           <View style={styles.preferenceColumn}>
             <View style={styles.intervalLabelRow}>
-              <Text style={styles.preferenceLabel}>Refresh interval</Text>
+              <Text style={styles.preferenceLabel}>Notification Refresh Interval</Text>
               <Text style={styles.intervalValue}>{refreshInterval}m</Text>
             </View>
             <Slider
@@ -164,9 +160,6 @@ export default function SettingsScreen() {
               minimumTrackTintColor="#0a7ea4"
               maximumTrackTintColor="#e0e0e0"
             />
-            <Text style={styles.refreshIntervalHint}>
-              Check for new posts every 1–120 minutes
-            </Text>
           </View>
         </View>
 
@@ -175,28 +168,25 @@ export default function SettingsScreen() {
         {renderForumSection('Members Forum', 'membersForum', membersForumSilenced)}
         {renderForumSection('Stock Insights', 'stockInsights', stockInsightsSilenced)}
         {renderForumSection('Options Insights', 'optionsInsights', optionsInsightsSilenced)}
-      </ScrollView>
 
-      <View style={styles.footerSection}>
         <TouchableOpacity style={styles.button} onPress={handleLogout}>
           <Text style={styles.buttonText}>Log Out</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  scrollContent: { flex: 1, paddingHorizontal: 24, paddingTop: 24 },
-  footerSection: { paddingHorizontal: 24, paddingVertical: 16, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 32 },
-  section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 14, fontWeight: '600', color: '#888', marginBottom: 12, textTransform: 'uppercase' },
+  scrollContent: { flex: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24 },
+  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
+  section: { marginBottom: 20 },
+  sectionTitle: { fontSize: 14, fontWeight: '600', color: '#888', marginBottom: 6, textTransform: 'uppercase' },
   preference: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  preferenceColumn: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  preferenceLabel: { fontSize: 16, color: '#1a1a1a', marginBottom: 12 },
-  forumSection: { marginBottom: 28, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  preferenceColumn: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
+  preferenceLabel: { fontSize: 16, color: '#1a1a1a', marginBottom: 8 },
+  forumSection: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   forumHeaderButton: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, backgroundColor: '#f9f9f9', borderRadius: 8, marginBottom: 12 },
   forumHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   forumHeaderArrow: { fontSize: 14, color: '#666', fontWeight: '600', width: 16 },
@@ -207,12 +197,11 @@ const styles = StyleSheet.create({
   silencedTopicsList: { gap: 8 },
   silencedTopic: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, paddingHorizontal: 8, backgroundColor: '#fff', borderRadius: 6, borderWidth: 1, borderColor: '#e0e0e0' },
   silencedTopicName: { fontSize: 13, fontWeight: '500', color: '#1a1a1a', flex: 1 },
-  button: { backgroundColor: '#cc0000', borderRadius: 8, padding: 16, alignItems: 'center' },
+  button: { backgroundColor: '#cc0000', borderRadius: 8, padding: 16, alignItems: 'center', marginTop: 24 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   resubscribeButton: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f0f0f0', borderRadius: 4 },
   resubscribeButtonText: { fontSize: 11, fontWeight: '600', color: '#0066cc' },
-  intervalLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  intervalLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   intervalValue: { fontSize: 16, fontWeight: '600', color: '#0a7ea4' },
-  slider: { width: '100%', height: 40 },
-  refreshIntervalHint: { fontSize: 12, color: '#999', fontStyle: 'italic', marginTop: 8 },
+  slider: { width: '100%', height: 30 },
 });

@@ -5,7 +5,6 @@
 Run the automated setup script:
 
 ```bash
-chmod +x setup.sh
 ./setup.sh
 ```
 
@@ -560,27 +559,6 @@ pod install
 cd ..
 npm run ios
 ```
-
-### Native module errors after switching architectures (Intel ↔ Apple Silicon)
-
-If you get errors like "Cannot find native module 'ExpoCloudSettings'" after switching machines or architectures:
-
-The issue: `package-lock.json` is architecture-specific. It was generated on Intel with Intel binaries, but Apple Silicon (arm64) needs different binaries.
-
-**Fix:**
-```bash
-rm -rf node_modules package-lock.json
-npm install
-npm run ios
-```
-
-This regenerates the lock file with the correct architecture-specific binaries. If you switched machines, commit the updated `package-lock.json`:
-```bash
-git add package-lock.json
-git commit -m "Regenerate package-lock.json for [architecture]"
-```
-
-This is a known limitation of the npm ecosystem when working across Intel and Apple Silicon machines.
 
 ### Android: "Unable to locate a Java Runtime"
 
