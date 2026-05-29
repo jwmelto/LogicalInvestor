@@ -13,6 +13,7 @@ export const FEEDS = {
     url: 'https://logicalinvestor.net/feed/',
     priority: 'high',
     alwaysVisible: true,
+    hasSubFeeds: false,
   },
   membersForum: {
     name: 'Members Forum',

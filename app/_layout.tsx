@@ -8,6 +8,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
 import { isAuthenticated } from '../services/authService';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
+import { UnreadCountProvider } from '../contexts/UnreadCountContext';
+import { registerBackgroundFetch } from '../services/backgroundFetchService';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -20,6 +22,8 @@ export default function RootLayout() {
       setAuthed(result);
       setLoading(false);
     });
+
+    registerBackgroundFetch();
   }, []);
 
   if (loading) return null;
@@ -27,14 +31,16 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <ForumVisibilityProvider>
-        <Stack>
-          <Stack.Protected guard={authed}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Feed' }} />
-            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-          </Stack.Protected>
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-        </Stack>
-        <StatusBar style="auto" />
+        <UnreadCountProvider>
+          <Stack>
+            <Stack.Protected guard={authed}>
+              <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Feed' }} />
+              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+            </Stack.Protected>
+            <Stack.Screen name="login" options={{ headerShown: false }} />
+          </Stack>
+          <StatusBar style="auto" />
+        </UnreadCountProvider>
       </ForumVisibilityProvider>
     </ThemeProvider>
   );

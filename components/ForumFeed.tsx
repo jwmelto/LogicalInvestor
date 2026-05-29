@@ -16,6 +16,8 @@ import { getUnreadCount, markRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
 import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
+import { useUnreadCounts } from '../contexts/UnreadCountContext';
+import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
 
 interface ItemReadState {
   [itemId: string]: boolean;
@@ -33,7 +35,6 @@ interface SectionState {
   items: FeedItem[];
   topics: TopicSection[];
   unreadCount: number;
-  expanded: boolean;
   accessible: boolean;
   loading: boolean;
   error?: string;
@@ -88,6 +89,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const [refreshing, setRefreshing] = useState(false);
   const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
+  const { setFeedUnreadCount, refreshSignal } = useUnreadCounts();
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
     const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
@@ -150,6 +152,15 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       const built = await buildSection(result);
       setSection(built);
 
+      const totalUnread = built.topics.length > 0
+        ? built.topics.reduce((sum, t) => sum + t.unreadCount, 0)
+        : built.unreadCount;
+      setFeedUnreadCount(feedKey, totalUnread);
+
+      // Persist so other tabs and next app launch show correct badge without a network call
+      const cached = await getCachedUnreadCounts();
+      await setCachedUnreadCounts({ ...cached, [feedKey]: totalUnread });
+
       const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
       // Also include topic preview item IDs to get accurate read states
       const previewItemIds = built.topics
@@ -175,7 +186,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   useEffect(() => {
     loadPreferences();
     loadFeed();
-  }, [feedKey]);
+  }, [feedKey, refreshSignal]);
 
   useFocusEffect(
     useCallback(() => {
@@ -284,9 +295,15 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   async function onPressItem(item: FeedItem) {
     await markRead(item.id);
     setItemReadStates((prev) => ({ ...prev, [item.id]: true }));
-    setSection((prev) =>
-      prev ? { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) } : prev
-    );
+    setSection((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) };
+      const totalUnread = updated.topics.length > 0
+        ? updated.topics.reduce((sum, t) => sum + t.unreadCount, 0)
+        : updated.unreadCount;
+      setFeedUnreadCount(feedKey, totalUnread);
+      return updated;
+    });
     Linking.openURL(item.link);
   }
 
@@ -345,6 +362,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     setSection((prev) => {
       if (!prev) return prev;
       const totalUnread = prev.topics.reduce((sum, t) => sum + t.unreadCount, 0);
+      setFeedUnreadCount(feedKey, totalUnread);
       return { ...prev, unreadCount: totalUnread };
     });
   }
@@ -416,7 +434,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         </View>
                       </View>
 
-                      {!topicSection.expanded && topicSection.topic.latestExcerpt && (() => {
+                      {!topicSection.expanded && topicSection.unreadCount > 0 && topicSection.topic.latestExcerpt && (() => {
                         const previewPostIsRead = topicSection.topic.latestItemId
                           ? itemReadStates[topicSection.topic.latestItemId]
                           : false;
