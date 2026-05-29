@@ -9,6 +9,7 @@ interface UnreadCountContextType {
   counts: UnreadCounts;
   setFeedUnreadCount: (feedKey: FeedKey, count: number) => void;
   refreshSignal: number;
+  notifyManualRefresh: () => void;
 }
 
 const UnreadCountContext = createContext<UnreadCountContextType | undefined>(undefined);
@@ -98,8 +99,15 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
     setCounts((prev) => ({ ...prev, [feedKey]: count }));
   }, []);
 
+  // Call this on manual pull-to-refresh so the timer resets from now,
+  // avoiding a redundant auto-refresh shortly after the user just refreshed.
+  const notifyManualRefresh = useCallback(() => {
+    lastRefreshAtRef.current = Date.now();
+    getRefreshInterval().then((minutes) => startTimer(minutes * 60 * 1000));
+  }, []);
+
   return (
-    <UnreadCountContext.Provider value={{ counts, setFeedUnreadCount, refreshSignal }}>
+    <UnreadCountContext.Provider value={{ counts, setFeedUnreadCount, refreshSignal, notifyManualRefresh }}>
       {children}
     </UnreadCountContext.Provider>
   );

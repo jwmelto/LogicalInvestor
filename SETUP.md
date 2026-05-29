@@ -388,7 +388,7 @@ java -version
 # Should output: openjdk version "17.0.x" ...
 
 echo $ANDROID_HOME
-# Should output: /Users/jimmelton/Library/Android/sdk
+# Should output: /Users/<your-username>/Library/Android/sdk
 ```
 
 ### 8d. Android Emulator Setup
@@ -657,18 +657,7 @@ Once setup is verified:
 
 ---
 
-## 15. Machine-Specific Notes
-
-**Mac Mini:**
-- Xcode: 26.5
-- Shell: zsh
-
-**iMac:**
-- Xcode: 16.2
-
----
-
-## 16. Reference: Key Commands
+## 15. Reference: Key Commands
 
 ```bash
 # Start development
@@ -695,7 +684,7 @@ npx expo prebuild --platform android
 
 ---
 
-## 17. Getting Help
+## 16. Getting Help
 
 If setup fails:
 1. Check the Troubleshooting section above
