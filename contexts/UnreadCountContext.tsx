@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { FeedKey } from '../services/feedService';
 import { getCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
 
@@ -96,7 +97,12 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const setFeedUnreadCount = useCallback((feedKey: FeedKey, count: number) => {
-    setCounts((prev) => ({ ...prev, [feedKey]: count }));
+    setCounts((prev) => {
+      const updated = { ...prev, [feedKey]: count };
+      const hasAnyUnread = Object.values(updated).some((n) => (n ?? 0) > 0);
+      Notifications.setBadgeCountAsync(hasAnyUnread ? 1 : 0).catch(() => {});
+      return updated;
+    });
   }, []);
 
   // Call this on manual pull-to-refresh so the timer resets from now,
