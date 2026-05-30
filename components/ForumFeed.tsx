@@ -298,13 +298,10 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     setItemReadStates((prev) => ({ ...prev, [item.id]: true }));
     setSection((prev) => {
       if (!prev) return prev;
-      const updated = { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) };
-      const totalUnread = updated.topics.length > 0
-        ? updated.topics.reduce((sum, t) => sum + t.unreadCount, 0)
-        : updated.unreadCount;
-      setFeedUnreadCount(feedKey, totalUnread);
-      return updated;
+      return { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) };
     });
+    const newCount = Math.max(0, (section?.unreadCount ?? 1) - 1);
+    setFeedUnreadCount(feedKey, newCount);
     Linking.openURL(item.link);
   }
 
@@ -392,9 +389,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
         t.topic.id === topicId ? { ...t, unreadCount: 0 } : t
       );
       const totalUnread = updatedTopics.reduce((sum, t) => sum + t.unreadCount, 0);
-      setFeedUnreadCount(feedKey, totalUnread);
       return { ...prev, topics: updatedTopics, unreadCount: totalUnread };
     });
+    // Compute total from current section state (topics already zeroed for this topic)
+    const totalUnread = (section?.topics ?? [])
+      .reduce((sum, t) => t.topic.id === topicId ? sum : sum + t.unreadCount, 0);
+    setFeedUnreadCount(feedKey, totalUnread);
   }
 
   if (loading) {
@@ -624,7 +624,6 @@ const styles = StyleSheet.create({
   topicHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingVertical: 12,
     paddingHorizontal: 16,
     backgroundColor: '#fafafa',

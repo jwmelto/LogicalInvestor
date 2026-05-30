@@ -2,31 +2,37 @@ import { useEffect, useState } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import 'react-native-reanimated';
+
+// Keep the splash screen visible until we've checked auth state
+SplashScreen.preventAutoHideAsync();
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
 import { isAuthenticated } from '../services/authService';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
 import { UnreadCountProvider } from '../contexts/UnreadCountContext';
 import { registerBackgroundFetch } from '../services/backgroundFetchService';
 
-export default function RootLayout() {
+function RootLayoutInner() {
   const colorScheme = useColorScheme();
-  const [authed, setAuthed] = useState(false);
+  const { authed, setAuthed } = useAuth();
   const [loading, setLoading] = useState(true);
-  useNotificationPermissions(); // Request permissions on app launch
+  useNotificationPermissions();
 
   useEffect(() => {
     isAuthenticated().then((result) => {
       setAuthed(result);
       setLoading(false);
+      SplashScreen.hideAsync();
     });
 
     registerBackgroundFetch();
   }, []);
 
-  if (loading) return null;
+  if (loading) return null; // splash screen is still visible during this time
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -43,5 +49,13 @@ export default function RootLayout() {
         </UnreadCountProvider>
       </ForumVisibilityProvider>
     </ThemeProvider>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <RootLayoutInner />
+    </AuthProvider>
   );
 }

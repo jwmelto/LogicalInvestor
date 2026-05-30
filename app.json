@@ -11,10 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
-      "deploymentTarget": "18.0",
-      "entitlements": {
-        "com.apple.developer.ubiquity-kvstore-identifier": "$(TeamIdentifierPrefix)$(CFBundleIdentifier)"
-      }
+      "deploymentTarget": "18.0"
     },
     "android": {
       "adaptiveIcon": {
@@ -48,14 +45,6 @@
       "expo-secure-store",
       "expo-web-browser",
       "@nauverse/expo-cloud-settings",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/notification-icon.png",
-          "color": "#0a7ea4",
-          "modes": "productionMode"
-        }
-      ],
       "expo-background-fetch",
       "expo-task-manager"
     ],

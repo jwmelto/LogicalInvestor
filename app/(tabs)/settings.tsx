@@ -3,8 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView } from 're
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { router } from 'expo-router';
 import { logout } from '../../services/authService';
+import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
@@ -18,6 +18,7 @@ export default function SettingsScreen() {
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
   const [expandedForum, setExpandedForum] = useState<string | null>(null);
   const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
+  const { setAuthed } = useAuth();
 
   useEffect(() => {
     loadPreferences();
@@ -60,7 +61,7 @@ export default function SettingsScreen() {
 
   async function handleLogout() {
     await logout();
-    router.replace('/login');
+    setAuthed(false);
   }
 
   async function resubscribeTopic(topic: Topic) {

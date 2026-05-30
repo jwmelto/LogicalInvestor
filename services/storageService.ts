@@ -8,7 +8,10 @@ try {
   // CloudSettings not available (e.g., in simulator without proper native build)
 }
 
-const useICloud = Platform.OS === 'ios' && CloudSettings?.isAvailable?.();
+// iCloud entitlement is not present in current builds (removed for personal-team
+// compatibility). Force AsyncStorage until the entitlement is restored in app.json
+// and a paid developer account is used.
+const useICloud = false;
 
 export async function storageGet(key: string): Promise<string | null> {
   if (useICloud && CloudSettings) {
