@@ -43,3 +43,6 @@ app-example
 /ios
 /android
 scripts/fonts/
+
+# editor
+.vscode/
