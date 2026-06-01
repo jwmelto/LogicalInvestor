@@ -10,8 +10,12 @@ import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../../services/subscriptionService';
 import type { Topic } from '../../services/topicService';
+import { useColorScheme } from '../../hooks/use-color-scheme';
+import { Palette } from '../../constants/theme';
 
 export default function SettingsScreen() {
+  const scheme = useColorScheme();
+  const c = scheme === 'dark' ? Palette.dark : Palette.light;
   const [hideSnippet, setHideSnippet] = useState(false);
   const [refreshInterval, setRefreshIntervalState] = useState(30);
   const [loading, setLoading] = useState(true);
@@ -79,20 +83,20 @@ export default function SettingsScreen() {
 
   const renderSilencedTopicsForForum = (topics: Topic[]) => {
     return (
-      <View style={styles.silencedTopicsContainer}>
-        <Text style={styles.silencedTopicsLabel}>Silenced Topics</Text>
+      <View style={[styles.silencedTopicsContainer, { backgroundColor: c.surfaceAlt }]}>
+        <Text style={[styles.silencedTopicsLabel, { color: c.textMuted }]}>Silenced Topics</Text>
         {topics.length === 0 ? (
-          <Text style={styles.emptyState}>None</Text>
+          <Text style={[styles.emptyState, { color: c.textFaint }]}>None</Text>
         ) : (
           <View style={styles.silencedTopicsList}>
             {topics.map((topic) => (
-              <View key={topic.id} style={styles.silencedTopic}>
-                <Text style={styles.silencedTopicName}>{topic.name}</Text>
+              <View key={topic.id} style={[styles.silencedTopic, { backgroundColor: c.bg, borderColor: c.border }]}>
+                <Text style={[styles.silencedTopicName, { color: c.text }]}>{topic.name}</Text>
                 <TouchableOpacity
-                  style={styles.resubscribeButton}
+                  style={[styles.resubscribeButton, { backgroundColor: c.resubscribeBg }]}
                   onPress={() => resubscribeTopic(topic)}
                 >
-                  <Text style={styles.resubscribeButtonText}>Re-subscribe</Text>
+                  <Text style={[styles.resubscribeButtonText, { color: c.resubscribeText }]}>Re-subscribe</Text>
                 </TouchableOpacity>
               </View>
             ))}
@@ -110,12 +114,12 @@ export default function SettingsScreen() {
     return (
       <View key={forumKey} style={styles.forumSection}>
         <TouchableOpacity
-          style={styles.forumHeaderButton}
+          style={[styles.forumHeaderButton, { backgroundColor: c.surface }]}
           onPress={() => setExpandedForum(isExpanded ? null : forumKey)}
         >
           <View style={styles.forumHeaderLeft}>
-            <Text style={styles.forumHeaderArrow}>{isExpanded ? '▼' : '▶'}</Text>
-            <Text style={styles.forumTitle}>{title}</Text>
+            <Text style={[styles.forumHeaderArrow, { color: c.textMuted }]}>{isExpanded ? '▼' : '▶'}</Text>
+            <Text style={[styles.forumTitle, { color: c.text }]}>{title}</Text>
           </View>
           {isOptional && (
             <Switch
@@ -131,24 +135,24 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
       <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Settings</Text>
+        <Text style={[styles.title, { color: c.text }]}>Settings</Text>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Preferences</Text>
-          <View style={styles.preference}>
-            <Text style={styles.preferenceLabel}>Hide snippets on read items</Text>
+          <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Preferences</Text>
+          <View style={[styles.preference, { borderBottomColor: c.border }]}>
+            <Text style={[styles.preferenceLabel, { color: c.text }]}>Hide snippets on read items</Text>
             <Switch
               value={hideSnippet}
               onValueChange={handleToggleHideSnippet}
               disabled={loading}
             />
           </View>
-          <View style={styles.preferenceColumn}>
+          <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
             <View style={styles.intervalLabelRow}>
-              <Text style={styles.preferenceLabel}>Notification Refresh Interval</Text>
-              <Text style={styles.intervalValue}>{refreshInterval}m</Text>
+              <Text style={[styles.preferenceLabel, { color: c.text }]}>Notification Refresh Interval</Text>
+              <Text style={[styles.intervalValue, { color: c.tint }]}>{refreshInterval}m</Text>
             </View>
             <Slider
               style={styles.slider}
@@ -158,13 +162,13 @@ export default function SettingsScreen() {
               value={refreshInterval}
               onValueChange={handleChangeRefreshInterval}
               disabled={loading}
-              minimumTrackTintColor="#0a7ea4"
-              maximumTrackTintColor="#e0e0e0"
+              minimumTrackTintColor={c.tint}
+              maximumTrackTintColor={c.border}
             />
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>Forums</Text>
+        <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Forums</Text>
 
         {renderForumSection('Members Forum', 'membersForum', membersForumSilenced)}
         {renderForumSection('Stock Insights', 'stockInsights', stockInsightsSilenced)}
@@ -179,7 +183,7 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1 },
   scrollContent: { flex: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24 },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20 },
   section: { marginBottom: 20 },

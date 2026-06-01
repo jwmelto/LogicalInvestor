@@ -9,12 +9,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
-  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { login } from '../services/authService';
 import { useAuth } from '../contexts/AuthContext';
+import { useColorScheme } from '../hooks/use-color-scheme';
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
@@ -22,20 +22,20 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { setAuthed } = useAuth();
+  const scheme = useColorScheme();
+  const dark = scheme === 'dark';
 
   async function handleLogin() {
     if (!username || !password) {
       setError('Please enter your username and password');
       return;
     }
-
     setLoading(true);
     setError(null);
-
     try {
       await login(username, password);
-      setAuthed(true);           // guard must be true before we navigate
-      router.replace('/(tabs)'); // then explicitly navigate
+      setAuthed(true);
+      router.replace('/(tabs)');
     } catch (e: any) {
       setError(e.message ?? 'Login failed');
     } finally {
@@ -43,29 +43,35 @@ export default function LoginScreen() {
     }
   }
 
+  const c = dark ? colors.dark : colors.light;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        {/* Banner */}
         <View style={styles.bannerContainer}>
           <Image
             source={require('../assets/images/banner.jpg')}
             style={styles.banner}
-            resizeMode="contain"
+            resizeMode="cover"
           />
         </View>
 
+        {/* Form — fills remaining space, content centered */}
         <View style={styles.form}>
-          <Text style={styles.subtitle}>Sign in to your account</Text>
+          <Text style={[styles.subtitle, { color: c.subtle }]}>
+            Sign in to your account
+          </Text>
 
           {error && <Text style={styles.error}>{error}</Text>}
 
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: c.border, color: c.text, backgroundColor: c.inputBg }]}
             placeholder="Username"
+            placeholderTextColor={c.placeholder}
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="username"
@@ -75,8 +81,9 @@ export default function LoginScreen() {
           />
 
           <TextInput
-            style={styles.input}
+            style={[styles.input, { borderColor: c.border, color: c.text, backgroundColor: c.inputBg }]}
             placeholder="Password"
+            placeholderTextColor={c.placeholder}
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}
@@ -97,29 +104,40 @@ export default function LoginScreen() {
             }
           </TouchableOpacity>
         </View>
-      </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+const colors = {
+  light: {
+    bg:          '#ffffff',
+    text:        '#111111',
+    subtle:      '#555555',
+    placeholder: '#aaaaaa',
+    border:      '#dddddd',
+    inputBg:     '#ffffff',
+  },
+  dark: {
+    bg:          '#2b2d32',
+    text:        '#f0f0f0',
+    subtle:      '#9fc4e0',
+    placeholder: '#666c7a',
+    border:      '#444850',
+    inputBg:     '#35373d',
+  },
+};
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   flex: {
     flex: 1,
   },
-  scroll: {
-    flexGrow: 1,
-  },
-  // Banner is 1239×192 (≈6.45:1). resizeMode="contain" fits it fully.
-  // Background matches the banner's left-edge gradient colour so no white bars show.
   bannerContainer: {
     width: '100%',
     aspectRatio: 780 / 192,
-    backgroundColor: '#7ba7d4',
   },
   banner: {
     width: '100%',
@@ -129,23 +147,21 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 32,
-    paddingTop: 40,
-    paddingBottom: 40,
+    paddingBottom: 24,
   },
   subtitle: {
     fontSize: 16,
     textAlign: 'center',
-    marginBottom: 32,
-    color: '#666',
+    marginBottom: 28,
   },
   error: {
-    color: '#cc0000',
+    color: '#cc3333',
     textAlign: 'center',
     marginBottom: 16,
+    fontSize: 14,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 8,
     padding: 14,
     marginBottom: 16,
@@ -156,6 +172,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
+    marginTop: 4,
   },
   buttonText: {
     color: '#fff',
