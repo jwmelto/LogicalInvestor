@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -17,6 +18,7 @@ import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../ser
 import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 import { useUnreadCounts } from '../contexts/UnreadCountContext';
+import { addNotificationAuthor } from '../services/notificationService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
 import { useColorScheme } from '../hooks/use-color-scheme';
 import { Palette } from '../constants/theme';
@@ -355,6 +357,15 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     await setCachedUnreadCounts({ ...cached, [feedKey]: 0 });
   }
 
+  function promptAddNotificationAuthor(author: string | undefined) {
+    if (!author) return;
+    const name = decodeHtmlEntities(author);
+    Alert.alert('Add to notifications', `Notify for posts by "${name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Add', onPress: () => addNotificationAuthor(name) },
+    ]);
+  }
+
   async function markTopicAsRead(topicId: string) {
     if (!section) return;
 
@@ -493,6 +504,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                                 Linking.openURL(topicSection.topic.latestItemLink);
                               }
                             }}
+                            onLongPress={() => promptAddNotificationAuthor(topicSection.topic.latestAuthor)}
                           >
                             {(topicSection.topic.latestAuthor || topicSection.topic.latestPubDate) && (
                               <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
@@ -533,6 +545,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                               key={item.id}
                               style={[styles.topicItem, { backgroundColor: c.bg }]}
                               onPress={() => onPressItem(item)}
+                              onLongPress={() => promptAddNotificationAuthor(item.author)}
                             >
                               <View style={styles.itemMeta}>
                                 <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
@@ -574,6 +587,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         key={item.id}
                         style={[styles.item, { backgroundColor: c.bg }]}
                         onPress={() => onPressItem(item)}
+                        onLongPress={() => promptAddNotificationAuthor(item.author)}
                       >
                         <View style={styles.titleRow}>
                           <Text style={[styles.itemTitle, { color: c.text }]}>{decodeHtmlEntities(item.title)}</Text>

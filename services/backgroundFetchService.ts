@@ -4,6 +4,7 @@ import { fetchAllFeeds } from './feedService';
 import { isAuthenticated } from './authService';
 import { getUnreadCount } from './readStateService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from './storageService';
+import { processNewItemsForNotifications } from './notificationService';
 
 export const BACKGROUND_FETCH_TASK = 'background-feed-refresh';
 
@@ -14,6 +15,9 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     if (!authed) return BackgroundFetch.BackgroundFetchResult.NoData;
 
     const results = await fetchAllFeeds();
+
+    const allItems = results.flatMap((r) => (r.accessible ? r.items : []));
+    await processNewItemsForNotifications(allItems);
 
     // Compute unread counts and persist so all tabs have correct badges on next foreground
     const existing = await getCachedUnreadCounts();

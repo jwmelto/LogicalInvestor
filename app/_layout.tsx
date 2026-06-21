@@ -8,8 +8,18 @@ import 'react-native-reanimated';
 // Keep the splash screen visible until we've checked auth state
 SplashScreen.preventAutoHideAsync();
 
+import * as Notifications from 'expo-notifications';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 import { isAuthenticated } from '../services/authService';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';

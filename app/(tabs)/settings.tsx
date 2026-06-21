@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
+import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, processNewItemsForNotifications, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
+import { fetchAllFeeds } from '../../services/feedService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../../services/subscriptionService';
@@ -19,6 +21,9 @@ export default function SettingsScreen() {
   const [hideSnippet, setHideSnippet] = useState(false);
   const [refreshInterval, setRefreshIntervalState] = useState(30);
   const [loading, setLoading] = useState(true);
+  const [notifSettings, setNotifSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [newAuthor, setNewAuthor] = useState('');
+  const [expandedNotifications, setExpandedNotifications] = useState(true);
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
   const [expandedForum, setExpandedForum] = useState<string | null>(null);
   const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
@@ -38,6 +43,9 @@ export default function SettingsScreen() {
     const hideValue = await getHideSnippetOnRead();
     setHideSnippet(hideValue);
 
+    const notif = await getNotificationSettings();
+    setNotifSettings(notif);
+
     const interval = await getRefreshInterval();
     setRefreshIntervalState(interval);
 
@@ -47,6 +55,11 @@ export default function SettingsScreen() {
     setSilencedTopics(silenced);
 
     setLoading(false);
+  }
+
+  async function handleNotifSettingChange(updated: NotificationSettings) {
+    setNotifSettings(updated);
+    await saveNotificationSettings(updated);
   }
 
   async function handleToggleHideSnippet(value: boolean) {
@@ -151,7 +164,7 @@ export default function SettingsScreen() {
           </View>
           <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
             <View style={styles.intervalLabelRow}>
-              <Text style={[styles.preferenceLabel, { color: c.text }]}>Notification Refresh Interval</Text>
+              <Text style={[styles.preferenceLabel, { color: c.text }]}>Feed Refresh Interval</Text>
               <Text style={[styles.intervalValue, { color: c.tint }]}>{refreshInterval}m</Text>
             </View>
             <Slider
@@ -168,11 +181,113 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.sectionHeader}
+            onPress={() => setExpandedNotifications((v) => !v)}
+          >
+            <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Notifications</Text>
+            <Text style={[styles.sectionArrow, { color: c.textMuted }]}>{expandedNotifications ? '▼' : '▶'}</Text>
+          </TouchableOpacity>
+          {expandedNotifications && (
+            <>
+              <View style={[styles.preference, { borderBottomColor: c.border }]}>
+                <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Enable notifications</Text>
+                <Switch
+                  value={notifSettings.enabled}
+                  onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, enabled: v })}
+                  disabled={loading}
+                />
+              </View>
+              <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
+                <View style={styles.intervalLabelRow}>
+                  <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Min content length</Text>
+                  <Text style={[styles.intervalValue, { color: c.tint }]}>
+                    {notifSettings.minContentLength === 0 ? 'any' : `${notifSettings.minContentLength} chars`}
+                  </Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={500}
+                  step={25}
+                  value={notifSettings.minContentLength}
+                  onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, minContentLength: Math.round(v) })}
+                  disabled={loading}
+                  minimumTrackTintColor={c.tint}
+                  maximumTrackTintColor={c.border}
+                />
+              </View>
+              <View style={[styles.authorFiltersContainer, { backgroundColor: c.surfaceAlt }]}>
+                <Text style={[styles.silencedTopicsLabel, { color: c.textMuted }]}>
+                  Notify for authors{notifSettings.authorFilters.length === 0 ? ' (all)' : ''}
+                </Text>
+                {notifSettings.authorFilters.length === 0 && (
+                  <Text style={[styles.emptyState, { color: c.textFaint }]}>All authors — add one to filter</Text>
+                )}
+                {notifSettings.authorFilters.map((author) => (
+                  <View key={author} style={[styles.silencedTopic, { backgroundColor: c.bg, borderColor: c.border }]}>
+                    <Text style={[styles.silencedTopicName, { color: c.text }]}>{author}</Text>
+                    <TouchableOpacity
+                      style={[styles.resubscribeButton, { backgroundColor: c.resubscribeBg }]}
+                      onPress={() => handleNotifSettingChange({
+                        ...notifSettings,
+                        authorFilters: notifSettings.authorFilters.filter((a) => a !== author),
+                      })}
+                    >
+                      <Text style={[styles.resubscribeButtonText, { color: c.resubscribeText }]}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                <View style={styles.addAuthorRow}>
+                  <TextInput
+                    style={[styles.addAuthorInput, { color: c.text, borderColor: c.border, backgroundColor: c.bg }]}
+                    value={newAuthor}
+                    onChangeText={setNewAuthor}
+                    placeholder="Add author name…"
+                    placeholderTextColor={c.textFaint}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    style={[styles.addAuthorButton, { backgroundColor: c.tint }]}
+                    onPress={() => {
+                      const trimmed = newAuthor.trim();
+                      if (trimmed && !notifSettings.authorFilters.includes(trimmed)) {
+                        handleNotifSettingChange({
+                          ...notifSettings,
+                          authorFilters: [...notifSettings.authorFilters, trimmed],
+                        });
+                      }
+                      setNewAuthor('');
+                    }}
+                  >
+                    <Text style={styles.addAuthorButtonText}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </>
+          )}
+        </View>
+
         <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Forums</Text>
 
         {renderForumSection('Members Forum', 'membersForum', membersForumSilenced)}
         {renderForumSection('Stock Insights', 'stockInsights', stockInsightsSilenced)}
         {renderForumSection('Options Insights', 'optionsInsights', optionsInsightsSilenced)}
+
+        {__DEV__ && (
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: c.tint, marginBottom: 12 }]}
+            onPress={async () => {
+              const results = await fetchAllFeeds();
+              const items = results.flatMap((r) => (r.accessible ? r.items : []));
+              await fireTestNotification(items);
+            }}
+          >
+            <Text style={styles.buttonText}>Test Notification</Text>
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity style={styles.button} onPress={handleLogout}>
           <Text style={styles.buttonText}>Log Out</Text>
@@ -191,6 +306,14 @@ const styles = StyleSheet.create({
   preference: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
   preferenceColumn: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
   preferenceLabel: { fontSize: 16, color: '#1a1a1a', marginBottom: 8 },
+  preferenceLabelInline: { fontSize: 16, color: '#1a1a1a' },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  sectionArrow: { fontSize: 12 },
+  authorFiltersContainer: { borderRadius: 8, padding: 12, marginBottom: 4 },
+  addAuthorRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  addAuthorInput: { flex: 1, borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, fontSize: 14 },
+  addAuthorButton: { borderRadius: 6, paddingHorizontal: 14, paddingVertical: 6, justifyContent: 'center' },
+  addAuthorButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   forumSection: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   forumHeaderButton: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, backgroundColor: '#f9f9f9', borderRadius: 8, marginBottom: 12 },
   forumHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },

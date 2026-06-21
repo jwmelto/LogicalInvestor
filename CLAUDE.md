@@ -193,12 +193,11 @@ Two-tier storage abstraction (app code never touches storage directly):
 
 **Critical**: iCloud KVS is NOT encrypted. Do not store feed token there. Token stays in `expo-secure-store`. Topic preferences and read state are safe in iCloud KVS.
 
-**iCloud Setup**: Entitlement already in `app.json`:
-```json
-"entitlements": {
-  "com.apple.developer.ubiquity-kvstore-identifier": "$(TeamIdentifierPrefix)$(CFBundleIdentifier)"
-}
-```
+**iCloud Setup**: Requires paid Apple Developer account. When account is active:
+1. Restore `"@nauverse/expo-cloud-settings"` to the `plugins` array in `app.json` (currently removed for personal-team compatibility)
+2. Set `useICloud = true` in `storageService.ts`
+3. Run `npx expo prebuild --platform ios --clean`
+
 Full iCloud sync requires Apple Developer account + physical device. Simulator uses AsyncStorage fallback silently.
 
 **iCloud strategy**: iCloud KVS is the right cross-platform approach for this app. No backend is a core principle, and iCloud KVS provides free cross-device sync on iOS with a transparent AsyncStorage fallback on Android. The library's TypeScript types lag behind its API in one place (`getObject` is not typed as generic); work around with a cast at the callsite rather than changing the approach.
@@ -223,9 +222,26 @@ Discovers forum topics from RSS feed items, persists them across sessions. Topic
 
 #### `backgroundFetchService.ts` - Background Refresh
 
-Registers an `expo-background-fetch` task that fetches all feeds while the app is closed. After fetching, computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
+Registers an `expo-background-fetch` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
 
 **Note**: Background fetch only runs on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
+
+**Deprecation**: `expo-background-fetch` is deprecated in favour of `expo-background-task`. Migration is pending.
+
+#### `notificationService.ts` - Local Notifications
+
+Filters incoming feed items and schedules local notifications via `expo-notifications`.
+
+**Settings** (`NotificationSettings`): `enabled`, `authorFilters` (string whitelist, substring match), `minContentLength` (stripped HTML char count, default 200).
+
+**Key logic**:
+- First run: seeds all current item IDs as "seen" without notifying (flood prevention)
+- Subsequent runs: notifies only for truly new items that pass filters, max 5 per cycle
+- Notification title format: `"Sean Hyman in EWZ:"` (strips `Reply To:` prefix)
+- `fireTestNotification()` bypasses seen-ID tracking for dev testing (`__DEV__` gated button in Settings)
+- `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
+
+**Storage keys**: `notification_settings`, `notification_seen_ids`
 
 ### Contexts
 
@@ -310,19 +326,21 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Inaccessible feeds filtered out (Options Insights hidden if no access)
 - ✅ Logout clears token and redirects to login
 - ✅ iCloud/AsyncStorage storage abstraction; TypeScript strict mode clean (zero compiler errors)
+- ✅ Local notifications triggered by background fetch — filtered by author whitelist + minimum content length
+- ✅ Long-press any post/preview to add that author to notification whitelist
+- ✅ Notification settings in Settings screen (collapsible section: enable toggle, min length slider, author whitelist list)
+- ✅ Build number auto-increments via `preios` npm hook + `scripts/bump-build.js`
 
 ### Not Yet Implemented (Prioritized)
 
-1. **Topic Subscription UI** in Settings screen
+1. **Remote Push Notifications** (APNs) — replace background fetch polling with server-triggered push; requires paid Apple Developer account
+2. **Topic Subscription UI** in Settings screen
    - Per-forum default subscription toggles
    - List of all discovered topics with individual subscribe/unsubscribe
    - "Silenced Topics" section to restore previously hidden topics
-
-2. **"Thanks" Post Filtering** (filter titles containing "Reply To: Thanks")
-3. **Push Notifications** (Members Area always notifies; forum topics notify if subscribed)
-4. **Android Build** (untested)
-5. **iCloud Sync Testing** on physical device (requires Apple Developer account)
-6. **Search** (deferred; use site's native search via WebView)
+3. **Android Build** (untested)
+4. **iCloud Sync Testing** on physical device (requires Apple Developer account)
+5. **Search** (deferred; use site's native search via WebView)
 
 ### Known Issues
 
@@ -330,6 +348,8 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
 - Debug `console.log` for Members Area XML still present in `feedService.ts` (line ~86)
+- `expo-background-fetch` deprecation warning — pending migration to `expo-background-task`
+- `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
 - reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing

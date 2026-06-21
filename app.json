@@ -11,7 +11,8 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
-      "deploymentTarget": "18.0"
+      "deploymentTarget": "18.0",
+      "buildNumber": "2"
     },
     "android": {
       "adaptiveIcon": {
@@ -41,7 +42,6 @@
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "@nauverse/expo-cloud-settings",
       "expo-background-fetch",
       "expo-task-manager"
     ],
