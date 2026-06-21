@@ -3,6 +3,10 @@ import * as SecureStore from 'expo-secure-store';
 const BASE_URL = 'https://logicalinvestor.net';
 const LOGIN_URL = 'https://logicalinvestor.net/backend/';
 const TOKEN_KEY = 'feed_token';
+// AFTER_FIRST_UNLOCK: stays in secure enclave but readable in background after first device unlock
+const KEYCHAIN_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+};
 
 async function fetchFeedToken(cookies: string): Promise<string> {
   const response = await fetch(`${BASE_URL}/my-feed-url`, {
@@ -59,12 +63,12 @@ export async function login(username: string, password: string): Promise<void> {
   // Step 3: Fetch the feed token using the auth cookies
   const token = await fetchFeedToken(authCookies);
 
-  // Step 4: Store it securely
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
+  // Step 4: Store securely with background-accessible keychain policy
+  await SecureStore.setItemAsync(TOKEN_KEY, token, KEYCHAIN_OPTIONS);
 }
 
 export async function getToken(): Promise<string | null> {
-  return await SecureStore.getItemAsync(TOKEN_KEY);
+  return await SecureStore.getItemAsync(TOKEN_KEY, KEYCHAIN_OPTIONS);
 }
 
 export async function logout(): Promise<void> {

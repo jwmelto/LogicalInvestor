@@ -277,16 +277,28 @@ export default function SettingsScreen() {
         {renderForumSection('Options Insights', 'optionsInsights', optionsInsightsSilenced)}
 
         {__DEV__ && (
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: c.tint, marginBottom: 12 }]}
-            onPress={async () => {
-              const results = await fetchAllFeeds();
-              const items = results.flatMap((r) => (r.accessible ? r.items : []));
-              await fireTestNotification(items);
-            }}
-          >
-            <Text style={styles.buttonText}>Test Notification</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: c.tint, marginBottom: 12 }]}
+              onPress={async () => {
+                const results = await fetchAllFeeds();
+                const items = results.flatMap((r) => (r.accessible ? r.items : []));
+                await fireTestNotification(items);
+              }}
+            >
+              <Text style={styles.buttonText}>Test Notification</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: c.tint, marginBottom: 12 }]}
+              onPress={async () => {
+                const results = await fetchAllFeeds();
+                const items = results.flatMap((r) => (r.accessible ? r.items : []));
+                await fireTestNotification(items, 5);
+              }}
+            >
+              <Text style={styles.buttonText}>Test Notification (5s delay)</Text>
+            </TouchableOpacity>
+          </>
         )}
 
         <TouchableOpacity style={styles.button} onPress={handleLogout}>

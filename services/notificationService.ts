@@ -27,14 +27,14 @@ export async function saveNotificationSettings(settings: NotificationSettings): 
 }
 
 // Fires one notification for the first item passing the current filters, ignoring seen state.
-export async function fireTestNotification(items: FeedItem[]): Promise<void> {
+export async function fireTestNotification(items: FeedItem[], delaySecs?: number): Promise<void> {
   const settings = await getNotificationSettings();
   const match = items.find((item) => passes(item, settings));
   if (!match) return;
   const body = stripHtml(match.excerpt ?? '').slice(0, 150);
   await Notifications.scheduleNotificationAsync({
-    content: { title: `[TEST] ${formatTitle(match)}`, body: body || match.feedName, data: { link: match.link } },
-    trigger: null,
+    content: { title: `[TEST] ${formatTitle(match)}`, body: body || match.feedName, sound: true, data: { link: match.link } },
+    trigger: delaySecs ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: delaySecs } : null,
   });
 }
 
@@ -61,10 +61,7 @@ function passes(item: FeedItem, settings: NotificationSettings): boolean {
     const author = item.author?.toLowerCase() ?? '';
     if (!settings.authorFilters.some((f) => author.includes(f.toLowerCase()))) return false;
   }
-  if (settings.minContentLength > 0) {
-    return stripHtml(item.excerpt ?? '').length >= settings.minContentLength;
-  }
-  return true;
+  return stripHtml(item.excerpt ?? '').length >= settings.minContentLength;
 }
 
 export async function processNewItemsForNotifications(items: FeedItem[]): Promise<void> {
@@ -94,6 +91,7 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
       content: {
         title: formatTitle(item),
         body: body || item.feedName,
+        sound: true,
         data: { link: item.link },
       },
       trigger: null,
