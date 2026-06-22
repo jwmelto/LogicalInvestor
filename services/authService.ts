@@ -72,6 +72,8 @@ export async function getToken(): Promise<string | null> {
 }
 
 export async function logout(): Promise<void> {
+  const { unregisterPushToken } = await import('./pushService');
+  await unregisterPushToken();
   await SecureStore.deleteItemAsync(TOKEN_KEY);
 }
 

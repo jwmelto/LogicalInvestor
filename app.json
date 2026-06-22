@@ -12,7 +12,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
       "deploymentTarget": "18.0",
-      "buildNumber": "2"
+      "buildNumber": "7"
     },
     "android": {
       "adaptiveIcon": {
@@ -23,7 +23,11 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "space.melton.logicalinvestor"
+      "package": "space.melton.logicalinvestor",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
     },
     "web": {
       "output": "static",
@@ -48,6 +52,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "bdd67330-9e67-45c0-8b4b-2c726d53aac7"
+      }
+    },
+    "owner": "jwmelto"
   }
 }

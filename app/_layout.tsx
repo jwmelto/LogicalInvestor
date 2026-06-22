@@ -25,6 +25,7 @@ import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
 import { UnreadCountProvider } from '../contexts/UnreadCountContext';
 import { registerBackgroundFetch } from '../services/backgroundFetchService';
+import { registerPushToken } from '../services/pushService';
 
 function RootLayoutInner() {
   const colorScheme = useColorScheme();
@@ -41,6 +42,10 @@ function RootLayoutInner() {
 
     registerBackgroundFetch();
   }, []);
+
+  useEffect(() => {
+    if (authed) registerPushToken();
+  }, [authed]);
 
   if (loading) return null; // splash screen is still visible during this time
 

@@ -7,6 +7,7 @@ import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
 import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, processNewItemsForNotifications, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
+import { getPushLevel, registerPushToken, type PushLevel } from '../../services/pushService';
 import { fetchAllFeeds } from '../../services/feedService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
@@ -22,6 +23,7 @@ export default function SettingsScreen() {
   const [refreshInterval, setRefreshIntervalState] = useState(30);
   const [loading, setLoading] = useState(true);
   const [notifSettings, setNotifSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [pushLevel, setPushLevelState] = useState<PushLevel>('standard');
   const [newAuthor, setNewAuthor] = useState('');
   const [expandedNotifications, setExpandedNotifications] = useState(true);
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
@@ -46,6 +48,9 @@ export default function SettingsScreen() {
     const notif = await getNotificationSettings();
     setNotifSettings(notif);
 
+    const level = await getPushLevel();
+    setPushLevelState(level);
+
     const interval = await getRefreshInterval();
     setRefreshIntervalState(interval);
 
@@ -55,6 +60,11 @@ export default function SettingsScreen() {
     setSilencedTopics(silenced);
 
     setLoading(false);
+  }
+
+  async function handlePushLevelChange(level: PushLevel) {
+    setPushLevelState(level);
+    await registerPushToken(level);
   }
 
   async function handleNotifSettingChange(updated: NotificationSettings) {
@@ -198,6 +208,28 @@ export default function SettingsScreen() {
                   onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, enabled: v })}
                   disabled={loading}
                 />
+              </View>
+              <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
+                <Text style={[styles.preferenceLabelInline, { color: c.text, marginBottom: 8 }]}>Push notification level</Text>
+                <View style={styles.levelRow}>
+                  {(['minimal', 'standard', 'all'] as PushLevel[]).map((level) => (
+                    <TouchableOpacity
+                      key={level}
+                      style={[styles.levelButton, { borderColor: c.tint }, pushLevel === level && { backgroundColor: c.tint }]}
+                      onPress={() => handlePushLevelChange(level)}
+                      disabled={loading}
+                    >
+                      <Text style={[styles.levelButtonText, { color: pushLevel === level ? '#fff' : c.tint }]}>
+                        {level === 'minimal' ? 'Minimal' : level === 'standard' ? 'Standard' : 'All Sean'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={[styles.levelHint, { color: c.textFaint }]}>
+                  {pushLevel === 'minimal' ? 'Members Area posts only'
+                    : pushLevel === 'standard' ? 'Sean only · long posts · starred SI topics'
+                    : 'All posts from Sean Hyman'}
+                </Text>
               </View>
               <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
                 <View style={styles.intervalLabelRow}>
@@ -344,4 +376,8 @@ const styles = StyleSheet.create({
   intervalLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   intervalValue: { fontSize: 16, fontWeight: '600', color: '#0a7ea4' },
   slider: { width: '100%', height: 30 },
+  levelRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  levelButton: { flex: 1, borderWidth: 1, borderRadius: 6, paddingVertical: 6, alignItems: 'center' },
+  levelButtonText: { fontSize: 13, fontWeight: '600' },
+  levelHint: { fontSize: 12, fontStyle: 'italic' },
 });
