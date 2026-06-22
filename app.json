@@ -12,7 +12,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
       "deploymentTarget": "18.0",
-      "buildNumber": "7"
+      "buildNumber": "8"
     },
     "android": {
       "adaptiveIcon": {
