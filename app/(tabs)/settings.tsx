@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import Constants from 'expo-constants';
 import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -336,6 +337,10 @@ export default function SettingsScreen() {
         <TouchableOpacity style={styles.button} onPress={handleLogout}>
           <Text style={styles.buttonText}>Log Out</Text>
         </TouchableOpacity>
+
+        <Text style={[styles.buildInfo, { color: c.textMuted }]}>
+          v{Constants.expoConfig?.version} ({Constants.expoConfig?.ios?.buildNumber})
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -380,4 +385,5 @@ const styles = StyleSheet.create({
   levelButton: { flex: 1, borderWidth: 1, borderRadius: 6, paddingVertical: 6, alignItems: 'center' },
   levelButtonText: { fontSize: 13, fontWeight: '600' },
   levelHint: { fontSize: 12, fontStyle: 'italic' },
+  buildInfo: { fontSize: 12, textAlign: 'center', marginTop: 16, marginBottom: 8 },
 });
