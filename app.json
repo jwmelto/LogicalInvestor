@@ -45,6 +45,7 @@
       ],
       "expo-secure-store",
       "expo-web-browser",
+      "@nauverse/expo-cloud-settings",
       "expo-background-fetch",
       "expo-task-manager"
     ],
