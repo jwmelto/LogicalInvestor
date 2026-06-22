@@ -6,10 +6,17 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useForumVisibility } from '@/contexts/ForumVisibilityContext';
+import { useUnreadCounts } from '@/contexts/UnreadCountContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { visibility: forumVisibility } = useForumVisibility();
+  const { counts } = useUnreadCounts();
+
+  function badge(feedKey: keyof typeof counts) {
+    const n = counts[feedKey];
+    return n && n > 0 ? '' : undefined;
+  }
 
   return (
     <Tabs
@@ -17,6 +24,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarBadgeStyle: { transform: [{ scale: 0.5 }] },
       }}>
       <Tabs.Screen
         name="index"
@@ -29,6 +37,7 @@ export default function TabLayout() {
         options={{
           title: 'Members Area',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarBadge: badge('membersArea'),
         }}
       />
       <Tabs.Screen
@@ -36,6 +45,7 @@ export default function TabLayout() {
         options={{
           title: 'Members Forum',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.and.bubble.right.fill" color={color} />,
+          tabBarBadge: badge('membersForum'),
         }}
       />
       <Tabs.Screen
@@ -44,6 +54,7 @@ export default function TabLayout() {
           title: 'Stock Insights',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.line.uptrend.xyaxis" color={color} />,
           href: forumVisibility.stockInsights ? undefined : null,
+          tabBarBadge: badge('stockInsights'),
         }}
       />
       <Tabs.Screen
@@ -52,6 +63,7 @@ export default function TabLayout() {
           title: 'Options Insights',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.line.uptrend.xyaxis" color={color} />,
           href: forumVisibility.optionsInsights ? undefined : null,
+          tabBarBadge: badge('optionsInsights'),
         }}
       />
       <Tabs.Screen

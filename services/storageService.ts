@@ -8,7 +8,10 @@ try {
   // CloudSettings not available (e.g., in simulator without proper native build)
 }
 
-const useICloud = Platform.OS === 'ios' && CloudSettings?.isAvailable?.();
+// iCloud entitlement is not present in current builds (removed for personal-team
+// compatibility). Force AsyncStorage until the entitlement is restored in app.json
+// and a paid developer account is used.
+const useICloud = false;
 
 export async function storageGet(key: string): Promise<string | null> {
   if (useICloud && CloudSettings) {
@@ -35,7 +38,7 @@ export async function storageRemove(key: string): Promise<void> {
 
 export async function storageGetObject<T>(key: string): Promise<T | null> {
   if (useICloud && CloudSettings) {
-    return CloudSettings.getObject<T>(key) ?? null;
+    return (CloudSettings.getObject(key) as T | null) ?? null;
   }
   const val = await AsyncStorage.getItem(key);
   return val ? JSON.parse(val) : null;
@@ -78,6 +81,17 @@ export async function getForumVisibility(): Promise<ForumVisibility> {
 
 export async function setForumVisibility(visibility: ForumVisibility): Promise<void> {
   await storageSetObject('forumVisibility', visibility);
+}
+
+// Cached unread counts (persisted so all tabs show correct badges on app open)
+const CACHED_UNREAD_KEY = 'cached_unread_counts';
+
+export async function getCachedUnreadCounts(): Promise<Record<string, number>> {
+  return (await storageGetObject<Record<string, number>>(CACHED_UNREAD_KEY)) ?? {};
+}
+
+export async function setCachedUnreadCounts(counts: Record<string, number>): Promise<void> {
+  await storageSetObject(CACHED_UNREAD_KEY, counts);
 }
 
 // Background refresh interval (in minutes, 1-120)

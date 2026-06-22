@@ -2,7 +2,6 @@
   "expo": {
     "name": "LogicalInvestor",
     "slug": "LogicalInvestor",
-    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "logicalinvestor",
@@ -12,9 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
       "deploymentTarget": "18.0",
-      "entitlements": {
-        "com.apple.developer.ubiquity-kvstore-identifier": "$(TeamIdentifierPrefix)$(CFBundleIdentifier)"
-      }
+      "buildNumber": "9"
     },
     "android": {
       "adaptiveIcon": {
@@ -25,7 +22,11 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "space.melton.logicalinvestor"
+      "package": "space.melton.logicalinvestor",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
     },
     "web": {
       "output": "static",
@@ -37,31 +38,26 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 350,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
+          "backgroundColor": "#2b2d32"
         }
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "@nauverse/expo-cloud-settings",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/notification-icon.png",
-          "color": "#0a7ea4",
-          "modes": "productionMode"
-        }
-      ],
       "expo-background-fetch",
       "expo-task-manager"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "bdd67330-9e67-45c0-8b4b-2c726d53aac7"
+      }
+    },
+    "owner": "jwmelto"
   }
 }

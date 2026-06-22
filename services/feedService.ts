@@ -13,6 +13,7 @@ export const FEEDS = {
     url: 'https://logicalinvestor.net/feed/',
     priority: 'high',
     alwaysVisible: true,
+    hasSubFeeds: false,
   },
   membersForum: {
     name: 'Members Forum',
@@ -80,11 +81,6 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
     }
 
     const xml = await response.text();
-
-if (feedKey === 'membersArea') {
-  console.log('Members Area XML:', xml.substring(0, 500));
-}
-
     const parsed = parser.parse(xml);
     const channel = parsed?.rss?.channel;
     const rawItems = Array.isArray(channel?.item)

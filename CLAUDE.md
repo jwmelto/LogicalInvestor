@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LogicalInvestor is a React Native (Expo) iOS/Android app that serves as a full replacement for visiting logicalinvestor.net. It reads paywalled WordPress/bbPress forum content using a per-user feed token for authentication. The app is intended to be distributed to other subscribers of the site, not just personal use.
+LogicalInvestor is a React Native (Expo) iOS/Android app that serves as a full replacement for visiting logicalinvestor.net. It reads paywalled WordPress/bbPress forum content using a per-user feed token for authentication. The app is intended to be distributed to other subscribers of the site.
 
 The app requires authentication via WordPress login, stores credentials securely, and syncs data across devices (iCloud on iOS, AsyncStorage on other platforms).
 
@@ -13,10 +13,6 @@ The app requires authentication via WordPress login, stores credentials securely
 **Project path:** `~/development/LogicalInvestor`  
 **Bundle ID:** `space.melton.logicalinvestor`  
 **Git branch:** `main`
-
-### Machines
-- Mac Mini (zsh)
-- iMac
 
 ### Critical Toolchain
 
@@ -49,7 +45,7 @@ npm run ios         # Build and run on iOS simulator
 
 ## Development Workflow
 
-**Feature branches:** Jim uses feature branches for all work (e.g., `feature/push-notifications`). Merge to `main` when complete. This keeps history clean and provides safe rollback.
+Use feature branches for all work (e.g., `feature/push-notifications`). Merge to `main` when complete. This keeps history clean and provides safe rollback.
 
 ## Tech Stack
 
@@ -64,6 +60,7 @@ npm run ios         # Build and run on iOS simulator
 - **Data Parsing**: `fast-xml-parser` (RSS/XML feeds)
 - **WebView**: `react-native-webview` (post viewer)
 - **UI Components**: Native React Native components with custom theming
+- **Background Tasks**: `expo-background-fetch` + `expo-task-manager`
 
 ## Commands
 
@@ -112,7 +109,7 @@ No backend. The app talks directly to logicalinvestor.net. Everything is token-a
 The app uses a protected routing pattern:
 - **Authentication Guard**: Routes protected via `<Stack.Protected guard={authed}>`
 - Unauthenticated users see `login` screen
-- Authenticated users see `(tabs)` layout (home) with modal and post routes available
+- Authenticated users see `(tabs)` layout with per-forum tabs and Settings
 - Uses `useColorScheme()` hook to apply theme (light/dark) via React Navigation's `ThemeProvider`
 
 **Important**: Do NOT use `router.replace()` from `_layout.tsx` — it causes remounting loops. Use `Stack.Protected` pattern (Expo Router SDK 53+).
@@ -162,6 +159,8 @@ Options Insights: https://logicalinvestor.net/forums/forum/options-insights/feed
 
 All require `?feed_token=<token>` appended. Stock Insights and Options Insights are optional paid subscriptions — they return 0 items if the user lacks access. This is correct behavior, not a bug.
 
+Each entry in `FEEDS` includes a `hasSubFeeds` boolean. Feeds with `hasSubFeeds: true` trigger topic discovery via `topicService`.
+
 **Topic Sub-feeds**: For a topic URL like `https://logicalinvestor.net/forums/topic/nvo/`, the sub-feed is `https://logicalinvestor.net/forums/topic/nvo/feed/`. Derived dynamically in `fetchTopicFeed()` — no hardcoding needed.
 
 **Parsing**: Uses `fast-xml-parser` with config:
@@ -194,33 +193,99 @@ Two-tier storage abstraction (app code never touches storage directly):
 
 **Critical**: iCloud KVS is NOT encrypted. Do not store feed token there. Token stays in `expo-secure-store`. Topic preferences and read state are safe in iCloud KVS.
 
-**iCloud Setup**: Entitlement already in `app.json`:
-```json
-"entitlements": {
-  "com.apple.developer.ubiquity-kvstore-identifier": "$(TeamIdentifierPrefix)$(CFBundleIdentifier)"
-}
-```
+**iCloud Setup**: Requires paid Apple Developer account. When account is active:
+1. Restore `"@nauverse/expo-cloud-settings"` to the `plugins` array in `app.json` (currently removed for personal-team compatibility)
+2. Set `useICloud = true` in `storageService.ts`
+3. Run `npx expo prebuild --platform ios --clean`
+
 Full iCloud sync requires Apple Developer account + physical device. Simulator uses AsyncStorage fallback silently.
+
+**iCloud strategy**: iCloud KVS is the right cross-platform approach for this app. No backend is a core principle, and iCloud KVS provides free cross-device sync on iOS with a transparent AsyncStorage fallback on Android. The library's TypeScript types lag behind its API in one place (`getObject` is not typed as generic); work around with a cast at the callsite rather than changing the approach.
 
 #### `readStateService.ts` - Read/Unread Tracking
 
-Tracks which posts user has viewed. Stores read post IDs in storage. Feed sections display unread badge counts. Tapping a post marks it read immediately, decrements badge.
+Tracks which posts have been viewed. Stores read post IDs as an array in storage.
+
+**Important**: Always use `markAllRead(ids[])` when marking multiple items at once. Individual `markRead()` calls run concurrent read-modify-write cycles on the same storage key and will race/overwrite each other.
+
+**Key Functions**: `isRead()`, `markRead()`, `markAllRead()`, `getUnreadCount()`
 
 #### `subscriptionService.ts` - Topic Subscriptions
 
 Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed topics hidden from feed view. **LOCAL ONLY** — does not interact with site's email subscription system.
 
+#### `topicService.ts` - Topic Discovery
+
+Discovers forum topics from RSS feed items, persists them across sessions. Topics are sorted by `lastUpdatedAt` so active discussions float to the top.
+
+**Key Functions**: `updateTopicsFromFeedItems()`, `getTopicsForForum()`, `generateTopicFeedUrl()`, `extractTopicFromTitle()`
+
+#### `backgroundFetchService.ts` - Background Refresh
+
+Registers an `expo-background-fetch` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
+
+**Note**: Background fetch only runs on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
+
+**Deprecation**: `expo-background-fetch` is deprecated in favour of `expo-background-task`. Migration is pending.
+
+#### `notificationService.ts` - Local Notifications
+
+Filters incoming feed items and schedules local notifications via `expo-notifications`.
+
+**Settings** (`NotificationSettings`): `enabled`, `authorFilters` (string whitelist, substring match), `minContentLength` (stripped HTML char count, default 200).
+
+**Key logic**:
+- First run: seeds all current item IDs as "seen" without notifying (flood prevention)
+- Subsequent runs: notifies only for truly new items that pass filters, max 5 per cycle
+- Notification title format: `"Sean Hyman in EWZ:"` (strips `Reply To:` prefix)
+- `fireTestNotification()` bypasses seen-ID tracking for dev testing (`__DEV__` gated button in Settings)
+- `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
+
+**Storage keys**: `notification_settings`, `notification_seen_ids`
+
+### Contexts
+
+**Location**: `contexts/` directory
+
+#### `UnreadCountContext.tsx` - Unread Badge State + Refresh Timer
+
+Central store for per-feed unread counts that drives tab bar badges. Also owns the foreground refresh timer.
+
+**Badges**: Each `ForumFeed` publishes its unread count here after loading. The tab layout reads counts and sets `tabBarBadge`. On app launch, counts are seeded from `cached_unread_counts` in storage so all badges appear immediately.
+
+**Foreground refresh timer**:
+- Fires every N minutes (configured via `getRefreshInterval()`, default 30 min)
+- Increments `refreshSignal`; all mounted `ForumFeed` components re-fetch when signal changes
+- Pauses when app is backgrounded (no JS wakeups)
+- On foreground return: resumes with remaining time if not yet due; fires after 1.5s delay if overdue (delay lets any in-flight `markRead` writes settle before re-fetching)
+- Manual pull-to-refresh calls `notifyManualRefresh()` to reset the timer from zero
+
+#### `ForumVisibilityContext.tsx` - Forum Tab Visibility
+
+Persists which optional forum tabs (Stock Insights, Options Insights) are enabled. Drives `href: null` in the tab layout to hide disabled tabs entirely.
+
 ### UI Structure
 
 **Tabs Layout**: `app/(tabs)/_layout.tsx`
-- Bottom tab navigation with two main tabs
-- Home screen (`index.tsx`) — feed display
-- Settings screen (`settings.tsx`) — logout button, (future: topic subscriptions)
+- Per-forum tabs: Members Area, Members Forum, Stock Insights (optional), Options Insights (optional), Settings
+- Tab badges: red dot shown when feed has unread items; 50% scaled via `tabBarBadgeStyle`
+- Optional forums hidden (not grayed) via `href: null` when disabled in Settings
+
+**Tab Screens**:
+- `members-area.tsx`, `members-forum.tsx`, `stock-insights.tsx`, `options-insights.tsx` — thin wrappers that render `<ForumFeed feedKey="..." />`
+- `settings.tsx` — logout, forum visibility toggles, refresh interval
 
 **Additional Screens**:
 - `login.tsx` — Authentication screen
 - `modal.tsx` — Modal presentation
-- `post.tsx` — WebView post detail viewer (headerShown: true, loads authenticated feed URL with token appended via `URL.searchParams.set()`)
+- `post.tsx` — WebView post detail viewer (headerShown: true, loads authenticated URL with token via `URL.searchParams.set()`)
+
+**`ForumFeed` component** (`components/ForumFeed.tsx`):
+The core UI component. Handles flat feeds (Members Area) and topic-based feeds (forum tabs).
+- Header row shows forum title + "Mark all read" button when unread items exist
+- Flat feeds: individual `[new]` badges are tappable to mark that post read without opening it
+- Topic feeds: hierarchical display (Topic → posts), tappable `[new]` badge per topic, topic preview snippet (latest post) shown only when `unreadCount > 0`
+- Pull-to-refresh triggers `notifyManualRefresh()` on the context to reset the timer
 
 ### Theming
 
@@ -238,97 +303,109 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 
 - `use-color-scheme.ts` / `use-color-scheme.web.ts` — Detects system dark/light mode preference (platform-specific)
 - `use-theme-color.ts` — Applies theme colors based on color scheme
+- `use-notification-permissions.ts` — Requests notification permissions on app launch
 
 ## Current Features & State
 
 ### Implemented
 - ✅ WordPress authentication with secure token storage
 - ✅ Multi-feed RSS aggregation (4 feeds: Members Area, Forum, Stock/Options Insights)
-- ✅ Collapsible feed sections with expand/collapse toggle
-- ✅ Unread count tracking per feed (section and topic level)
-- ✅ Read state persistence
+- ✅ Per-forum tabs; optional forums (Stock/Options Insights) can be hidden entirely via Settings
+- ✅ Topic discovery & display: auto-discover forum topics from RSS, hierarchical UI (Forum → Topic → Posts), lazy-load topic feeds, per-topic subscription
+- ✅ Topic UX: previews persist across refreshes, tappable `[new]` badge per topic, preview only shown when topic has unread posts
+- ✅ Read state persistence with atomic batch writes (`markAllRead`)
+- ✅ "Mark all read" button in every feed header (dismisses historical backlog on first use)
+- ✅ Tappable `[new]` badges on individual flat-feed posts
+- ✅ Tab bar red-dot badges (all tabs); seeded from storage on launch so unvisited tabs show correct state
+- ✅ Foreground refresh timer (configurable interval, pauses when backgrounded, resumes correctly on return)
+- ✅ Background fetch (physical device only) — keeps feed data fresh and updates cached badge counts
+- ✅ Pull-to-refresh resets the foreground timer
 - ✅ Post detail viewer with WebView
-- ✅ Pull-to-refresh on main feed
 - ✅ Dark/light mode support
 - ✅ Cross-platform (iOS with iCloud sync, Android, Web)
 - ✅ Inaccessible feeds filtered out (Options Insights hidden if no access)
 - ✅ Logout clears token and redirects to login
-- ✅ iCloud/AsyncStorage storage abstraction in place
-- ✅ Topic discovery & display: Auto-discover forum topics from RSS, extract actual slugs from post links, nested hierarchical UI (Forum → Topic → Posts), lazy-load topic feeds, per-topic subscription backend
-- ✅ Topic UX improvements:
-  - Topic previews (author/excerpt) persist across feed refreshes
-  - Tappable [new] badge to mark entire topic as read (works collapsed or expanded)
-  - Topic posts always show snippets (hideSnippetOnRead doesn't apply to topics)
-  - Topic preview hides when preview post is marked as read
-  - Topic posts load during initial build if topic was previously expanded
+- ✅ iCloud/AsyncStorage storage abstraction; TypeScript strict mode clean (zero compiler errors)
+- ✅ Local notifications triggered by background fetch — filtered by author whitelist + minimum content length
+- ✅ Long-press any post/preview to add that author to notification whitelist
+- ✅ Notification settings in Settings screen (collapsible section: enable toggle, min length slider, author whitelist list)
+- ✅ Build number auto-increments via `preios` npm hook + `scripts/bump-build.js`
 
 ### Not Yet Implemented (Prioritized)
 
-1. **Dynamic Forum Tabs** — Replace single-feed view with per-forum tabs
-   - Each forum becomes its own tab (Members Forum, Stock Insights, Options Insights)
-   - Forums can be enabled/disabled via Settings
-   - Disabled forums' tabs are completely hidden (not grayed out)
-   - Only visible forums appear in tab bar
-
+1. **Remote Push Notifications** (APNs) — replace background fetch polling with server-triggered push; requires paid Apple Developer account
 2. **Topic Subscription UI** in Settings screen
    - Per-forum default subscription toggles
    - List of all discovered topics with individual subscribe/unsubscribe
    - "Silenced Topics" section to restore previously hidden topics
-
-3. **"Thanks" Post Filtering** (filter titles containing "Reply To: Thanks")
-4. **Push Notifications** (Members Area always notifies; forum topics notify if subscribed)
-5. **Android Build** (untested)
-6. **iCloud Sync Testing** on physical device (requires Apple Developer account)
-7. **Search** (deferred; use site's native search via WebView)
+3. **Android Build** (untested)
+4. **iCloud Sync Testing** on physical device (requires Apple Developer account)
+5. **Search** (deferred; use site's native search via WebView)
 
 ### Known Issues
 
 **Minor Issues**:
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
+- Debug `console.log` for Members Area XML still present in `feedService.ts` (line ~86)
+- `expo-background-fetch` deprecation warning — pending migration to `expo-background-task`
+- `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
 - reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing
 - WebView correctly navigates to post anchor (e.g. `#post-287927`) automatically
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
-- Topic previews hide `hideSnippetOnRead` setting; individual topic posts always show snippets for conversation context
-- Topic [new] badge is tappable from both collapsed and expanded states to quickly mark all posts read
+- Background fetch does not run in simulator — requires physical device
+- `section.unreadCount` on topic-based feeds reflects the top-level 25-item feed window, not the strict sum of per-topic unread counts; this is a known approximation
 
 ## Development Notes
 
-- **Strict TypeScript**: All files use `tsconfig.json` with `strict: true`
+- **Strict TypeScript**: All files use `tsconfig.json` with `strict: true`. Zero compiler errors.
 - **ESLint**: Uses expo config, ignores `/dist/*` directory
 - **Token Management**: Feed token is app-level state, not synced per-feed
 - **XML Parsing**: Handles both single items and arrays in RSS channels
 - **Error States**: FeedService returns `accessible: false` for 401/403, optional `error` for other failures
 - **Async Storage**: All storage operations are async; no synchronous access patterns
+- **Batch writes**: When marking multiple items read, always use `markAllRead()` — concurrent `markRead()` calls race on the same storage key
 - **Read State**: Tracked via `readStateService`, unread counts updated real-time when posts are viewed
 - **Feed Organization**: Uses `FeedKey` type to ensure type-safe feed references throughout app
 - **WebView Auth**: Post URLs include token via `URL.searchParams.set('feed_token', token)`
+- **State updaters**: Do not perform async side effects (e.g. storage writes) inside React `setState` updater functions — run them before the state update and await completion
 
 ## File Structure
 
 ```
 ~/development/LogicalInvestor/
 ├── app/
-│   ├── _layout.tsx          ← Root layout, Stack.Protected auth gate
+│   ├── _layout.tsx          ← Root layout, Stack.Protected auth gate, provider tree
 │   ├── login.tsx            ← Login screen
 │   ├── post.tsx             ← WebView post viewer
 │   └── (tabs)/
-│       ├── _layout.tsx      ← Tab bar (Feed + Settings)
-│       ├── index.tsx        ← Feed screen (collapsible sections)
-│       └── settings.tsx     ← Settings (logout button, future: subscriptions)
+│       ├── _layout.tsx      ← Tab bar with badges; per-forum tabs
+│       ├── index.tsx        ← Redirects to members-area
+│       ├── members-area.tsx ← Flat feed tab
+│       ├── members-forum.tsx← Topic-based feed tab
+│       ├── stock-insights.tsx
+│       ├── options-insights.tsx
+│       └── settings.tsx     ← Logout, forum visibility, refresh interval
+├── components/
+│   └── ForumFeed.tsx        ← Core feed UI (flat + topic modes)
+├── contexts/
+│   ├── ForumVisibilityContext.tsx ← Which optional tabs are shown
+│   └── UnreadCountContext.tsx     ← Tab badge counts + foreground refresh timer
 ├── services/
 │   ├── authService.ts       ← Login, token storage, isAuthenticated()
+│   ├── backgroundFetchService.ts ← expo-background-fetch task registration
 │   ├── feedService.ts       ← RSS fetching/parsing, FEEDS config
+│   ├── readStateService.ts  ← Read/unread tracking (use markAllRead for batches)
 │   ├── storageService.ts    ← iCloud/AsyncStorage abstraction
-│   ├── readStateService.ts  ← Read/unread tracking
-│   └── subscriptionService.ts ← Topic subscription state
+│   ├── subscriptionService.ts ← Topic subscription state
+│   └── topicService.ts      ← Topic discovery, persistence, sorting
 ├── hooks/
 │   ├── use-color-scheme.ts  ← Dark/light mode detection
 │   ├── use-color-scheme.web.ts ← Web variant
-│   └── use-theme-color.ts   ← Theme color application
-├── components/              ← UI components (themed views, icons, etc.)
+│   ├── use-notification-permissions.ts ← Request permissions on launch
+│   └── use-theme-color.ts  ← Theme color application
 ├── constants/
 │   └── theme.ts            ← Color and font definitions
 ├── .node-version           ← Contains "24"

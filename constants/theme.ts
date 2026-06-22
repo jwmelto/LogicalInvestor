@@ -6,7 +6,7 @@
 import { Platform } from 'react-native';
 
 const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+const tintColorDark = '#9fc4e0';
 
 export const Colors = {
   light: {
@@ -19,11 +19,53 @@ export const Colors = {
   },
   dark: {
     text: '#ECEDEE',
-    background: '#151718',
+    background: '#2b2d32',
     tint: tintColorDark,
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+  },
+};
+
+// Semantic palette used by screens and components
+export const Palette = {
+  light: {
+    bg:              '#ffffff',
+    surface:         '#f9f9f9',
+    surfaceAlt:      '#fafafa',
+    border:          '#e0e0e0',
+    borderSubtle:    '#f0f0f0',
+    text:            '#1a1a1a',
+    textSecondary:   '#555555',
+    textMuted:       '#888888',
+    textFaint:       '#999999',
+    tint:            '#0a7ea4',
+    newBadge:        '#22c55e',
+    inputBg:         '#ffffff',
+    inputBorder:     '#dddddd',
+    placeholder:     '#aaaaaa',
+    rowAlt:          '#fafafa',
+    resubscribeBg:   '#f0f0f0',
+    resubscribeText: '#0066cc',
+  },
+  dark: {
+    bg:              '#2b2d32',
+    surface:         '#35373d',
+    surfaceAlt:      '#303236',
+    border:          '#444850',
+    borderSubtle:    '#3a3c42',
+    text:            '#f0f0f0',
+    textSecondary:   '#b0b8c8',
+    textMuted:       '#8090a0',
+    textFaint:       '#606878',
+    tint:            '#9fc4e0',
+    newBadge:        '#4ade80',
+    inputBg:         '#35373d',
+    inputBorder:     '#444850',
+    placeholder:     '#666c7a',
+    rowAlt:          '#303238',
+    resubscribeBg:   '#3a3c42',
+    resubscribeText: '#9fc4e0',
   },
 };
 

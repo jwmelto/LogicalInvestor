@@ -7,15 +7,21 @@ import {
   ActivityIndicator,
   StyleSheet,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { fetchSingleFeed, fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
-import { getUnreadCount, markRead, isRead } from '../services/readStateService';
+import { getUnreadCount, markRead, markAllRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
 import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
+import { useUnreadCounts } from '../contexts/UnreadCountContext';
+import { addNotificationAuthor } from '../services/notificationService';
+import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
+import { useColorScheme } from '../hooks/use-color-scheme';
+import { Palette } from '../constants/theme';
 
 interface ItemReadState {
   [itemId: string]: boolean;
@@ -33,7 +39,6 @@ interface SectionState {
   items: FeedItem[];
   topics: TopicSection[];
   unreadCount: number;
-  expanded: boolean;
   accessible: boolean;
   loading: boolean;
   error?: string;
@@ -83,11 +88,14 @@ async function saveTopicExpandedStates(feedKey: FeedKey, states: Record<string, 
 }
 
 export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string }) {
+  const scheme = useColorScheme();
+  const c = scheme === 'dark' ? Palette.dark : Palette.light;
   const [section, setSection] = useState<SectionState | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
+  const { setFeedUnreadCount, refreshSignal, notifyManualRefresh } = useUnreadCounts();
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
     const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
@@ -150,6 +158,15 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       const built = await buildSection(result);
       setSection(built);
 
+      const totalUnread = built.topics.length > 0
+        ? built.topics.reduce((sum, t) => sum + t.unreadCount, 0)
+        : built.unreadCount;
+      setFeedUnreadCount(feedKey, totalUnread);
+
+      // Persist so other tabs and next app launch show correct badge without a network call
+      const cached = await getCachedUnreadCounts();
+      await setCachedUnreadCounts({ ...cached, [feedKey]: totalUnread });
+
       const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
       // Also include topic preview item IDs to get accurate read states
       const previewItemIds = built.topics
@@ -175,7 +192,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   useEffect(() => {
     loadPreferences();
     loadFeed();
-  }, [feedKey]);
+  }, [feedKey, refreshSignal]);
 
   useFocusEffect(
     useCallback(() => {
@@ -190,6 +207,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
   function onRefresh() {
     setRefreshing(true);
+    notifyManualRefresh();
     loadFeed();
   }
 
@@ -284,9 +302,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   async function onPressItem(item: FeedItem) {
     await markRead(item.id);
     setItemReadStates((prev) => ({ ...prev, [item.id]: true }));
-    setSection((prev) =>
-      prev ? { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) } : prev
-    );
+    setSection((prev) => {
+      if (!prev) return prev;
+      return { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) };
+    });
+    const newCount = Math.max(0, (section?.unreadCount ?? 1) - 1);
+    setFeedUnreadCount(feedKey, newCount);
     Linking.openURL(item.link);
   }
 
@@ -305,53 +326,95 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     }
   }
 
+  async function markAllFeedRead() {
+    if (!section) return;
+    const allIds = [
+      ...section.items.map(i => i.id),
+      ...section.topics.flatMap(t => [
+        ...t.items.map(i => i.id),
+        ...section.items
+          .filter(i => extractTopicFromTitle(i.title) === t.topic.name)
+          .map(i => i.id),
+      ]),
+    ];
+    if (allIds.length === 0) return;
+    await markAllRead(allIds);
+    setItemReadStates(prev => {
+      const updated = { ...prev };
+      allIds.forEach(id => { updated[id] = true; });
+      return updated;
+    });
+    setSection(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        unreadCount: 0,
+        topics: prev.topics.map(t => ({ ...t, unreadCount: 0 })),
+      };
+    });
+    setFeedUnreadCount(feedKey, 0);
+    const cached = await getCachedUnreadCounts();
+    await setCachedUnreadCounts({ ...cached, [feedKey]: 0 });
+  }
+
+  function promptAddNotificationAuthor(author: string | undefined) {
+    if (!author) return;
+    const name = decodeHtmlEntities(author);
+    Alert.alert('Add to notifications', `Notify for posts by "${name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Add', onPress: () => addNotificationAuthor(name) },
+    ]);
+  }
+
   async function markTopicAsRead(topicId: string) {
     if (!section) return;
 
-    setSection((prev) => {
-      if (!prev) return prev;
+    const topicSection = section.topics.find((t) => t.topic.id === topicId);
+    if (!topicSection) return;
 
-      let itemsToMark: FeedItem[] = [];
+    // Collect all items for this topic from both the expanded list and the
+    // top-level feed items (which contain replies filed under the topic name).
+    const itemsToMark = [
+      ...topicSection.items,
+      ...section.items.filter(
+        (item) => extractTopicFromTitle(item.title) === topicSection.topic.name
+      ),
+    ];
 
-      return {
-        ...prev,
-        topics: prev.topics.map((t) => {
-          if (t.topic.id !== topicId) return t;
+    // Single atomic read-modify-write for all IDs. Using Promise.all with
+    // individual markRead calls would race (each does its own read-modify-write
+    // on the same key and they overwrite each other).
+    const unreadIds = itemsToMark
+      .filter((item) => !itemReadStates[item.id])
+      .map((item) => item.id);
+    if (unreadIds.length > 0) {
+      await markAllRead(unreadIds);
+    }
 
-          itemsToMark = [
-            ...t.items,
-            ...prev.items.filter(item => extractTopicFromTitle(item.title) === t.topic.name),
-          ];
-
-          itemsToMark.forEach(async (item) => {
-            if (!itemReadStates[item.id]) {
-              await markRead(item.id);
-            }
-          });
-
-          setItemReadStates((prev) => {
-            const updated = { ...prev };
-            itemsToMark.forEach((item) => {
-              updated[item.id] = true;
-            });
-            return updated;
-          });
-
-          return { ...t, unreadCount: 0 };
-        }),
-      };
+    // Storage is settled — now update in-memory state.
+    setItemReadStates((prev) => {
+      const updated = { ...prev };
+      itemsToMark.forEach((item) => { updated[item.id] = true; });
+      return updated;
     });
 
     setSection((prev) => {
       if (!prev) return prev;
-      const totalUnread = prev.topics.reduce((sum, t) => sum + t.unreadCount, 0);
-      return { ...prev, unreadCount: totalUnread };
+      const updatedTopics = prev.topics.map((t) =>
+        t.topic.id === topicId ? { ...t, unreadCount: 0 } : t
+      );
+      const totalUnread = updatedTopics.reduce((sum, t) => sum + t.unreadCount, 0);
+      return { ...prev, topics: updatedTopics, unreadCount: totalUnread };
     });
+    // Compute total from current section state (topics already zeroed for this topic)
+    const totalUnread = (section?.topics ?? [])
+      .reduce((sum, t) => t.topic.id === topicId ? sum : sum + t.unreadCount, 0);
+    setFeedUnreadCount(feedKey, totalUnread);
   }
 
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: c.bg }]}>
         <ActivityIndicator size="large" />
       </View>
     );
@@ -359,23 +422,32 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
   if (!section) {
     return (
-      <View style={styles.center}>
-        <Text>Failed to load feed</Text>
+      <View style={[styles.center, { backgroundColor: c.bg }]}>
+        <Text style={{ color: c.text }}>Failed to load feed</Text>
       </View>
     );
   }
 
   if (!section.accessible) {
     return (
-      <View style={styles.center}>
-        <Text>You don&apos;t have access to this feed</Text>
+      <View style={[styles.center, { backgroundColor: c.bg }]}>
+        <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      {title && <Text style={styles.forumTitle}>{title}</Text>}
+    <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
+      {title && (
+        <View style={[styles.feedHeader, { borderBottomColor: c.borderSubtle }]}>
+          <Text style={[styles.forumTitle, { color: c.text }]}>{title}</Text>
+          {section && section.unreadCount > 0 && (
+            <TouchableOpacity onPress={markAllFeedRead} style={styles.markAllButton}>
+              <Text style={[styles.markAllText, { color: c.tint }]}>Mark all read</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
       <FlatList
         data={section ? [section] : []}
         keyExtractor={() => feedKey}
@@ -386,37 +458,37 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
               {section.topics.length > 0
                 ? section.topics.map((topicSection) => (
                     <View key={topicSection.topic.id}>
-                      <View style={styles.topicHeader}>
+                      <View style={[styles.topicHeader, { backgroundColor: c.surface, borderBottomColor: c.borderSubtle }]}>
                         <TouchableOpacity
                           style={styles.topicTitleButton}
                           onPress={() => toggleTopic(topicSection.topic.id)}
                         >
-                          <Text style={styles.topicTitle}>
+                          <Text style={[styles.topicTitle, { color: c.textSecondary }]}>
                             {topicSection.expanded ? '▼' : '▶'} {decodeHtmlEntities(topicSection.topic.name)}
                           </Text>
                         </TouchableOpacity>
                         <View style={styles.topicHeaderRight}>
                           {topicSection.unreadCount > 0 && (
-                            <TouchableOpacity onPress={() => {
-                              markTopicAsRead(topicSection.topic.id);
+                            <TouchableOpacity onPress={async () => {
+                              await markTopicAsRead(topicSection.topic.id);
                               // Collapse the topic
                               if (topicSection.expanded) {
                                 toggleTopic(topicSection.topic.id);
                               }
                             }}>
-                              <Text style={styles.newIndicator}>[new]</Text>
+                              <Text style={[styles.newIndicator, { color: c.newBadge }]}>[new]</Text>
                             </TouchableOpacity>
                           )}
                           <TouchableOpacity
                             onPress={() => unsubscribeTopic(topicSection.topic.id)}
                             style={styles.unsubscribeButton}
                           >
-                            <Text style={styles.unsubscribeText}>✕</Text>
+                            <Text style={[styles.unsubscribeText, { color: c.textMuted }]}>✕</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
 
-                      {!topicSection.expanded && topicSection.topic.latestExcerpt && (() => {
+                      {!topicSection.expanded && topicSection.unreadCount > 0 && topicSection.topic.latestExcerpt && (() => {
                         const previewPostIsRead = topicSection.topic.latestItemId
                           ? itemReadStates[topicSection.topic.latestItemId]
                           : false;
@@ -425,16 +497,17 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
                         return (
                           <TouchableOpacity
-                            style={styles.topicPreview}
-                            onPress={() => {
+                            style={[styles.topicPreview, { backgroundColor: c.surfaceAlt, borderBottomColor: c.borderSubtle }]}
+                            onPress={async () => {
                               if (topicSection.topic.latestItemLink) {
-                                markTopicAsRead(topicSection.topic.id);
+                                await markTopicAsRead(topicSection.topic.id);
                                 Linking.openURL(topicSection.topic.latestItemLink);
                               }
                             }}
+                            onLongPress={() => promptAddNotificationAuthor(topicSection.topic.latestAuthor)}
                           >
                             {(topicSection.topic.latestAuthor || topicSection.topic.latestPubDate) && (
-                              <Text style={styles.topicPreviewMeta}>
+                              <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
                                 {topicSection.topic.latestAuthor ? `${decodeHtmlEntities(topicSection.topic.latestAuthor)}` : ''}
                                 {topicSection.topic.latestAuthor && topicSection.topic.latestPubDate ? ' · ' : ''}
                                 {topicSection.topic.latestPubDate ? new Date(topicSection.topic.latestPubDate).toLocaleDateString('en-US', {
@@ -445,7 +518,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                                 }) : ''}
                               </Text>
                             )}
-                            <Text style={styles.topicPreviewExcerpt} numberOfLines={2}>
+                            <Text style={[styles.topicPreviewExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
                               {decodeHtmlEntities(stripHtml(topicSection.topic.latestExcerpt))}
                             </Text>
                           </TouchableOpacity>
@@ -470,11 +543,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           return (
                             <TouchableOpacity
                               key={item.id}
-                              style={styles.topicItem}
+                              style={[styles.topicItem, { backgroundColor: c.bg }]}
                               onPress={() => onPressItem(item)}
+                              onLongPress={() => promptAddNotificationAuthor(item.author)}
                             >
                               <View style={styles.itemMeta}>
-                                <Text style={styles.itemMetaText}>
+                                <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
                                   {item.author ? `${decodeHtmlEntities(item.author)} · ` : ''}
                                   {new Date(item.pubDate).toLocaleDateString('en-US', {
                                     month: 'numeric',
@@ -486,12 +560,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                               </View>
                               {displayTitle !== topicSection.topic.name && (
                                 <View style={styles.titleRow}>
-                                  <Text style={styles.itemTitle}>{displayTitle}</Text>
-                                  {!itemIsRead && <Text style={styles.newBadge}>[new]</Text>}
+                                  <Text style={[styles.itemTitle, { color: c.text }]}>{displayTitle}</Text>
+                                  {!itemIsRead && <Text style={[styles.newBadge, { color: c.newBadge }]}>[new]</Text>}
                                 </View>
                               )}
                               {item.excerpt ? (
-                                <Text style={styles.itemExcerpt} numberOfLines={2}>
+                                <Text style={[styles.itemExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
                                   {decodeHtmlEntities(stripHtml(item.excerpt))}
                                 </Text>
                               ) : null}
@@ -500,7 +574,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         })}
 
                       {topicSection.expanded && topicSection.items.length === 0 && !topicSection.loading && (
-                        <Text style={styles.empty}>No posts found.</Text>
+                        <Text style={[styles.empty, { color: c.textMuted }]}>No posts found.</Text>
                       )}
                     </View>
                   ))
@@ -511,19 +585,33 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                     return (
                       <TouchableOpacity
                         key={item.id}
-                        style={styles.item}
+                        style={[styles.item, { backgroundColor: c.bg }]}
                         onPress={() => onPressItem(item)}
+                        onLongPress={() => promptAddNotificationAuthor(item.author)}
                       >
                         <View style={styles.titleRow}>
-                          <Text style={styles.itemTitle}>{decodeHtmlEntities(item.title)}</Text>
-                          {!itemIsRead && <Text style={styles.newBadge}>[new]</Text>}
+                          <Text style={[styles.itemTitle, { color: c.text }]}>{decodeHtmlEntities(item.title)}</Text>
+                          {!itemIsRead && (
+                            <TouchableOpacity
+                              onPress={async (e) => {
+                                e.stopPropagation();
+                                await markRead(item.id);
+                                setItemReadStates(prev => ({ ...prev, [item.id]: true }));
+                                setSection(prev => prev ? { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) } : prev);
+                                setFeedUnreadCount(feedKey, Math.max(0, (section?.unreadCount ?? 1) - 1));
+                              }}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Text style={[styles.newBadge, { color: c.newBadge }]}>[new]</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                         {showSnippet && item.excerpt ? (
-                          <Text style={styles.itemExcerpt} numberOfLines={2}>
+                          <Text style={[styles.itemExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
                             {decodeHtmlEntities(stripHtml(item.excerpt))}
                           </Text>
                         ) : null}
-                        <Text style={styles.itemMeta}>
+                        <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
                           {item.author ? `${decodeHtmlEntities(item.author)} · ` : ''}
                           {new Date(item.pubDate).toLocaleDateString()}
                         </Text>
@@ -532,7 +620,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                   })}
 
               {section.topics.length === 0 && section.items.length === 0 && (
-                <Text style={styles.empty}>No posts found.</Text>
+                <Text style={[styles.empty, { color: c.textMuted }]}>No posts found.</Text>
               )}
             </View>
           ) : null
@@ -543,36 +631,36 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  forumTitle: { fontSize: 18, fontWeight: '600', color: '#1a1a1a', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  newIndicator: { fontSize: 11, fontWeight: '600', color: '#22c55e' },
-  item: { padding: 16, backgroundColor: '#fff' },
+  feedHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1 },
+  forumTitle: { fontSize: 18, fontWeight: '600', paddingHorizontal: 16, paddingVertical: 12 },
+  markAllButton: { paddingHorizontal: 16, paddingVertical: 12 },
+  markAllText: { fontSize: 13, fontWeight: '500' },
+  newIndicator: { fontSize: 11, fontWeight: '600' },
+  item: { padding: 16 },
   topicHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#fafafa',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   topicTitleButton: { flex: 1 },
-  topicTitle: { fontSize: 13, fontWeight: '600', color: '#555' },
+  topicTitle: { fontSize: 13, fontWeight: '600' },
   topicHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   unsubscribeButton: { padding: 4 },
-  unsubscribeText: { fontSize: 16, color: '#999', fontWeight: '600' },
-  topicPreview: { paddingVertical: 8, paddingHorizontal: 32, backgroundColor: '#fbfbfb', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  topicPreviewMeta: { fontSize: 11, color: '#888', marginBottom: 4 },
-  topicPreviewExcerpt: { fontSize: 12, color: '#666', lineHeight: 16 },
-  topicItem: { paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#fff' },
+  unsubscribeText: { fontSize: 16, fontWeight: '600' },
+  topicPreview: { paddingVertical: 8, paddingHorizontal: 32, borderBottomWidth: 1 },
+  topicPreviewMeta: { fontSize: 11, marginBottom: 4 },
+  topicPreviewExcerpt: { fontSize: 12, lineHeight: 16 },
+  topicItem: { paddingVertical: 12, paddingHorizontal: 32 },
   topicLoading: { paddingVertical: 12, paddingHorizontal: 32, alignItems: 'center' },
   itemMeta: { marginBottom: 8 },
-  itemMetaText: { fontSize: 12, color: '#888' },
+  itemMetaText: { fontSize: 12 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  itemTitle: { fontSize: 15, fontWeight: '500', color: '#1a1a1a', flex: 1 },
-  newBadge: { fontSize: 11, fontWeight: '600', color: '#22c55e', marginLeft: 8 },
-  itemExcerpt: { fontSize: 13, color: '#555', marginBottom: 4, lineHeight: 18 },
-  empty: { padding: 16, color: '#888', fontStyle: 'italic' },
+  itemTitle: { fontSize: 15, fontWeight: '500', flex: 1 },
+  newBadge: { fontSize: 11, fontWeight: '600', marginLeft: 8 },
+  itemExcerpt: { fontSize: 13, marginBottom: 4, lineHeight: 18 },
+  empty: { padding: 16, fontStyle: 'italic' },
 });

@@ -1,0 +1,21 @@
+name = "logicalinvestor-push"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[vars]
+AUTHOR_FILTER = "Sean Hyman"
+MIN_CONTENT_LENGTH = "200"
+# FEED_TOKEN is a secret — set it with: wrangler secret put FEED_TOKEN
+
+# After running `wrangler kv namespace create TOKENS`, paste the id below
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "ee1f4e5de20d45ddb00894a8f118094c"
+
+# After running `wrangler kv namespace create STATE`, paste the id below
+[[kv_namespaces]]
+binding = "STATE"
+id = "837495a5d5114a5abb02a3d4cdd83dd2"
