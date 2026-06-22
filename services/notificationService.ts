@@ -57,6 +57,7 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// ponytail: mirrors matchesLevel() in cloudflare-worker/src/index.ts — update both if AUTHOR_FILTER or MIN_CONTENT_LENGTH changes
 function wouldServerPush(item: FeedItem, level: PushLevel): boolean {
   if (item.feedKey === 'membersArea') return true;
   if (level === 'minimal') return false;

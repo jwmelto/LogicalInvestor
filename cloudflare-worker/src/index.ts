@@ -97,7 +97,7 @@ async function runScheduled(env: Env): Promise<void> {
         if (feed.discoverTopics) {
           const topicUrl = extractTopicUrl(link);
           const topicTitle = stripReplyPrefix(title);
-          if (topicUrl && shouldTrackTopic(topicTitle, feed.feedKey)) {
+          if (topicUrl && (feed.feedKey !== 'stock-insights' || topicTitle.startsWith('*'))) {
             topics[topicUrl] = { lastSeen: now.toISOString(), title: topicTitle, feedKey: feed.feedKey };
           }
         }
@@ -211,11 +211,6 @@ function extractTopicUrl(link: string): string | null {
 
 function stripReplyPrefix(title: string): string {
   return title.startsWith('Reply To: ') ? title.slice(10).trim() : title.trim();
-}
-
-function shouldTrackTopic(topicTitle: string, feedKey: FeedKey): boolean {
-  if (feedKey === 'stock-insights') return topicTitle.startsWith('*');
-  return true; // track all Members Forum topics
 }
 
 function dedup(items: RawItem[]): RawItem[] {
