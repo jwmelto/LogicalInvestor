@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import type { FeedItem } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
+import { getPushLevel, type PushLevel } from './pushService';
 
 export interface NotificationSettings {
   enabled: boolean;
@@ -56,6 +57,19 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function wouldServerPush(item: FeedItem, level: PushLevel): boolean {
+  if (item.feedKey === 'membersArea') return true;
+  if (level === 'minimal') return false;
+  if (!item.author?.toLowerCase().includes('sean hyman')) return false;
+  if (level === 'all') return true;
+  // standard
+  if (item.feedKey === 'stockInsights') {
+    const topic = item.title?.startsWith('Reply To: ') ? item.title.slice(10).trim() : item.title ?? '';
+    return topic.startsWith('*');
+  }
+  return stripHtml(item.excerpt ?? '').length >= 200;
+}
+
 function passes(item: FeedItem, settings: NotificationSettings): boolean {
   if (settings.authorFilters.length > 0) {
     const author = item.author?.toLowerCase() ?? '';
@@ -83,7 +97,10 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
   const settings = await getNotificationSettings();
   if (!settings.enabled) return;
 
-  const toNotify = newItems.filter((item) => passes(item, settings)).slice(0, 5);
+  const pushLevel = await getPushLevel();
+  const toNotify = newItems
+    .filter((item) => !wouldServerPush(item, pushLevel) && passes(item, settings))
+    .slice(0, 5);
 
   for (const item of toNotify) {
     const body = stripHtml(item.excerpt ?? '').slice(0, 150);
