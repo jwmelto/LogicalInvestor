@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,8 @@ import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic }
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 import { useUnreadCounts } from '../contexts/UnreadCountContext';
 import { addNotificationAuthor } from '../services/notificationService';
+import { registerPushChannel } from '../services/pushService';
+import { getToken } from '../services/authService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
 import { useColorScheme } from '../hooks/use-color-scheme';
 import { Palette } from '../constants/theme';
@@ -96,6 +98,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
   const { setFeedUnreadCount, refreshSignal, notifyManualRefresh } = useUnreadCounts();
+  const pushRegisteredRef = useRef(false);
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
     const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
@@ -166,6 +169,13 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       // Persist so other tabs and next app launch show correct badge without a network call
       const cached = await getCachedUnreadCounts();
       await setCachedUnreadCounts({ ...cached, [feedKey]: totalUnread });
+
+      if (result.accessible && !pushRegisteredRef.current) {
+        pushRegisteredRef.current = true;
+        getToken().then(feedToken => {
+          if (feedToken) registerPushChannel(feedKey, feedToken);
+        });
+      }
 
       const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
       // Also include topic preview item IDs to get accurate read states

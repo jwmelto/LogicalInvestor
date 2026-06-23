@@ -60,7 +60,7 @@ Use feature branches for all work (e.g., `feature/push-notifications`). Merge to
 - **Data Parsing**: `fast-xml-parser` (RSS/XML feeds)
 - **WebView**: `react-native-webview` (post viewer)
 - **UI Components**: Native React Native components with custom theming
-- **Background Tasks**: `expo-background-fetch` + `expo-task-manager`
+- **Background Tasks**: `expo-background-task` + `expo-task-manager`
 
 ## Commands
 
@@ -222,11 +222,9 @@ Discovers forum topics from RSS feed items, persists them across sessions. Topic
 
 #### `backgroundFetchService.ts` - Background Refresh
 
-Registers an `expo-background-fetch` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
+Registers an `expo-background-task` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
 
-**Note**: Background fetch only runs on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
-
-**Deprecation**: `expo-background-fetch` is deprecated in favour of `expo-background-task`. Migration is pending.
+**Note**: Background tasks only run on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
 
 #### `notificationService.ts` - Local Notifications
 
@@ -348,7 +346,6 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
 - Debug `console.log` for Members Area XML still present in `feedService.ts` (line ~86)
-- `expo-background-fetch` deprecation warning — pending migration to `expo-background-task`
 - `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
@@ -395,7 +392,7 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 │   └── UnreadCountContext.tsx     ← Tab badge counts + foreground refresh timer
 ├── services/
 │   ├── authService.ts       ← Login, token storage, isAuthenticated()
-│   ├── backgroundFetchService.ts ← expo-background-fetch task registration
+│   ├── backgroundFetchService.ts ← expo-background-task registration
 │   ├── feedService.ts       ← RSS fetching/parsing, FEEDS config
 │   ├── readStateService.ts  ← Read/unread tracking (use markAllRead for batches)
 │   ├── storageService.ts    ← iCloud/AsyncStorage abstraction

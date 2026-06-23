@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["*/5 * * * *", "1,6,11,16,21,26,31,36,41,46,51,56 * * * *", "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"]
 
 [vars]
 AUTHOR_FILTER = "Sean Hyman"
