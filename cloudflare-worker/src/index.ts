@@ -32,11 +32,13 @@ interface TokenMeta {
   feedToken?: string; // stored for optional channels; used to recover a stale poll token
 }
 
-export const CRON_TO_CHANNEL: Record<string, Channel> = {
-  '*/5 * * * *':                                         'members',
-  '1,6,11,16,21,26,31,36,41,46,51,56 * * * *':          'stock',
-  '3,8,13,18,23,28,33,38,43,48,53,58 * * * *':          'options',
-};
+// wrangler.toml cron order must match: minute offset = array index
+const CHANNELS: Channel[] = ['members', 'stock', 'options'];
+
+export function channelFromCron(cron: string): Channel {
+  const offset = parseInt(cron.split(' ')[0].split(',')[0], 10);
+  return CHANNELS[offset] ?? 'members';
+}
 
 const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
   members: [
@@ -121,7 +123,7 @@ export default {
   },
 
   async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const channel = CRON_TO_CHANNEL[event.cron] ?? 'members';
+    const channel = channelFromCron(event.cron);
     await runChannel(channel, env);
   },
 };

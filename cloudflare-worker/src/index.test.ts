@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { matchesLevel, extractTopicUrl, stripReplyPrefix, CRON_TO_CHANNEL, findAndStorePollToken, shouldPollNow, getETOffset } from './index';
+import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getETOffset } from './index';
 
 type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
 type NotifLevel = 'minimal' | 'standard' | 'all';
@@ -92,15 +92,15 @@ describe('stripReplyPrefix', () => {
   });
 });
 
-describe('CRON_TO_CHANNEL', () => {
+describe('channelFromCron', () => {
   it('maps all three cron expressions to the correct channels', () => {
-    expect(CRON_TO_CHANNEL['*/5 * * * *']).toBe('members');
-    expect(CRON_TO_CHANNEL['1,6,11,16,21,26,31,36,41,46,51,56 * * * *']).toBe('stock');
-    expect(CRON_TO_CHANNEL['3,8,13,18,23,28,33,38,43,48,53,58 * * * *']).toBe('options');
+    expect(channelFromCron('0,5,10,15,20,25,30,35,40,45,50,55 * * * *')).toBe('members');
+    expect(channelFromCron('1,6,11,16,21,26,31,36,41,46,51,56 * * * *')).toBe('stock');
+    expect(channelFromCron('2,7,12,17,22,27,32,37,42,47,52,57 * * * *')).toBe('options');
   });
 
-  it('covers exactly three channels with no duplicates', () => {
-    expect(Object.values(CRON_TO_CHANNEL).sort()).toEqual(['members', 'options', 'stock']);
+  it('falls back to members for unknown cron', () => {
+    expect(channelFromCron('99 * * * *')).toBe('members');
   });
 });
 
