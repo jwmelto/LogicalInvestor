@@ -33,9 +33,9 @@ interface TokenMeta {
 }
 
 export const CRON_TO_CHANNEL: Record<string, Channel> = {
-  '*/15 * * * *':        'members',
-  '2,17,32,47 * * * *':  'stock',
-  '5,20,35,50 * * * *':  'options',
+  '*/5 * * * *':                                         'members',
+  '1,6,11,16,21,26,31,36,41,46,51,56 * * * *':          'stock',
+  '3,8,13,18,23,28,33,38,43,48,53,58 * * * *':          'options',
 };
 
 const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {

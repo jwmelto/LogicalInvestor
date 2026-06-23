@@ -94,9 +94,9 @@ describe('stripReplyPrefix', () => {
 
 describe('CRON_TO_CHANNEL', () => {
   it('maps all three cron expressions to the correct channels', () => {
-    expect(CRON_TO_CHANNEL['*/15 * * * *']).toBe('members');
-    expect(CRON_TO_CHANNEL['2,17,32,47 * * * *']).toBe('stock');
-    expect(CRON_TO_CHANNEL['5,20,35,50 * * * *']).toBe('options');
+    expect(CRON_TO_CHANNEL['*/5 * * * *']).toBe('members');
+    expect(CRON_TO_CHANNEL['1,6,11,16,21,26,31,36,41,46,51,56 * * * *']).toBe('stock');
+    expect(CRON_TO_CHANNEL['3,8,13,18,23,28,33,38,43,48,53,58 * * * *']).toBe('options');
   });
 
   it('covers exactly three channels with no duplicates', () => {
