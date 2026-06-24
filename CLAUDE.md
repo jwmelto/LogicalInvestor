@@ -200,6 +200,13 @@ Two-tier storage abstraction (app code never touches storage directly):
 
 Full iCloud sync requires Apple Developer account + physical device. Simulator uses AsyncStorage fallback silently.
 
+**iCloud verification checklist** (run on physical device with iCloud signed in):
+- [ ] Install app on two devices under the same Apple ID
+- [ ] Log in on device A; confirm topics and read state appear on device B after a few seconds
+- [ ] Mark posts read on device A; confirm unread counts update on device B
+- [ ] Toggle a forum off in Settings on device A; confirm it's hidden on device B
+- [ ] Confirm feed token is NOT synced (log out on device B and re-login independently)
+
 **iCloud strategy**: iCloud KVS is the right cross-platform approach for this app. No backend is a core principle, and iCloud KVS provides free cross-device sync on iOS with a transparent AsyncStorage fallback on Android. The library's TypeScript types lag behind its API in one place (`getObject` is not typed as generic); work around with a cast at the callsite rather than changing the approach.
 
 #### `readStateService.ts` - Read/Unread Tracking
