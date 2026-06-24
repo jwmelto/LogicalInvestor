@@ -18,7 +18,10 @@ const FEEDKEY_TO_CHANNEL: Record<string, Channel> = {
 
 async function getExpoPushToken(): Promise<string | null> {
   const projectId = Constants.expoConfig?.extra?.eas?.projectId;
-  if (!projectId) return null;
+  if (!projectId) {
+    if (__DEV__) console.warn('pushService: EAS projectId missing — push tokens will not be registered. Add extra.eas.projectId to app.json.');
+    return null;
+  }
   const { status } = await Notifications.getPermissionsAsync();
   if (status !== 'granted') return null;
   const { data } = await Notifications.getExpoPushTokenAsync({ projectId });
