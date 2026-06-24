@@ -241,6 +241,12 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 
 **Storage keys**: `notification_settings`, `notification_seen_ids`
 
+**Filter sync with Cloudflare Worker**: The app's local notification filters (`authorFilters`, `minContentLength`) and the Worker's server-side filters are **independent and not synchronized**. Both must be kept in sync manually when filter logic changes:
+- App filters live in `notificationService.ts` (`processNewItemsForNotifications`)
+- Worker filters live in `cloudflare-worker/src/index.ts` (the cron handler)
+- The Worker suppresses pushes for items the app's local filter would catch anyway; if the Worker's filters are looser than the app's, users may receive push notifications for items that would have been silenced locally
+- Current Worker behavior: Members Area always notifies; Members Forum = Sean Hyman + 200 chars; Stock Insights = Sean Hyman + topic title contains `*`
+
 ### Contexts
 
 **Location**: `contexts/` directory
