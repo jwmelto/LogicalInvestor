@@ -3,11 +3,21 @@ main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
 [triggers]
-crons = ["*/15 * * * *"]
+crons = [
+  "0,5,10,15,20,25,30,35,40,45,50,55 * * * *",
+  "1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+  "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+]
 
 [vars]
 AUTHOR_FILTER = "Sean Hyman"
 MIN_CONTENT_LENGTH = "200"
+POLL_INTERVAL_TRADING  = "5"    # minutes between polls during trading hours; must be multiple of 5
+POLL_INTERVAL_LATEDAY  = "15"   # minutes between polls during late-day window
+POLL_INTERVAL_OVERNIGHT = "60"  # minutes between polls overnight and weekends
+POLL_BOUNDARY_OPEN    = "0915"  # hhmm ET: start of trading hours
+POLL_BOUNDARY_LATEDAY = "1400"  # hhmm ET: start of late-day (reduced polling) window
+POLL_BOUNDARY_CLOSE   = "1615"  # hhmm ET: end of late-day window / start of overnight
 # FEED_TOKEN is a secret — set it with: wrangler secret put FEED_TOKEN
 
 # After running `wrangler kv namespace create TOKENS`, paste the id below

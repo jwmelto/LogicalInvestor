@@ -60,7 +60,7 @@ Use feature branches for all work (e.g., `feature/push-notifications`). Merge to
 - **Data Parsing**: `fast-xml-parser` (RSS/XML feeds)
 - **WebView**: `react-native-webview` (post viewer)
 - **UI Components**: Native React Native components with custom theming
-- **Background Tasks**: `expo-background-fetch` + `expo-task-manager`
+- **Background Tasks**: `expo-background-task` + `expo-task-manager`
 
 ## Commands
 
@@ -200,6 +200,13 @@ Two-tier storage abstraction (app code never touches storage directly):
 
 Full iCloud sync requires Apple Developer account + physical device. Simulator uses AsyncStorage fallback silently.
 
+**iCloud verification checklist** (run on physical device with iCloud signed in):
+- [ ] Install app on two devices under the same Apple ID
+- [ ] Log in on device A; confirm topics and read state appear on device B after a few seconds
+- [ ] Mark posts read on device A; confirm unread counts update on device B
+- [ ] Toggle a forum off in Settings on device A; confirm it's hidden on device B
+- [ ] Confirm feed token is NOT synced (log out on device B and re-login independently)
+
 **iCloud strategy**: iCloud KVS is the right cross-platform approach for this app. No backend is a core principle, and iCloud KVS provides free cross-device sync on iOS with a transparent AsyncStorage fallback on Android. The library's TypeScript types lag behind its API in one place (`getObject` is not typed as generic); work around with a cast at the callsite rather than changing the approach.
 
 #### `readStateService.ts` - Read/Unread Tracking
@@ -222,11 +229,9 @@ Discovers forum topics from RSS feed items, persists them across sessions. Topic
 
 #### `backgroundFetchService.ts` - Background Refresh
 
-Registers an `expo-background-fetch` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
+Registers an `expo-background-task` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
 
-**Note**: Background fetch only runs on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
-
-**Deprecation**: `expo-background-fetch` is deprecated in favour of `expo-background-task`. Migration is pending.
+**Note**: Background tasks only run on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
 
 #### `notificationService.ts` - Local Notifications
 
@@ -242,6 +247,12 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 - `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
 
 **Storage keys**: `notification_settings`, `notification_seen_ids`
+
+**Filter sync with Cloudflare Worker**: The app's local notification filters (`authorFilters`, `minContentLength`) and the Worker's server-side filters are **independent and not synchronized**. Both must be kept in sync manually when filter logic changes:
+- App filters live in `notificationService.ts` (`processNewItemsForNotifications`)
+- Worker filters live in `cloudflare-worker/src/index.ts` (the cron handler)
+- The Worker suppresses pushes for items the app's local filter would catch anyway; if the Worker's filters are looser than the app's, users may receive push notifications for items that would have been silenced locally
+- Current Worker behavior: Members Area always notifies; Members Forum = Sean Hyman + 200 chars; Stock Insights = Sean Hyman + topic title contains `*`
 
 ### Contexts
 
@@ -347,8 +358,6 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 **Minor Issues**:
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
-- Debug `console.log` for Members Area XML still present in `feedService.ts` (line ~86)
-- `expo-background-fetch` deprecation warning — pending migration to `expo-background-task`
 - `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
@@ -357,6 +366,54 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
 - Background fetch does not run in simulator — requires physical device
 - `section.unreadCount` on topic-based feeds reflects the top-level 25-item feed window, not the strict sum of per-topic unread counts; this is a known approximation
+
+## QA Checklist
+
+Run on a physical device before each TestFlight submission.
+
+**Auth**
+- [ ] Fresh install: login screen appears, credentials accepted, feeds load
+- [ ] Invalid credentials show an error message
+- [ ] Logout clears session and returns to login screen
+- [ ] Re-login works without reinstalling
+
+**Feeds**
+- [ ] All four feeds load (Members Area, Members Forum, Stock Insights, Options Insights)
+- [ ] Pull-to-refresh updates content
+- [ ] Posts marked read persist after app restart
+- [ ] "Mark all read" clears all badges in that feed
+- [ ] Tapping a `[new]` badge on a flat-feed post marks it read without opening it
+- [ ] Tapping a post opens the WebView with correct content and scroll-to-anchor
+
+**Topics (forum feeds)**
+- [ ] Topics appear and are sorted by most recently active
+- [ ] Tapping a topic expands its posts
+- [ ] Topic preview snippet shows only when topic has unread posts
+- [ ] Tapping topic `[new]` badge marks topic read without navigating away
+
+**Tab badges**
+- [ ] Unread badges appear on all tabs with unread content on launch (seeded from cache)
+- [ ] Badges clear when feed is viewed and posts are marked read
+
+**Settings**
+- [ ] Forum visibility toggles hide/show Stock Insights and Options Insights tabs
+- [ ] Refresh interval change takes effect on next timer fire
+- [ ] Notification settings: enable/disable, author filter add/remove, min length slider
+- [ ] Long-press on a post adds its author to the notification whitelist
+- [ ] Test notification button fires a notification (`__DEV__` only)
+
+**Background & notifications**
+- [ ] Background fetch fires after app is closed for >15 min (physical device only)
+- [ ] Push notification received while app is closed; tap opens correct content
+- [ ] Local notification fires for new post matching author filter
+
+**Dark / light mode**
+- [ ] All screens render correctly in both modes
+- [ ] Mode switches dynamically with system setting
+
+**Edge cases**
+- [ ] Stock/Options Insights show empty state gracefully if account lacks access
+- [ ] App recovers cleanly from airplane mode (no crash, shows stale data)
 
 ## Development Notes
 
@@ -395,7 +452,7 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 │   └── UnreadCountContext.tsx     ← Tab badge counts + foreground refresh timer
 ├── services/
 │   ├── authService.ts       ← Login, token storage, isAuthenticated()
-│   ├── backgroundFetchService.ts ← expo-background-fetch task registration
+│   ├── backgroundFetchService.ts ← expo-background-task registration
 │   ├── feedService.ts       ← RSS fetching/parsing, FEEDS config
 │   ├── readStateService.ts  ← Read/unread tracking (use markAllRead for batches)
 │   ├── storageService.ts    ← iCloud/AsyncStorage abstraction

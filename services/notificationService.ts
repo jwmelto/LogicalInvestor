@@ -17,6 +17,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 const SETTINGS_KEY = 'notification_settings';
 const SEEN_KEY = 'notification_seen_ids';
+const MAX_SEEN_IDS = 500; // ~20x the largest feed window (~25 items)
 
 export async function getNotificationSettings(): Promise<NotificationSettings> {
   const stored = await storageGetObject<Partial<NotificationSettings>>(SETTINGS_KEY);
@@ -57,6 +58,7 @@ function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// ponytail: mirrors matchesLevel() in cloudflare-worker/src/index.ts — update both if AUTHOR_FILTER or MIN_CONTENT_LENGTH changes
 function wouldServerPush(item: FeedItem, level: PushLevel): boolean {
   if (item.feedKey === 'membersArea') return true;
   if (level === 'minimal') return false;
@@ -90,7 +92,8 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
 
   const newItems = items.filter((item) => !seen.has(item.id));
   items.forEach((item) => seen.add(item.id));
-  await storageSetObject(SEEN_KEY, Array.from(seen));
+  const seenList = Array.from(seen);
+  await storageSetObject(SEEN_KEY, seenList.slice(-MAX_SEEN_IDS));
 
   if (newItems.length === 0) return;
 

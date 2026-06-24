@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 
 interface AuthContextType {
   authed: boolean;
@@ -8,11 +8,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [authed, setAuthedState] = useState(false);
-
-  const setAuthed = useCallback((value: boolean) => {
-    setAuthedState(value);
-  }, []);
+  const [authed, setAuthed] = useState(false);
 
   return (
     <AuthContext.Provider value={{ authed, setAuthed }}>

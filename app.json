@@ -6,12 +6,13 @@
     "icon": "./assets/images/icon.png",
     "scheme": "logicalinvestor",
     "userInterfaceStyle": "automatic",
+    "version": "0.9.1",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
       "deploymentTarget": "18.0",
-      "buildNumber": "9"
+      "buildNumber": "14"
     },
     "android": {
       "adaptiveIcon": {
@@ -45,7 +46,8 @@
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "expo-background-fetch",
+      "@nauverse/expo-cloud-settings",
+      "expo-background-task",
       "expo-task-manager"
     ],
     "experiments": {

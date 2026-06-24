@@ -1,4 +1,4 @@
-import * as BackgroundFetch from 'expo-background-fetch';
+import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { fetchAllFeeds } from './feedService';
 import { isAuthenticated } from './authService';
@@ -12,7 +12,7 @@ export const BACKGROUND_FETCH_TASK = 'background-feed-refresh';
 TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   try {
     const authed = await isAuthenticated();
-    if (!authed) return BackgroundFetch.BackgroundFetchResult.NoData;
+    if (!authed) return BackgroundTask.BackgroundTaskResult.Success;
 
     const results = await fetchAllFeeds();
 
@@ -29,31 +29,26 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     }
     await setCachedUnreadCounts(updated);
 
-    return BackgroundFetch.BackgroundFetchResult.NewData;
+    return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
-    return BackgroundFetch.BackgroundFetchResult.Failed;
+    return BackgroundTask.BackgroundTaskResult.Failed;
   }
 });
 
 export async function registerBackgroundFetch(): Promise<void> {
   try {
-    const status = await BackgroundFetch.getStatusAsync();
-    if (
-      status === BackgroundFetch.BackgroundFetchStatus.Restricted ||
-      status === BackgroundFetch.BackgroundFetchStatus.Denied
-    ) {
+    const status = await BackgroundTask.getStatusAsync();
+    if (status === BackgroundTask.BackgroundTaskStatus.Restricted) {
       return;
     }
 
     const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_FETCH_TASK);
     if (!isRegistered) {
-      await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
-        minimumInterval: 15 * 60, // 15 minutes (iOS may run it less frequently)
-        stopOnTerminate: false,
-        startOnBoot: true,
+      await BackgroundTask.registerTaskAsync(BACKGROUND_FETCH_TASK, {
+        minimumInterval: 15, // minutes
       });
     }
   } catch {
-    // Background fetch not available on this platform/simulator — silently ignore
+    // Background tasks not available on this platform/simulator — silently ignore
   }
 }

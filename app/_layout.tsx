@@ -25,7 +25,6 @@ import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
 import { UnreadCountProvider } from '../contexts/UnreadCountContext';
 import { registerBackgroundFetch } from '../services/backgroundFetchService';
-import { registerPushToken } from '../services/pushService';
 
 function RootLayoutInner() {
   const colorScheme = useColorScheme();
@@ -41,11 +40,10 @@ function RootLayoutInner() {
     });
 
     registerBackgroundFetch();
+    // Push channels are registered per-feed in ForumFeed after a successful load,
+    // not here — so the Worker knows which optional channels each device can access.
   }, []);
 
-  useEffect(() => {
-    if (authed) registerPushToken();
-  }, [authed]);
 
   if (loading) return null; // splash screen is still visible during this time
 

@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -63,7 +64,7 @@ export default function LoginScreen() {
         {/* Form — fills remaining space, content centered */}
         <View style={styles.form}>
           <Text style={[styles.subtitle, { color: c.subtle }]}>
-            Sign in to your account
+            Log in to logicalinvestor.net
           </Text>
 
           {error && <Text style={styles.error}>{error}</Text>}
@@ -102,6 +103,14 @@ export default function LoginScreen() {
               ? <ActivityIndicator color="#fff" />
               : <Text style={styles.buttonText}>Sign In</Text>
             }
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => Linking.openURL('https://logicalinvestor.net/product/monthly-newsletter/')}
+          >
+            <Text style={[styles.signUpLink, { color: c.subtle }]}>
+              Not a subscriber? <Text style={styles.signUpLinkBold}>Sign up</Text>
+            </Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -178,5 +187,14 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  signUpLink: {
+    textAlign: 'center',
+    fontSize: 14,
+    marginTop: 20,
+  },
+  signUpLinkBold: {
+    fontWeight: '600',
+    color: '#2563eb',
   },
 });
