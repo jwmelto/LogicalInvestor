@@ -358,7 +358,6 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 **Minor Issues**:
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
-- Debug `console.log` for Members Area XML still present in `feedService.ts` (line ~86)
 - `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
@@ -367,6 +366,54 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
 - Background fetch does not run in simulator — requires physical device
 - `section.unreadCount` on topic-based feeds reflects the top-level 25-item feed window, not the strict sum of per-topic unread counts; this is a known approximation
+
+## QA Checklist
+
+Run on a physical device before each TestFlight submission.
+
+**Auth**
+- [ ] Fresh install: login screen appears, credentials accepted, feeds load
+- [ ] Invalid credentials show an error message
+- [ ] Logout clears session and returns to login screen
+- [ ] Re-login works without reinstalling
+
+**Feeds**
+- [ ] All four feeds load (Members Area, Members Forum, Stock Insights, Options Insights)
+- [ ] Pull-to-refresh updates content
+- [ ] Posts marked read persist after app restart
+- [ ] "Mark all read" clears all badges in that feed
+- [ ] Tapping a `[new]` badge on a flat-feed post marks it read without opening it
+- [ ] Tapping a post opens the WebView with correct content and scroll-to-anchor
+
+**Topics (forum feeds)**
+- [ ] Topics appear and are sorted by most recently active
+- [ ] Tapping a topic expands its posts
+- [ ] Topic preview snippet shows only when topic has unread posts
+- [ ] Tapping topic `[new]` badge marks topic read without navigating away
+
+**Tab badges**
+- [ ] Unread badges appear on all tabs with unread content on launch (seeded from cache)
+- [ ] Badges clear when feed is viewed and posts are marked read
+
+**Settings**
+- [ ] Forum visibility toggles hide/show Stock Insights and Options Insights tabs
+- [ ] Refresh interval change takes effect on next timer fire
+- [ ] Notification settings: enable/disable, author filter add/remove, min length slider
+- [ ] Long-press on a post adds its author to the notification whitelist
+- [ ] Test notification button fires a notification (`__DEV__` only)
+
+**Background & notifications**
+- [ ] Background fetch fires after app is closed for >15 min (physical device only)
+- [ ] Push notification received while app is closed; tap opens correct content
+- [ ] Local notification fires for new post matching author filter
+
+**Dark / light mode**
+- [ ] All screens render correctly in both modes
+- [ ] Mode switches dynamically with system setting
+
+**Edge cases**
+- [ ] Stock/Options Insights show empty state gracefully if account lacks access
+- [ ] App recovers cleanly from airplane mode (no crash, shows stale data)
 
 ## Development Notes
 
