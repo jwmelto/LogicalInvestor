@@ -56,8 +56,11 @@ export async function registerPushChannel(feedKey: string, feedToken: string, le
     const lvl = level ?? await getPushLevel();
     await storageSet(PUSH_LEVEL_KEY, lvl);
     await addRegisteredChannel(channel);
-    const params = new URLSearchParams({ token: pushToken, channel, level: lvl, feed_token: feedToken });
-    await fetch(`${WORKER_URL}/register?${params}`, { method: 'POST' });
+    await fetch(`${WORKER_URL}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: pushToken, channel, level: lvl, feed_token: feedToken }),
+    });
   } catch { /* non-fatal: local notifications still work */ }
 }
 
@@ -72,7 +75,11 @@ export async function updatePushLevel(level: PushLevel): Promise<void> {
     const channels = await getRegisteredChannels();
     await Promise.all(
       channels.map(channel =>
-        fetch(`${WORKER_URL}/register?${new URLSearchParams({ token: pushToken, channel, level })}`, { method: 'POST' })
+        fetch(`${WORKER_URL}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: pushToken, channel, level }),
+        })
       )
     );
   } catch { /* non-fatal */ }
@@ -85,7 +92,11 @@ export async function unregisterPushToken(): Promise<void> {
     await storageSet(PUSH_CHANNELS_KEY, JSON.stringify([]));
     await Promise.all(
       (['members', 'stock', 'options'] as const).map(channel =>
-        fetch(`${WORKER_URL}/unregister?${new URLSearchParams({ token: pushToken, channel })}`, { method: 'POST' })
+        fetch(`${WORKER_URL}/unregister`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: pushToken, channel }),
+        })
       )
     );
   } catch { /* non-fatal */ }

@@ -17,6 +17,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 const SETTINGS_KEY = 'notification_settings';
 const SEEN_KEY = 'notification_seen_ids';
+const MAX_SEEN_IDS = 500; // ~20x the largest feed window (~25 items)
 
 export async function getNotificationSettings(): Promise<NotificationSettings> {
   const stored = await storageGetObject<Partial<NotificationSettings>>(SETTINGS_KEY);
@@ -92,8 +93,7 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
   const newItems = items.filter((item) => !seen.has(item.id));
   items.forEach((item) => seen.add(item.id));
   const seenList = Array.from(seen);
-  // ponytail: keep newest 500; feed windows are ~25 items so this is ~20x headroom
-  await storageSetObject(SEEN_KEY, seenList.slice(-500));
+  await storageSetObject(SEEN_KEY, seenList.slice(-MAX_SEEN_IDS));
 
   if (newItems.length === 0) return;
 

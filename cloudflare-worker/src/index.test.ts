@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getETOffset } from './index';
+import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow } from './index';
 
 type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
 type NotifLevel = 'minimal' | 'standard' | 'all';
@@ -104,28 +104,6 @@ describe('channelFromCron', () => {
   });
 });
 
-describe('getETOffset', () => {
-  it('returns -4 during EDT (summer)', () => {
-    expect(getETOffset(new Date('2025-06-15T12:00:00Z'))).toBe(-4);
-  });
-  it('returns -5 during EST (winter)', () => {
-    expect(getETOffset(new Date('2025-01-15T12:00:00Z'))).toBe(-5);
-  });
-  it('returns -5 just before DST starts in March', () => {
-    // 2nd Sunday of March 2025 = Mar 9, DST starts at 07:00 UTC
-    expect(getETOffset(new Date('2025-03-09T06:59:00Z'))).toBe(-5);
-  });
-  it('returns -4 just after DST starts in March', () => {
-    expect(getETOffset(new Date('2025-03-09T07:01:00Z'))).toBe(-4);
-  });
-  it('returns -4 just before DST ends in November', () => {
-    // 1st Sunday of November 2025 = Nov 2, DST ends at 06:00 UTC
-    expect(getETOffset(new Date('2025-11-02T05:59:00Z'))).toBe(-4);
-  });
-  it('returns -5 just after DST ends in November', () => {
-    expect(getETOffset(new Date('2025-11-02T06:01:00Z'))).toBe(-5);
-  });
-});
 
 describe('shouldPollNow', () => {
   it('runs every invocation during trading hours (0915–1400 ET)', () => {
@@ -139,7 +117,7 @@ describe('shouldPollNow', () => {
     expect(shouldPollNow(new Date('2025-06-04T09:03:00-04:00'))).toBe(false); // not on hour → skip
   });
 
-  it('runs every 15 min late in the trading day (1400–1615 ET)', () => {
+  it('runs every 15 min during late-day window (1400–1615 ET)', () => {
     expect(shouldPollNow(new Date('2025-06-04T14:00:00-04:00'))).toBe(true);
     expect(shouldPollNow(new Date('2025-06-04T14:05:00-04:00'))).toBe(false);
     expect(shouldPollNow(new Date('2025-06-04T14:15:00-04:00'))).toBe(true);

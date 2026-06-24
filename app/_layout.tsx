@@ -40,6 +40,8 @@ function RootLayoutInner() {
     });
 
     registerBackgroundFetch();
+    // Push channels are registered per-feed in ForumFeed after a successful load,
+    // not here — so the Worker knows which optional channels each device can access.
   }, []);
 
 
