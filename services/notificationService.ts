@@ -91,7 +91,9 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
 
   const newItems = items.filter((item) => !seen.has(item.id));
   items.forEach((item) => seen.add(item.id));
-  await storageSetObject(SEEN_KEY, Array.from(seen));
+  const seenList = Array.from(seen);
+  // ponytail: keep newest 500; feed windows are ~25 items so this is ~20x headroom
+  await storageSetObject(SEEN_KEY, seenList.slice(-500));
 
   if (newItems.length === 0) return;
 
