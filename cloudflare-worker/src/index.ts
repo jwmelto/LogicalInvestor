@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -16,7 +17,6 @@ export interface Env {
 
 type Channel = 'members' | 'stock' | 'options';
 type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
-type NotifLevel = 'minimal' | 'standard' | 'all';
 
 interface RawItem {
   guid: string;
@@ -66,7 +66,6 @@ const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTo
 };
 
 const TOPIC_GC_DAYS = 30;
-const MAX_SEEN = 500; // ponytail: cap to prevent unbounded KV growth
 
 // Module-level parser shared across all calls within an invocation
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -300,7 +299,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   const newItems = allItems.filter(i => !seen.has(i.guid));
   allItems.forEach(i => seen.add(i.guid));
-  await env.STATE.put(seenKey, JSON.stringify(Array.from(seen).slice(-MAX_SEEN)));
+  await env.STATE.put(seenKey, JSON.stringify(Array.from(seen).slice(-MAX_SEEN_IDS)));
 
   if (newItems.length === 0) return;
 
@@ -323,7 +322,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
     const toNotify = newItems
-      .filter(item => matchesLevel(item, level, authorFilter, minLength))
+      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength))
       .slice(0, 5);
     if (toNotify.length === 0) continue;
 
@@ -342,22 +341,21 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   }
 }
 
-export function matchesLevel(item: RawItem, level: NotifLevel, authorFilter: string, minLength: number): boolean {
-  if (item.feedKey === 'members-area') return true;
-  if (level === 'minimal') return false;
-  if (!item.author.toLowerCase().includes(authorFilter)) return false;
-  if (level === 'all') return true;
-  if (item.feedKey === 'stock-insights') return stripReplyPrefix(item.title).startsWith('*');
-  return stripHtml(item.description).length >= minLength;
+function toFilterItem(item: RawItem): FilterItem {
+  return {
+    isMembersArea: item.feedKey === 'members-area',
+    isStockInsights: item.feedKey === 'stock-insights',
+    author: item.author,
+    title: item.title,
+    content: item.description,
+  };
 }
+
+export { matchesLevel, stripReplyPrefix } from '@li/core';
 
 export function extractTopicUrl(link: string): string | null {
   const match = link.match(/(https:\/\/logicalinvestor\.net\/forums\/topic\/[^/#]+\/)/);
   return match ? match[1] : null;
-}
-
-export function stripReplyPrefix(title: string): string {
-  return title.startsWith('Reply To: ') ? title.slice(10).trim() : title.trim();
 }
 
 function dedup(items: RawItem[]): RawItem[] {
@@ -369,11 +367,3 @@ function dedup(items: RawItem[]): RawItem[] {
   });
 }
 
-function formatTitle(item: RawItem): string {
-  const topic = stripReplyPrefix(item.title);
-  return topic ? `${item.author} in ${topic}:` : item.author || 'New post';
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
-}

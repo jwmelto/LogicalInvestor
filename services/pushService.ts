@@ -6,7 +6,7 @@ const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
 const PUSH_LEVEL_KEY = 'push_level';
 const PUSH_CHANNELS_KEY = 'push_channels';
 
-export type PushLevel = 'minimal' | 'standard' | 'all';
+export type { NotifLevel as PushLevel } from '@li/core';
 type Channel = 'members' | 'stock' | 'options';
 
 const FEEDKEY_TO_CHANNEL: Record<string, Channel> = {

@@ -1,17 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow } from './index';
+import type { FilterItem, NotifLevel } from '@li/core';
 
 type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
-type NotifLevel = 'minimal' | 'standard' | 'all';
 
-function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}) {
+function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
-    guid: 'g',
-    link: 'l',
-    feedKey,
+    isMembersArea: feedKey === 'members-area',
+    isStockInsights: feedKey === 'stock-insights',
     author: overrides.author ?? 'Sean Hyman',
     title: overrides.title ?? '',
-    description: overrides.description ?? '',
+    content: overrides.description ?? '',
   };
 }
 
