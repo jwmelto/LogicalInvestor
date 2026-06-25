@@ -11,8 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "space.melton.logicalinvestor",
-      "deploymentTarget": "18.0",
-      "buildNumber": "14"
+      "deploymentTarget": "18.0"
     },
     "android": {
       "adaptiveIcon": {
