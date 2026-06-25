@@ -7,6 +7,7 @@ export interface Env {
   FEED_TOKEN: string;              // polling token for members channel
   AUTHOR_FILTER: string;           // wrangler.toml [vars], default "Sean Hyman"
   MIN_CONTENT_LENGTH: string;      // wrangler.toml [vars], default "200"
+  ACTION_PATTERNS?: string;        // wrangler.toml [vars], JSON array of regex strings; omit to use DEFAULT_ACTION_PATTERNS
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
   POLL_INTERVAL_OVERNIGHT?: string; // minutes between polls outside market hours, default "60"
@@ -305,6 +306,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
   const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
+  const actionPatterns: string[] | undefined = env.ACTION_PATTERNS ? JSON.parse(env.ACTION_PATTERNS) : undefined;
 
   const tokensByLevel: Partial<Record<NotifLevel, string[]>> = {};
   let cursor: string | undefined;
@@ -322,7 +324,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
     const toNotify = newItems
-      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength))
+      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength, actionPatterns))
       .slice(0, 5);
     if (toNotify.length === 0) continue;
 

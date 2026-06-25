@@ -1,5 +1,5 @@
 import * as Notifications from 'expo-notifications';
-import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
+import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, containsActionableSignal, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
 import type { FeedItem } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 import { getPushLevel } from './pushService';
@@ -69,7 +69,8 @@ function passes(item: FeedItem, settings: NotificationSettings): boolean {
     const author = item.author?.toLowerCase() ?? '';
     if (!settings.authorFilters.some((f) => author.includes(f.toLowerCase()))) return false;
   }
-  return stripHtml(item.excerpt ?? '').length >= settings.minContentLength;
+  const text = stripHtml(item.excerpt ?? '');
+  return text.length >= settings.minContentLength && containsActionableSignal(text);
 }
 
 export async function processNewItemsForNotifications(items: FeedItem[]): Promise<void> {

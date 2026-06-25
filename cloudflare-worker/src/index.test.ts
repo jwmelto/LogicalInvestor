@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow } from './index';
+import { containsActionableSignal } from '@li/core';
 import type { FilterItem, NotifLevel } from '@li/core';
 
 type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
@@ -17,6 +18,8 @@ function item(feedKey: FeedKey, overrides: { author?: string; title?: string; de
 const AUTHOR = 'sean hyman';
 const MIN = 200;
 const long = 'x'.repeat(210);
+// Long content with an action signal: satisfies both the length and semantic requirements.
+const longWithSignal = 'new pick — ' + 'x'.repeat(200);
 
 const RSS_WITH_ITEM = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>1</guid><title>t</title><link>l</link><description>d</description></item></channel></rss>';
 const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>';
@@ -52,14 +55,16 @@ describe('matchesLevel', () => {
     expect(matchesLevel(item('stock-insights', { title: 'Discussion post',        description: long }), 'standard', AUTHOR, MIN)).toBe(false);
   });
 
-  it('standard: members-forum requires min content length after stripping HTML', () => {
-    expect(matchesLevel(item('members-forum', { description: '<p>short</p>' }),          'standard', AUTHOR, MIN)).toBe(false);
-    expect(matchesLevel(item('members-forum', { description: '<p>' + long + '</p>' }),   'standard', AUTHOR, MIN)).toBe(true);
+  it('standard: members-forum requires length AND action signal', () => {
+    expect(matchesLevel(item('members-forum', { description: '<p>short</p>' }),                      'standard', AUTHOR, MIN)).toBe(false); // short, no signal
+    expect(matchesLevel(item('members-forum', { description: '<p>' + long + '</p>' }),               'standard', AUTHOR, MIN)).toBe(false); // long, no signal
+    expect(matchesLevel(item('members-forum', { description: '<p>' + longWithSignal + '</p>' }),     'standard', AUTHOR, MIN)).toBe(true);  // long + signal
   });
 
-  it('standard: options-insights uses min content length (same as members-forum)', () => {
-    expect(matchesLevel(item('options-insights', { description: 'short' }), 'standard', AUTHOR, MIN)).toBe(false);
-    expect(matchesLevel(item('options-insights', { description: long }),    'standard', AUTHOR, MIN)).toBe(true);
+  it('standard: options-insights requires length AND action signal', () => {
+    expect(matchesLevel(item('options-insights', { description: 'short' }),         'standard', AUTHOR, MIN)).toBe(false); // short, no signal
+    expect(matchesLevel(item('options-insights', { description: long }),            'standard', AUTHOR, MIN)).toBe(false); // long, no signal
+    expect(matchesLevel(item('options-insights', { description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);  // long + signal
   });
 });
 
@@ -198,5 +203,59 @@ describe('findAndStorePollToken', () => {
     ], statePut));
     expect(result).toBe('working');
     expect(statePut).toHaveBeenCalledWith('poll:options', 'working');
+  });
+});
+
+// Verbatim excerpts from training data to guard pattern regressions.
+describe('containsActionableSignal', () => {
+  describe('should fire (positive training)', () => {
+    it('new pick announcement', () => {
+      expect(containsActionableSignal("I've got a new pick for subscribers this month that you need to get into IMMEDIATELY")).toBe(true);
+    });
+    it('formal tranche price line', () => {
+      expect(containsActionableSignal('1st Tranche: $210 or below. (ACN is trading in the $198\'s right now).')).toBe(true);
+    });
+    it('third tranche urgency', () => {
+      expect(containsActionableSignal("let's go ahead and ensure we get in our 3rd tranche NOW")).toBe(true);
+    });
+    it('fourth tranche entry', () => {
+      expect(containsActionableSignal('For those that want to, you can get in a 4th tranche here/now.')).toBe(true);
+    });
+    it('explicit buy recommendation with price', () => {
+      expect(containsActionableSignal('Buy Best Buy (BBY) at the market as long as the stock is at $66 per share or LOWER.')).toBe(true);
+    });
+    it('sell half of first tranche', () => {
+      expect(containsActionableSignal('you can sell half of your 1st tranche and if it pulls back to your breakeven')).toBe(true);
+    });
+    it('sell half of remaining', () => {
+      expect(containsActionableSignal("With y'all being up around 21%-22% in under 2 complete trading days, I'd consider selling half of your remaining half, now.")).toBe(true);
+    });
+    it('averaging down with price', () => {
+      expect(containsActionableSignal('If FXY dips anywhere into the $81ish area, that\'s close enough to get your averaging down to ensure you get it')).toBe(true);
+    });
+    it('IMMEDIATELY urgency marker alone', () => {
+      expect(containsActionableSignal('get into IMMEDIATELY and not delay')).toBe(true);
+    });
+  });
+
+  describe('should not fire (negative training)', () => {
+    it('educational: waiting for 4th tranche without action', () => {
+      expect(containsActionableSignal("You shouldn't be waiting for a 4th tranche entry. You (or I, either one) will know the bottom when it's happen.")).toBe(false);
+    });
+    it('philosophical: sentiment discussion', () => {
+      expect(containsActionableSignal("Sentiment is bad – a good thing. That's when value is found. It's not generally found outside of that setting.")).toBe(false);
+    });
+    it('Buffett quote / emotional coaching', () => {
+      expect(containsActionableSignal("Emotions (in every area of life) are great followers and horrible leaders. Yet, most people allow them to lead in stock-picking")).toBe(false);
+    });
+    it('status update without action', () => {
+      expect(containsActionableSignal('BBY up 2.08% today\n\nIf it should get to $80 or more, we may consider a sell.\n\nIf it doesn\'t get there, we\'re happy to continue to hold.')).toBe(false);
+    });
+    it('conditional / speculative diagonal', () => {
+      expect(containsActionableSignal("BBY \"could\" be doing a \"leading diagonal\" which would look something like this. IF that happened, we'd likely sell around $80-$81ish.")).toBe(false);
+    });
+    it('fundamental analysis without new entry', () => {
+      expect(containsActionableSignal("It's been around since 1951. 800.000 employees. $78 billion company. Forward P/E in the 8's. Almost $13 billion earned in a \"bad year\" for them, last year. Over $10 billion in cash. What's scary about that?")).toBe(false);
+    });
   });
 });
