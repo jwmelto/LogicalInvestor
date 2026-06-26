@@ -19,6 +19,7 @@ import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic }
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 import { useUnreadCounts } from '../contexts/UnreadCountContext';
 import { addNotificationAuthor } from '../services/notificationService';
+import { reportMissedAlert, type ReportableItem } from '../services/reportService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
@@ -367,12 +368,13 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     await setCachedUnreadCounts({ ...cached, [feedKey]: 0 });
   }
 
-  function promptAddNotificationAuthor(author: string | undefined) {
-    if (!author) return;
-    const name = decodeHtmlEntities(author);
-    Alert.alert('Add to notifications', `Notify for posts by "${name}"?`, [
+  function showPostMenu(item: ReportableItem) {
+    if (!item.author && !item.link) return;
+    const name = item.author ? decodeHtmlEntities(item.author) : undefined;
+    Alert.alert(name ?? 'Post options', item.title ? decodeHtmlEntities(item.title) : undefined, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Add', onPress: () => addNotificationAuthor(name) },
+      ...(name ? [{ text: 'Add author to alerts', onPress: () => addNotificationAuthor(name) }] : []),
+      { text: 'Report: missed alert', onPress: () => reportMissedAlert(item) },
     ]);
   }
 
@@ -514,7 +516,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                                 Linking.openURL(topicSection.topic.latestItemLink);
                               }
                             }}
-                            onLongPress={() => promptAddNotificationAuthor(topicSection.topic.latestAuthor)}
+                            onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, excerpt: topicSection.topic.latestExcerpt })}
                           >
                             {(topicSection.topic.latestAuthor || topicSection.topic.latestPubDate) && (
                               <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
@@ -555,7 +557,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                               key={item.id}
                               style={[styles.topicItem, { backgroundColor: c.bg }]}
                               onPress={() => onPressItem(item)}
-                              onLongPress={() => promptAddNotificationAuthor(item.author)}
+                              onLongPress={() => showPostMenu(item)}
                             >
                               <View style={styles.itemMeta}>
                                 <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
@@ -597,7 +599,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         key={item.id}
                         style={[styles.item, { backgroundColor: c.bg }]}
                         onPress={() => onPressItem(item)}
-                        onLongPress={() => promptAddNotificationAuthor(item.author)}
+                        onLongPress={() => showPostMenu(item)}
                       >
                         <View style={styles.titleRow}>
                           <Text style={[styles.itemTitle, { color: c.text }]}>{decodeHtmlEntities(item.title)}</Text>
