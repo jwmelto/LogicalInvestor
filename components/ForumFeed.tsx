@@ -570,9 +570,11 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                                   })}
                                 </Text>
                               </View>
-                              {displayTitle !== topicSection.topic.name && (
+                              {(displayTitle !== topicSection.topic.name || !itemIsRead) && (
                                 <View style={styles.titleRow}>
-                                  <Text style={[styles.itemTitle, { color: c.text }]}>{displayTitle}</Text>
+                                  {displayTitle !== topicSection.topic.name && (
+                                    <Text style={[styles.itemTitle, { color: c.text }]}>{displayTitle}</Text>
+                                  )}
                                   {!itemIsRead && <Text style={[styles.newBadge, { color: c.newBadge }]}>[new]</Text>}
                                 </View>
                               )}
