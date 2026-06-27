@@ -202,18 +202,10 @@ export default function SettingsScreen() {
           </TouchableOpacity>
           {expandedNotifications && (
             <>
-              <View style={[styles.preference, { borderBottomColor: c.border }]}>
-                <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Enable notifications</Text>
-                <Switch
-                  value={notifSettings.enabled}
-                  onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, enabled: v })}
-                  disabled={loading}
-                />
-              </View>
               <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
                 <Text style={[styles.preferenceLabelInline, { color: c.text, marginBottom: 8 }]}>Push notification level</Text>
                 <View style={styles.levelRow}>
-                  {(['minimal', 'standard', 'all'] as PushLevel[]).map((level) => (
+                  {(['all', 'standard', 'minimal', 'none'] as PushLevel[]).map((level) => (
                     <TouchableOpacity
                       key={level}
                       style={[styles.levelButton, { borderColor: c.tint }, pushLevel === level && { backgroundColor: c.tint }]}
@@ -221,18 +213,28 @@ export default function SettingsScreen() {
                       disabled={loading}
                     >
                       <Text style={[styles.levelButtonText, { color: pushLevel === level ? '#fff' : c.tint }]}>
-                        {level === 'minimal' ? 'Minimal' : level === 'standard' ? 'Standard' : 'All Sean'}
+                        {level === 'all' ? 'All Sean' : level === 'standard' ? 'Standard' : level === 'minimal' ? 'Minimal' : 'None'}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
                 <Text style={[styles.levelHint, { color: c.textFaint }]}>
-                  {pushLevel === 'minimal' ? 'Members Area posts only'
-                    : pushLevel === 'standard' ? 'Sean only · long posts · starred SI topics'
-                    : 'All posts from Sean Hyman'}
+                  {pushLevel === 'all' ? 'All posts from Sean Hyman'
+                    : pushLevel === 'standard' ? 'Sean only · actionable content · starred SI/OI topics'
+                    : pushLevel === 'minimal' ? 'Members Area posts only'
+                    : 'No push notifications'}
                 </Text>
               </View>
-              <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
+              <View style={[styles.preference, { borderTopColor: c.border, borderTopWidth: 1, marginTop: 8 }]}>
+                <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Enable local notifications</Text>
+                <Switch
+                  value={notifSettings.enabled}
+                  onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, enabled: v })}
+                  disabled={loading}
+                />
+              </View>
+              {notifSettings.enabled && (
+              <><View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
                 <View style={styles.intervalLabelRow}>
                   <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Min content length</Text>
                   <Text style={[styles.intervalValue, { color: c.tint }]}>
@@ -299,6 +301,7 @@ export default function SettingsScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
+              </>)}
             </>
           )}
         </View>

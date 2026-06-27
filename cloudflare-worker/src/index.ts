@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FeedKey, type FilterItem, type NotifLevel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -17,7 +17,6 @@ export interface Env {
 }
 
 type Channel = 'members' | 'stock' | 'options';
-type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
 
 interface RawItem {
   guid: string;
@@ -31,7 +30,7 @@ interface RawItem {
 interface TopicEntry {
   lastSeen: string;
   title: string;
-  feedKey: FeedKey;
+  feedKey: FeedKey; // camelCase, from @li/core
 }
 
 interface TokenMeta {
@@ -55,14 +54,14 @@ export function channelFromCron(cron: string): Channel {
 
 const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
   members: [
-    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: 'members-area',     discoverTopics: false },
-    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: 'members-forum',    discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: FeedKeys.membersArea,     discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: FeedKeys.membersForum,    discoverTopics: true  },
   ],
   stock: [
-    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: 'stock-insights',   discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: FeedKeys.stockInsights,   discoverTopics: true  },
   ],
   options: [
-    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: 'options-insights', discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: false },
   ],
 };
 
@@ -344,13 +343,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 }
 
 function toFilterItem(item: RawItem): FilterItem {
-  return {
-    isMembersArea: item.feedKey === 'members-area',
-    isStockInsights: item.feedKey === 'stock-insights',
-    author: item.author,
-    title: item.title,
-    content: item.description,
-  };
+  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
 }
 
 export { matchesLevel, stripReplyPrefix } from '@li/core';

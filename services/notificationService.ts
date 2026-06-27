@@ -1,5 +1,5 @@
 import * as Notifications from 'expo-notifications';
-import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, containsActionableSignal, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
+import { stripHtml, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
 import type { FeedItem } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 import { getPushLevel } from './pushService';
@@ -51,13 +51,7 @@ const SERVER_AUTHOR_FILTER = 'sean hyman';
 const SERVER_MIN_LENGTH = 200;
 
 function toFilterItem(item: FeedItem): FilterItem {
-  return {
-    isMembersArea: item.feedKey === 'membersArea',
-    isStockInsights: item.feedKey === 'stockInsights',
-    author: item.author,
-    title: item.title,
-    content: item.excerpt,
-  };
+  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.excerpt };
 }
 
 function wouldServerPush(item: FeedItem, level: NotifLevel): boolean {
@@ -70,7 +64,7 @@ function passes(item: FeedItem, settings: NotificationSettings): boolean {
     if (!settings.authorFilters.some((f) => author.includes(f.toLowerCase()))) return false;
   }
   const text = stripHtml(item.excerpt ?? '');
-  return text.length >= settings.minContentLength && containsActionableSignal(text);
+  return text.length >= settings.minContentLength;
 }
 
 export async function processNewItemsForNotifications(items: FeedItem[]): Promise<void> {

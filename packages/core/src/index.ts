@@ -1,10 +1,18 @@
 export const MAX_SEEN_IDS = 500;
 
-export type NotifLevel = 'minimal' | 'standard' | 'all';
+export type NotifLevel = 'none' | 'minimal' | 'standard' | 'all';
+
+export const FeedKeys = {
+  membersArea:     'membersArea',
+  membersForum:    'membersForum',
+  stockInsights:   'stockInsights',
+  optionsInsights: 'optionsInsights',
+} as const;
+
+export type FeedKey = typeof FeedKeys[keyof typeof FeedKeys];
 
 export interface FilterItem {
-  isMembersArea: boolean;
-  isStockInsights: boolean;
+  feedKey: FeedKey;
   author?: string;
   title?: string;
   content?: string;
@@ -57,11 +65,12 @@ export function matchesLevel(
   minLength: number,
   actionPatterns: string[] = DEFAULT_ACTION_PATTERNS,
 ): boolean {
-  if (item.isMembersArea) return true;
+  if (level === 'none') return false;
+  if (item.feedKey === FeedKeys.membersArea) return true;
   if (level === 'minimal') return false;
   if (!item.author?.toLowerCase().includes(authorFilter.toLowerCase())) return false;
   if (level === 'all') return true;
-  if (item.isStockInsights) return stripReplyPrefix(item.title ?? '').startsWith('*');
+  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) return stripReplyPrefix(item.title ?? '').startsWith('*');
   const text = stripHtml(item.content ?? '');
-  return text.length >= minLength && containsActionableSignal(text, actionPatterns);
+  return containsActionableSignal(text, actionPatterns);
 }

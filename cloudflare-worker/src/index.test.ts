@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow } from './index';
-import { containsActionableSignal } from '@li/core';
-import type { FilterItem, NotifLevel } from '@li/core';
+import { FeedKeys, containsActionableSignal } from '@li/core';
+import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
 
-type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
+const FK = FeedKeys;
 
 function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
-    isMembersArea: feedKey === 'members-area',
-    isStockInsights: feedKey === 'stock-insights',
+    feedKey,
     author: overrides.author ?? 'Sean Hyman',
     title: overrides.title ?? '',
     content: overrides.description ?? '',
@@ -27,44 +26,51 @@ const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channe
 beforeEach(() => { vi.restoreAllMocks(); });
 
 describe('matchesLevel', () => {
-  it('members-area always passes regardless of level', () => {
+  it('none blocks everything including members-area', () => {
+    for (const fk of [FK.membersArea, FK.membersForum, FK.stockInsights, FK.optionsInsights] as FeedKey[]) {
+      expect(matchesLevel(item(fk, { description: long }), 'none', AUTHOR, MIN)).toBe(false);
+    }
+  });
+
+  it('members-area always passes for minimal/standard/all', () => {
     for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
-      expect(matchesLevel(item('members-area', { author: 'anyone', description: '' }), level, AUTHOR, MIN)).toBe(true);
+      expect(matchesLevel(item(FK.membersArea, { author: 'anyone', description: '' }), level, AUTHOR, MIN)).toBe(true);
     }
   });
 
   it('minimal blocks everything except members-area', () => {
-    for (const fk of ['members-forum', 'stock-insights', 'options-insights'] as FeedKey[]) {
+    for (const fk of [FK.membersForum, FK.stockInsights, FK.optionsInsights] as FeedKey[]) {
       expect(matchesLevel(item(fk, { description: long }), 'minimal', AUTHOR, MIN)).toBe(false);
     }
   });
 
   it('author filter blocks non-matching authors at standard and all', () => {
     for (const level of ['standard', 'all'] as NotifLevel[]) {
-      expect(matchesLevel(item('members-forum', { author: 'Other Person', description: long }), level, AUTHOR, MIN)).toBe(false);
+      expect(matchesLevel(item(FK.membersForum, { author: 'Other Person', description: long }), level, AUTHOR, MIN)).toBe(false);
     }
   });
 
   it('all level passes when author matches regardless of content length', () => {
-    expect(matchesLevel(item('members-forum', { description: 'short' }), 'all', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.membersForum, { description: 'short' }), 'all', AUTHOR, MIN)).toBe(true);
   });
 
   it('standard: stock-insights requires * prefix after stripping Reply To', () => {
-    expect(matchesLevel(item('stock-insights', { title: '*AAPL Trade',           description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item('stock-insights', { title: 'Reply To: *AAPL Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item('stock-insights', { title: 'Discussion post',        description: long }), 'standard', AUTHOR, MIN)).toBe(false);
+    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.stockInsights, { title: 'Discussion post',        description: long }), 'standard', AUTHOR, MIN)).toBe(false);
   });
 
-  it('standard: members-forum requires length AND action signal', () => {
-    expect(matchesLevel(item('members-forum', { description: '<p>short</p>' }),                      'standard', AUTHOR, MIN)).toBe(false); // short, no signal
-    expect(matchesLevel(item('members-forum', { description: '<p>' + long + '</p>' }),               'standard', AUTHOR, MIN)).toBe(false); // long, no signal
-    expect(matchesLevel(item('members-forum', { description: '<p>' + longWithSignal + '</p>' }),     'standard', AUTHOR, MIN)).toBe(true);  // long + signal
+  it('standard: members-forum requires action signal only (length irrelevant)', () => {
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>no signal</p>' }),                  'standard', AUTHOR, MIN)).toBe(false); // no signal
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>new pick IMMEDIATELY</p>' }),       'standard', AUTHOR, MIN)).toBe(true);  // short but has signal
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>' + long + '</p>' }),               'standard', AUTHOR, MIN)).toBe(false); // long, no signal
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>' + longWithSignal + '</p>' }),     'standard', AUTHOR, MIN)).toBe(true);  // long + signal
   });
 
-  it('standard: options-insights requires length AND action signal', () => {
-    expect(matchesLevel(item('options-insights', { description: 'short' }),         'standard', AUTHOR, MIN)).toBe(false); // short, no signal
-    expect(matchesLevel(item('options-insights', { description: long }),            'standard', AUTHOR, MIN)).toBe(false); // long, no signal
-    expect(matchesLevel(item('options-insights', { description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);  // long + signal
+  it('standard: options-insights requires * prefix after stripping Reply To', () => {
+    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.optionsInsights, { title: 'Discussion post',       description: long }), 'standard', AUTHOR, MIN)).toBe(false);
   });
 });
 
