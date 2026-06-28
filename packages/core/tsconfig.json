@@ -1,13 +1,8 @@
 {
   "compilerOptions": {
-    "paths": {
-      "@li/core": ["../packages/core/src/index.ts"]
-    },
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"],
     "strict": true,
     "noEmit": true
   }

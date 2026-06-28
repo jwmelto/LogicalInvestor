@@ -1,7 +1,8 @@
 import * as Notifications from 'expo-notifications';
+import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
 import type { FeedItem } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
-import { getPushLevel, type PushLevel } from './pushService';
+import { getPushLevel } from './pushService';
 
 export interface NotificationSettings {
   enabled: boolean;
@@ -17,7 +18,6 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 const SETTINGS_KEY = 'notification_settings';
 const SEEN_KEY = 'notification_seen_ids';
-const MAX_SEEN_IDS = 500; // ~20x the largest feed window (~25 items)
 
 export async function getNotificationSettings(): Promise<NotificationSettings> {
   const stored = await storageGetObject<Partial<NotificationSettings>>(SETTINGS_KEY);
@@ -47,29 +47,21 @@ export async function addNotificationAuthor(author: string): Promise<void> {
   }
 }
 
-function formatTitle(item: FeedItem): string {
-  const author = item.author ?? 'New post';
-  const title = item.title ?? '';
-  const topic = title.startsWith('Reply To: ') ? title.slice(10).trim() : title;
-  return topic ? `${author} in ${topic}:` : author;
+const SERVER_AUTHOR_FILTER = 'sean hyman';
+const SERVER_MIN_LENGTH = 200;
+
+function toFilterItem(item: FeedItem): FilterItem {
+  return {
+    isMembersArea: item.feedKey === 'membersArea',
+    isStockInsights: item.feedKey === 'stockInsights',
+    author: item.author,
+    title: item.title,
+    content: item.excerpt,
+  };
 }
 
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// ponytail: mirrors matchesLevel() in cloudflare-worker/src/index.ts — update both if AUTHOR_FILTER or MIN_CONTENT_LENGTH changes
-function wouldServerPush(item: FeedItem, level: PushLevel): boolean {
-  if (item.feedKey === 'membersArea') return true;
-  if (level === 'minimal') return false;
-  if (!item.author?.toLowerCase().includes('sean hyman')) return false;
-  if (level === 'all') return true;
-  // standard
-  if (item.feedKey === 'stockInsights') {
-    const topic = item.title?.startsWith('Reply To: ') ? item.title.slice(10).trim() : item.title ?? '';
-    return topic.startsWith('*');
-  }
-  return stripHtml(item.excerpt ?? '').length >= 200;
+function wouldServerPush(item: FeedItem, level: NotifLevel): boolean {
+  return matchesLevel(toFilterItem(item), level, SERVER_AUTHOR_FILTER, SERVER_MIN_LENGTH);
 }
 
 function passes(item: FeedItem, settings: NotificationSettings): boolean {

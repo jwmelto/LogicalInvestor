@@ -5,6 +5,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@li/core": [
+        "./packages/core/src/index.ts"
       ]
     }
   },

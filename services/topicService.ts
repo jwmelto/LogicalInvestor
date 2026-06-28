@@ -1,3 +1,4 @@
+import { stripReplyPrefix } from '@li/core';
 import { FeedItem, FeedKey, FEEDS } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 
@@ -40,10 +41,7 @@ const TOPICS_STORAGE_KEY = 'discovered_topics';
  * - Reply post: "Reply To: Lorem Ipsum" → topic is "Lorem Ipsum"
  */
 export function extractTopicFromTitle(title: string): string {
-  if (title.startsWith('Reply To: ')) {
-    return title.slice(10).trim();
-  }
-  return title;
+  return stripReplyPrefix(title);
 }
 
 /**
