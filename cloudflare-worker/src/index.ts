@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, matchesLevel, containsActionableSignal, MAX_SEEN_IDS, type FeedKey, type FilterItem, type NotifLevel } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, containsActionableSignal, MAX_SEEN_IDS, type FeedKey, type NotifLevel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -38,16 +38,18 @@ interface TokenMeta {
   feedToken?: string; // stored for optional channels; used to recover a stale poll token
 }
 
-type FilterClause =
-  | 'always-pass'      // membersArea bypasses all filters
-  | 'blocked-none'     // level=none blocks everything
-  | 'blocked-minimal'  // level=minimal blocks non-membersArea
-  | 'blocked-author'   // author substring didn't match
-  | 'passed-all'       // level=all, author matched
-  | 'passed-star'      // stock/options with * title prefix
-  | 'blocked-star'     // stock/options missing * title prefix
-  | 'passed-signal'    // membersForum with actionable signal
-  | 'blocked-signal';  // membersForum, no actionable signal
+const FilterClauses = {
+  alwaysPass:     'always-pass',    // membersArea bypasses all filters
+  blockedNone:    'blocked-none',   // level=none blocks everything
+  blockedMinimal: 'blocked-minimal',// level=minimal blocks non-membersArea
+  blockedAuthor:  'blocked-author', // author substring didn't match
+  passedAll:      'passed-all',     // level=all, author matched
+  passedStar:     'passed-star',    // stock/options with * title prefix
+  blockedStar:    'blocked-star',   // stock/options missing * title prefix
+  passedSignal:   'passed-signal',  // membersForum with actionable signal
+  blockedSignal:  'blocked-signal', // membersForum, no actionable signal
+} as const;
+type FilterClause = typeof FilterClauses[keyof typeof FilterClauses];
 
 interface RunStats {
   lastRun: string;
@@ -58,17 +60,23 @@ interface RunStats {
   sent: number;
 }
 
-// ponytail: mirrors matchesLevel in @li/core — keep in sync if filter logic changes
+const PASS_CLAUSES = new Set<FilterClause>([
+  FilterClauses.alwaysPass,
+  FilterClauses.passedAll,
+  FilterClauses.passedStar,
+  FilterClauses.passedSignal,
+]);
+
 function classifyItem(item: RawItem, level: NotifLevel, authorFilter: string, actionPatterns?: string[]): FilterClause {
-  if (level === 'none') return 'blocked-none';
-  if (item.feedKey === FeedKeys.membersArea) return 'always-pass';
-  if (level === 'minimal') return 'blocked-minimal';
-  if (!item.author.toLowerCase().includes(authorFilter)) return 'blocked-author';
-  if (level === 'all') return 'passed-all';
+  if (level === 'none') return FilterClauses.blockedNone;
+  if (item.feedKey === FeedKeys.membersArea) return FilterClauses.alwaysPass;
+  if (level === 'minimal') return FilterClauses.blockedMinimal;
+  if (!item.author.toLowerCase().includes(authorFilter)) return FilterClauses.blockedAuthor;
+  if (level === 'all') return FilterClauses.passedAll;
   if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
-    return stripReplyPrefix(item.title).startsWith('*') ? 'passed-star' : 'blocked-star';
+    return stripReplyPrefix(item.title).startsWith('*') ? FilterClauses.passedStar : FilterClauses.blockedStar;
   }
-  return containsActionableSignal(stripHtml(item.description), actionPatterns) ? 'passed-signal' : 'blocked-signal';
+  return containsActionableSignal(stripHtml(item.description), actionPatterns) ? FilterClauses.passedSignal : FilterClauses.blockedSignal;
 }
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
@@ -379,7 +387,6 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   }
 
   const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
-  const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
   const actionPatterns: string[] | undefined = env.ACTION_PATTERNS ? JSON.parse(env.ACTION_PATTERNS) : undefined;
 
   const tokensByLevel: Partial<Record<NotifLevel, string[]>> = {};
@@ -400,13 +407,14 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   }
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
-    for (const item of newItems) {
-      const clause = classifyItem(item, level, authorFilter, actionPatterns);
+    const classified = newItems.map(item => ({ item, clause: classifyItem(item, level, authorFilter, actionPatterns) }));
+    for (const { clause } of classified) {
       runStats.clauses[clause] = (runStats.clauses[clause] ?? 0) + 1;
     }
 
-    const toNotify = newItems
-      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength, actionPatterns))
+    const toNotify = classified
+      .filter(({ clause }) => PASS_CLAUSES.has(clause))
+      .map(({ item }) => item)
       .slice(0, 5);
     if (toNotify.length === 0) continue;
 
@@ -429,9 +437,6 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
 }
 
-function toFilterItem(item: RawItem): FilterItem {
-  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
-}
 
 export { matchesLevel, stripReplyPrefix } from '@li/core';
 
