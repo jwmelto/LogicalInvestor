@@ -58,6 +58,7 @@ export function containsActionableSignal(
   return patterns.some((p) => new RegExp(p, 'is').test(text));
 }
 
+
 export function matchesLevel(
   item: FilterItem,
   level: NotifLevel,
