@@ -25,6 +25,7 @@ export default function TabLayout() {
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarBadgeStyle: { transform: [{ scale: 0.5 }] },
+
       }}>
       <Tabs.Screen
         name="index"

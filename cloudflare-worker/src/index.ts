@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FeedKey, type FilterItem, type NotifLevel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -7,6 +7,7 @@ export interface Env {
   FEED_TOKEN: string;              // polling token for members channel
   AUTHOR_FILTER: string;           // wrangler.toml [vars], default "Sean Hyman"
   MIN_CONTENT_LENGTH: string;      // wrangler.toml [vars], default "200"
+  ACTION_PATTERNS?: string;        // wrangler.toml [vars], JSON array of regex strings; omit to use DEFAULT_ACTION_PATTERNS
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
   POLL_INTERVAL_OVERNIGHT?: string; // minutes between polls outside market hours, default "60"
@@ -16,7 +17,6 @@ export interface Env {
 }
 
 type Channel = 'members' | 'stock' | 'options';
-type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
 
 interface RawItem {
   guid: string;
@@ -54,14 +54,14 @@ export function channelFromCron(cron: string): Channel {
 
 const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
   members: [
-    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: 'members-area',     discoverTopics: false },
-    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: 'members-forum',    discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: FeedKeys.membersArea,     discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: FeedKeys.membersForum,    discoverTopics: true  },
   ],
   stock: [
-    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: 'stock-insights',   discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: FeedKeys.stockInsights,   discoverTopics: true  },
   ],
   options: [
-    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: 'options-insights', discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: false },
   ],
 };
 
@@ -305,6 +305,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
   const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
+  const actionPatterns: string[] | undefined = env.ACTION_PATTERNS ? JSON.parse(env.ACTION_PATTERNS) : undefined;
 
   const tokensByLevel: Partial<Record<NotifLevel, string[]>> = {};
   let cursor: string | undefined;
@@ -322,7 +323,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
     const toNotify = newItems
-      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength))
+      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength, actionPatterns))
       .slice(0, 5);
     if (toNotify.length === 0) continue;
 
@@ -342,13 +343,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 }
 
 function toFilterItem(item: RawItem): FilterItem {
-  return {
-    isMembersArea: item.feedKey === 'members-area',
-    isStockInsights: item.feedKey === 'stock-insights',
-    author: item.author,
-    title: item.title,
-    content: item.description,
-  };
+  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
 }
 
 export { matchesLevel, stripReplyPrefix } from '@li/core';

@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow } from './index';
-import type { FilterItem, NotifLevel } from '@li/core';
+import { FeedKeys, containsActionableSignal } from '@li/core';
+import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
 
-type FeedKey = 'members-area' | 'members-forum' | 'stock-insights' | 'options-insights';
+const FK = FeedKeys;
 
 function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
-    isMembersArea: feedKey === 'members-area',
-    isStockInsights: feedKey === 'stock-insights',
+    feedKey,
     author: overrides.author ?? 'Sean Hyman',
     title: overrides.title ?? '',
     content: overrides.description ?? '',
@@ -17,6 +17,8 @@ function item(feedKey: FeedKey, overrides: { author?: string; title?: string; de
 const AUTHOR = 'sean hyman';
 const MIN = 200;
 const long = 'x'.repeat(210);
+// Long content with an action signal: satisfies both the length and semantic requirements.
+const longWithSignal = 'new pick — ' + 'x'.repeat(200);
 
 const RSS_WITH_ITEM = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>1</guid><title>t</title><link>l</link><description>d</description></item></channel></rss>';
 const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>';
@@ -24,42 +26,51 @@ const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channe
 beforeEach(() => { vi.restoreAllMocks(); });
 
 describe('matchesLevel', () => {
-  it('members-area always passes regardless of level', () => {
+  it('none blocks everything including members-area', () => {
+    for (const fk of [FK.membersArea, FK.membersForum, FK.stockInsights, FK.optionsInsights] as FeedKey[]) {
+      expect(matchesLevel(item(fk, { description: long }), 'none', AUTHOR, MIN)).toBe(false);
+    }
+  });
+
+  it('members-area always passes for minimal/standard/all', () => {
     for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
-      expect(matchesLevel(item('members-area', { author: 'anyone', description: '' }), level, AUTHOR, MIN)).toBe(true);
+      expect(matchesLevel(item(FK.membersArea, { author: 'anyone', description: '' }), level, AUTHOR, MIN)).toBe(true);
     }
   });
 
   it('minimal blocks everything except members-area', () => {
-    for (const fk of ['members-forum', 'stock-insights', 'options-insights'] as FeedKey[]) {
+    for (const fk of [FK.membersForum, FK.stockInsights, FK.optionsInsights] as FeedKey[]) {
       expect(matchesLevel(item(fk, { description: long }), 'minimal', AUTHOR, MIN)).toBe(false);
     }
   });
 
   it('author filter blocks non-matching authors at standard and all', () => {
     for (const level of ['standard', 'all'] as NotifLevel[]) {
-      expect(matchesLevel(item('members-forum', { author: 'Other Person', description: long }), level, AUTHOR, MIN)).toBe(false);
+      expect(matchesLevel(item(FK.membersForum, { author: 'Other Person', description: long }), level, AUTHOR, MIN)).toBe(false);
     }
   });
 
   it('all level passes when author matches regardless of content length', () => {
-    expect(matchesLevel(item('members-forum', { description: 'short' }), 'all', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.membersForum, { description: 'short' }), 'all', AUTHOR, MIN)).toBe(true);
   });
 
   it('standard: stock-insights requires * prefix after stripping Reply To', () => {
-    expect(matchesLevel(item('stock-insights', { title: '*AAPL Trade',           description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item('stock-insights', { title: 'Reply To: *AAPL Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item('stock-insights', { title: 'Discussion post',        description: long }), 'standard', AUTHOR, MIN)).toBe(false);
+    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.stockInsights, { title: 'Discussion post',        description: long }), 'standard', AUTHOR, MIN)).toBe(false);
   });
 
-  it('standard: members-forum requires min content length after stripping HTML', () => {
-    expect(matchesLevel(item('members-forum', { description: '<p>short</p>' }),          'standard', AUTHOR, MIN)).toBe(false);
-    expect(matchesLevel(item('members-forum', { description: '<p>' + long + '</p>' }),   'standard', AUTHOR, MIN)).toBe(true);
+  it('standard: members-forum requires action signal only (length irrelevant)', () => {
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>no signal</p>' }),                  'standard', AUTHOR, MIN)).toBe(false); // no signal
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>new pick IMMEDIATELY</p>' }),       'standard', AUTHOR, MIN)).toBe(true);  // short but has signal
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>' + long + '</p>' }),               'standard', AUTHOR, MIN)).toBe(false); // long, no signal
+    expect(matchesLevel(item(FK.membersForum, { description: '<p>' + longWithSignal + '</p>' }),     'standard', AUTHOR, MIN)).toBe(true);  // long + signal
   });
 
-  it('standard: options-insights uses min content length (same as members-forum)', () => {
-    expect(matchesLevel(item('options-insights', { description: 'short' }), 'standard', AUTHOR, MIN)).toBe(false);
-    expect(matchesLevel(item('options-insights', { description: long }),    'standard', AUTHOR, MIN)).toBe(true);
+  it('standard: options-insights requires * prefix after stripping Reply To', () => {
+    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.optionsInsights, { title: 'Discussion post',       description: long }), 'standard', AUTHOR, MIN)).toBe(false);
   });
 });
 
@@ -198,5 +209,59 @@ describe('findAndStorePollToken', () => {
     ], statePut));
     expect(result).toBe('working');
     expect(statePut).toHaveBeenCalledWith('poll:options', 'working');
+  });
+});
+
+// Synthetic inputs covering the learned patterns — update when pattern logic changes.
+describe('containsActionableSignal', () => {
+  describe('should fire (positive training)', () => {
+    it('new pick announcement', () => {
+      expect(containsActionableSignal("I've got a new pick that you need to get into IMMEDIATELY")).toBe(true);
+    });
+    it('formal tranche price line', () => {
+      expect(containsActionableSignal('1st Tranche: $50 or below.')).toBe(true);
+    });
+    it('third tranche urgency', () => {
+      expect(containsActionableSignal("let's go ahead and ensure we get in our 3rd tranche NOW")).toBe(true);
+    });
+    it('fourth tranche entry', () => {
+      expect(containsActionableSignal('For those that want to, you can get in a 4th tranche here/now.')).toBe(true);
+    });
+    it('explicit buy recommendation with price', () => {
+      expect(containsActionableSignal('Buy XYZ at the market as long as the stock is at $50 per share or LOWER.')).toBe(true);
+    });
+    it('sell half of first tranche', () => {
+      expect(containsActionableSignal('you can sell half of your 1st tranche and if it pulls back to your breakeven')).toBe(true);
+    });
+    it('sell half of remaining', () => {
+      expect(containsActionableSignal("You're up over 20%. I'd consider selling half of your remaining half, now.")).toBe(true);
+    });
+    it('averaging down with price', () => {
+      expect(containsActionableSignal("If XYZ dips into the $50ish area, that's close enough to get your averaging down")).toBe(true);
+    });
+    it('IMMEDIATELY urgency marker alone', () => {
+      expect(containsActionableSignal('get into IMMEDIATELY and not delay')).toBe(true);
+    });
+  });
+
+  describe('should not fire (negative training)', () => {
+    it('educational: waiting for 4th tranche without action', () => {
+      expect(containsActionableSignal("You shouldn't be waiting for a 4th tranche entry. You (or I, either one) will know the bottom when it happens.")).toBe(false);
+    });
+    it('philosophical: sentiment discussion', () => {
+      expect(containsActionableSignal("Sentiment is bad – a good thing. That's when value is found. It's not generally found outside of that setting.")).toBe(false);
+    });
+    it('emotional coaching', () => {
+      expect(containsActionableSignal("Emotions are great followers and horrible leaders. Yet most people allow them to lead in stock-picking.")).toBe(false);
+    });
+    it('status update without action', () => {
+      expect(containsActionableSignal('XYZ up today\n\nIf it gets to a target, we may consider a sell.\n\nIf not, happy to hold.')).toBe(false);
+    });
+    it('conditional / speculative pattern', () => {
+      expect(containsActionableSignal("The stock could be forming a pattern. IF that happened, we'd likely sell around the target.")).toBe(false);
+    });
+    it('fundamental analysis without new entry', () => {
+      expect(containsActionableSignal("Large established company. Strong earnings, lots of cash, low forward P/E. What's scary about that?")).toBe(false);
+    });
   });
 });

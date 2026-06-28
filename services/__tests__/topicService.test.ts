@@ -16,6 +16,9 @@ import {
   generateTopicId,
 } from '../topicService';
 import { FeedItem } from '../feedService';
+import { FeedKeys } from '@li/core';
+
+const FK = FeedKeys;
 
 describe('topicService', () => {
   describe('extractTopicSlugFromLink', () => {
@@ -106,7 +109,7 @@ describe('topicService', () => {
     const createFeedItem = (
       title: string,
       slug = 'test-topic',
-      feedKey = 'membersForum'
+      feedKey = FK.membersForum
     ): FeedItem => ({
       id: `item-${title}`,
       title,
@@ -125,7 +128,7 @@ describe('topicService', () => {
         createFeedItem('Reply To: NVO', 'nvo'), // Duplicate
       ];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(2);
       expect(discovered.map(t => t.name)).toContain('NVO');
@@ -141,7 +144,7 @@ describe('topicService', () => {
         createFeedItem('Reply To: NVO', 'nvo'),
       ];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(1);
       expect(discovered[0].name).toBe('NVO');
@@ -155,7 +158,7 @@ describe('topicService', () => {
         createFeedItem('Reply To: TSLA', 'tsla'),
       ];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       const nvoTopic = discovered.find(t => t.name === 'NVO');
       const tslaTopic = discovered.find(t => t.name === 'TSLA');
@@ -167,7 +170,7 @@ describe('topicService', () => {
     it('should generate unique topic IDs by forum and name', async () => {
       const items = [createFeedItem('Reply To: NVO', 'nvo')];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered[0].id).toBe('membersForum:NVO');
     });
@@ -176,7 +179,7 @@ describe('topicService', () => {
       const items = [createFeedItem('Reply To: NVO')];
       const beforeTime = Date.now();
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       const afterTime = Date.now();
       expect(discovered[0].discoveredAt).toBeGreaterThanOrEqual(beforeTime);
@@ -186,9 +189,9 @@ describe('topicService', () => {
     it('should assign forumKey to each topic', async () => {
       const items = [createFeedItem('Reply To: NVO')];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'stockInsights');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.stockInsights);
 
-      expect(discovered[0].forumKey).toBe('stockInsights');
+      expect(discovered[0].forumKey).toBe(FK.stockInsights);
     });
 
     it('should handle mixed "Reply To:" and standalone titles', async () => {
@@ -198,7 +201,7 @@ describe('topicService', () => {
         createFeedItem('Reply To: AAPL', 'aapl'),
       ];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(2);
       const applTopics = discovered.filter(t => t.name === 'AAPL');
@@ -207,7 +210,7 @@ describe('topicService', () => {
     });
 
     it('should handle empty feed items array', async () => {
-      const discovered = await discoverTopicsFromFeedItems([], 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems([], FK.membersForum);
 
       expect(discovered).toHaveLength(0);
     });
@@ -221,11 +224,11 @@ describe('topicService', () => {
           link: 'not-a-valid-url',
           pubDate: '2024-01-01',
           feedName: 'Test Feed',
-          feedKey: 'membersForum' as any,
+          feedKey: FK.membersForum as any,
         },
       ];
 
-      const discovered = await discoverTopicsFromFeedItems(items, 'membersForum');
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(1);
       expect(discovered[0].name).toBe('NVO');
