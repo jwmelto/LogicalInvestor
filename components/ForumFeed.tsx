@@ -12,12 +12,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
-import { fetchSingleFeed, fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
+import { fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
 import { getUnreadCount, markRead, markAllRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
 import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
-import { useUnreadCounts } from '../contexts/UnreadCountContext';
+import { useFeed } from '../contexts/FeedContext';
 import { addNotificationAuthor } from '../services/notificationService';
 import { reportMissedAlert, type ReportableItem } from '../services/reportService';
 import { registerPushChannel } from '../services/pushService';
@@ -98,7 +98,8 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const [refreshing, setRefreshing] = useState(false);
   const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
-  const { setFeedUnreadCount, refreshSignal, notifyManualRefresh } = useUnreadCounts();
+  const { feedResults, setFeedUnreadCount, triggerRefresh } = useFeed();
+  const result = feedResults[feedKey];
   const pushRegisteredRef = useRef(false);
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
@@ -156,54 +157,52 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     };
   }
 
-  async function loadFeed() {
-    try {
-      const result = await fetchSingleFeed(feedKey);
-      const built = await buildSection(result);
-      setSection(built);
-
-      const totalUnread = built.topics.length > 0
-        ? built.topics.reduce((sum, t) => sum + t.unreadCount, 0)
-        : built.unreadCount;
-      setFeedUnreadCount(feedKey, totalUnread);
-
-      // Persist so other tabs and next app launch show correct badge without a network call
-      const cached = await getCachedUnreadCounts();
-      await setCachedUnreadCounts({ ...cached, [feedKey]: totalUnread });
-
-      if (result.accessible && !pushRegisteredRef.current) {
-        pushRegisteredRef.current = true;
-        getToken().then(feedToken => {
-          if (feedToken) registerPushChannel(feedKey, feedToken);
-        });
-      }
-
-      const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
-      // Also include topic preview item IDs to get accurate read states
-      const previewItemIds = built.topics
-        .map(t => t.topic.latestItemId)
-        .filter((id): id is string => !!id);
-
-      const readStates: ItemReadState = {};
-      for (const item of allItems) {
-        readStates[item.id] = await isRead(item.id);
-      }
-      for (const id of previewItemIds) {
-        if (!(id in readStates)) {
-          readStates[id] = await isRead(id);
-        }
-      }
-      setItemReadStates(readStates);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
   useEffect(() => {
-    loadPreferences();
-    loadFeed();
-  }, [feedKey, refreshSignal]);
+    if (!result) return;
+
+    if (result.accessible && !pushRegisteredRef.current) {
+      pushRegisteredRef.current = true;
+      getToken().then(feedToken => {
+        if (feedToken) registerPushChannel(feedKey, feedToken);
+      });
+    }
+
+    (async () => {
+      try {
+        const built = await buildSection(result);
+        setSection(built);
+
+        const totalUnread = built.topics.length > 0
+          ? built.topics.reduce((sum, t) => sum + t.unreadCount, 0)
+          : built.unreadCount;
+        setFeedUnreadCount(feedKey, totalUnread);
+
+        const cached = await getCachedUnreadCounts();
+        await setCachedUnreadCounts({ ...cached, [feedKey]: totalUnread });
+
+        const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
+        const previewItemIds = built.topics
+          .map(t => t.topic.latestItemId)
+          .filter((id): id is string => !!id);
+
+        const readStates: ItemReadState = {};
+        for (const item of allItems) {
+          readStates[item.id] = await isRead(item.id);
+        }
+        for (const id of previewItemIds) {
+          if (!(id in readStates)) {
+            readStates[id] = await isRead(id);
+          }
+        }
+        setItemReadStates(readStates);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    })();
+  // ponytail: result object ref changes on every fetch — that's the intended trigger
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
 
   useFocusEffect(
     useCallback(() => {
@@ -218,8 +217,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
   function onRefresh() {
     setRefreshing(true);
-    notifyManualRefresh();
-    loadFeed();
+    triggerRefresh();
   }
 
 

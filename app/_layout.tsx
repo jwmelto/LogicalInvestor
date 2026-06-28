@@ -23,7 +23,7 @@ Notifications.setNotificationHandler({
 import { isAuthenticated } from '../services/authService';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
-import { UnreadCountProvider } from '../contexts/UnreadCountContext';
+import { FeedProvider } from '../contexts/FeedContext';
 import { registerBackgroundFetch } from '../services/backgroundFetchService';
 
 function RootLayoutInner() {
@@ -50,7 +50,7 @@ function RootLayoutInner() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <ForumVisibilityProvider>
-        <UnreadCountProvider>
+        <FeedProvider>
           <Stack>
             <Stack.Protected guard={authed}>
               <Stack.Screen name="(tabs)" options={{ headerShown: false, title: 'Feed' }} />
@@ -59,7 +59,7 @@ function RootLayoutInner() {
             <Stack.Screen name="login" options={{ headerShown: false }} />
           </Stack>
           <StatusBar style="auto" />
-        </UnreadCountProvider>
+        </FeedProvider>
       </ForumVisibilityProvider>
     </ThemeProvider>
   );

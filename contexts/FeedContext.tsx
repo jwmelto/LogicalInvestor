@@ -1,27 +1,28 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { FeedKey } from '../services/feedService';
+import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
 import { getCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
 
 type UnreadCounts = Partial<Record<FeedKey, number>>;
+export type FeedResults = Partial<Record<FeedKey, FeedResult>>;
 
-interface UnreadCountContextType {
+interface FeedContextType {
+  feedResults: FeedResults;
   counts: UnreadCounts;
   setFeedUnreadCount: (feedKey: FeedKey, count: number) => void;
-  refreshSignal: number;
-  notifyManualRefresh: () => void;
+  triggerRefresh: () => void;
 }
 
-const UnreadCountContext = createContext<UnreadCountContextType | undefined>(undefined);
+const FeedContext = createContext<FeedContextType | undefined>(undefined);
 
 // Short delay on foreground return before refreshing, to let any in-flight
 // markRead storage writes complete before we re-fetch and recompute counts.
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
-export function UnreadCountProvider({ children }: { children: React.ReactNode }) {
+export function FeedProvider({ children }: { children: React.ReactNode }) {
+  const [feedResults, setFeedResults] = useState<FeedResults>({});
   const [counts, setCounts] = useState<UnreadCounts>({});
-  const [refreshSignal, setRefreshSignal] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const foregroundDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
@@ -34,19 +35,26 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
+  async function fetchAllFeeds() {
+    const keys = Object.keys(FEEDS) as FeedKey[];
+    const results = await Promise.all(keys.map((k) => fetchSingleFeed(k)));
+    const next: FeedResults = {};
+    keys.forEach((k, i) => { next[k] = results[i]; });
+    setFeedResults(next);
+  }
+
   function fireRefresh() {
     lastRefreshAtRef.current = Date.now();
-    setRefreshSignal((n) => n + 1);
+    fetchAllFeeds();
   }
 
   function startTimer(intervalMs: number) {
     if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      fireRefresh();
-    }, intervalMs);
+    timerRef.current = setInterval(fireRefresh, intervalMs);
   }
 
   useEffect(() => {
+    fetchAllFeeds();
     getRefreshInterval().then((minutes) => startTimer(minutes * 60 * 1000));
 
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
@@ -54,7 +62,6 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
       appStateRef.current = next;
 
       if (next === 'active' && prev !== 'active') {
-        // Cancel any pending foreground delay from a previous transition
         if (foregroundDelayRef.current) clearTimeout(foregroundDelayRef.current);
 
         getRefreshInterval().then((minutes) => {
@@ -63,12 +70,9 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
           const remaining = intervalMs - elapsed;
 
           if (remaining <= 0) {
-            // Overdue — fire after a short delay to let markRead writes settle
             foregroundDelayRef.current = setTimeout(fireRefresh, FOREGROUND_REFRESH_DELAY_MS);
             startTimer(intervalMs);
           } else {
-            // Not yet due — resume the timer with the time left, then switch to
-            // full interval so subsequent ticks are evenly spaced
             if (timerRef.current) clearInterval(timerRef.current);
             timerRef.current = setTimeout(() => {
               fireRefresh();
@@ -77,7 +81,6 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
           }
         });
       } else if (next !== 'active') {
-        // Going to background — pause both timers
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
@@ -105,22 +108,22 @@ export function UnreadCountProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
-  // Call this on manual pull-to-refresh so the timer resets from now,
-  // avoiding a redundant auto-refresh shortly after the user just refreshed.
-  const notifyManualRefresh = useCallback(() => {
+  // Called by pull-to-refresh: re-fetches all feeds and resets the timer
+  const triggerRefresh = useCallback(() => {
     lastRefreshAtRef.current = Date.now();
     getRefreshInterval().then((minutes) => startTimer(minutes * 60 * 1000));
+    fetchAllFeeds();
   }, []);
 
   return (
-    <UnreadCountContext.Provider value={{ counts, setFeedUnreadCount, refreshSignal, notifyManualRefresh }}>
+    <FeedContext.Provider value={{ feedResults, counts, setFeedUnreadCount, triggerRefresh }}>
       {children}
-    </UnreadCountContext.Provider>
+    </FeedContext.Provider>
   );
 }
 
-export function useUnreadCounts() {
-  const context = useContext(UnreadCountContext);
-  if (!context) throw new Error('useUnreadCounts must be used within UnreadCountProvider');
+export function useFeed() {
+  const context = useContext(FeedContext);
+  if (!context) throw new Error('useFeed must be used within FeedProvider');
   return context;
 }

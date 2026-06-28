@@ -6,12 +6,12 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useForumVisibility } from '@/contexts/ForumVisibilityContext';
-import { useUnreadCounts } from '@/contexts/UnreadCountContext';
+import { useFeed } from '@/contexts/FeedContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { visibility: forumVisibility } = useForumVisibility();
-  const { counts } = useUnreadCounts();
+  const { counts } = useFeed();
 
   function badge(feedKey: keyof typeof counts) {
     const n = counts[feedKey];
