@@ -30,7 +30,7 @@ interface RawItem {
 interface TopicEntry {
   lastSeen: string;
   title: string;
-  feedKey: FeedKey; // camelCase, from @li/core
+  feedKey: FeedKey;
 }
 
 interface TokenMeta {

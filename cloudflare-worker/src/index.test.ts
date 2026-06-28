@@ -212,14 +212,14 @@ describe('findAndStorePollToken', () => {
   });
 });
 
-// Verbatim excerpts from training data to guard pattern regressions.
+// Synthetic inputs covering the learned patterns — update when pattern logic changes.
 describe('containsActionableSignal', () => {
   describe('should fire (positive training)', () => {
     it('new pick announcement', () => {
-      expect(containsActionableSignal("I've got a new pick for subscribers this month that you need to get into IMMEDIATELY")).toBe(true);
+      expect(containsActionableSignal("I've got a new pick that you need to get into IMMEDIATELY")).toBe(true);
     });
     it('formal tranche price line', () => {
-      expect(containsActionableSignal('1st Tranche: $210 or below. (ACN is trading in the $198\'s right now).')).toBe(true);
+      expect(containsActionableSignal('1st Tranche: $50 or below.')).toBe(true);
     });
     it('third tranche urgency', () => {
       expect(containsActionableSignal("let's go ahead and ensure we get in our 3rd tranche NOW")).toBe(true);
@@ -228,16 +228,16 @@ describe('containsActionableSignal', () => {
       expect(containsActionableSignal('For those that want to, you can get in a 4th tranche here/now.')).toBe(true);
     });
     it('explicit buy recommendation with price', () => {
-      expect(containsActionableSignal('Buy Best Buy (BBY) at the market as long as the stock is at $66 per share or LOWER.')).toBe(true);
+      expect(containsActionableSignal('Buy XYZ at the market as long as the stock is at $50 per share or LOWER.')).toBe(true);
     });
     it('sell half of first tranche', () => {
       expect(containsActionableSignal('you can sell half of your 1st tranche and if it pulls back to your breakeven')).toBe(true);
     });
     it('sell half of remaining', () => {
-      expect(containsActionableSignal("With y'all being up around 21%-22% in under 2 complete trading days, I'd consider selling half of your remaining half, now.")).toBe(true);
+      expect(containsActionableSignal("You're up over 20%. I'd consider selling half of your remaining half, now.")).toBe(true);
     });
     it('averaging down with price', () => {
-      expect(containsActionableSignal('If FXY dips anywhere into the $81ish area, that\'s close enough to get your averaging down to ensure you get it')).toBe(true);
+      expect(containsActionableSignal("If XYZ dips into the $50ish area, that's close enough to get your averaging down")).toBe(true);
     });
     it('IMMEDIATELY urgency marker alone', () => {
       expect(containsActionableSignal('get into IMMEDIATELY and not delay')).toBe(true);
@@ -246,22 +246,22 @@ describe('containsActionableSignal', () => {
 
   describe('should not fire (negative training)', () => {
     it('educational: waiting for 4th tranche without action', () => {
-      expect(containsActionableSignal("You shouldn't be waiting for a 4th tranche entry. You (or I, either one) will know the bottom when it's happen.")).toBe(false);
+      expect(containsActionableSignal("You shouldn't be waiting for a 4th tranche entry. You (or I, either one) will know the bottom when it happens.")).toBe(false);
     });
     it('philosophical: sentiment discussion', () => {
       expect(containsActionableSignal("Sentiment is bad – a good thing. That's when value is found. It's not generally found outside of that setting.")).toBe(false);
     });
-    it('Buffett quote / emotional coaching', () => {
-      expect(containsActionableSignal("Emotions (in every area of life) are great followers and horrible leaders. Yet, most people allow them to lead in stock-picking")).toBe(false);
+    it('emotional coaching', () => {
+      expect(containsActionableSignal("Emotions are great followers and horrible leaders. Yet most people allow them to lead in stock-picking.")).toBe(false);
     });
     it('status update without action', () => {
-      expect(containsActionableSignal('BBY up 2.08% today\n\nIf it should get to $80 or more, we may consider a sell.\n\nIf it doesn\'t get there, we\'re happy to continue to hold.')).toBe(false);
+      expect(containsActionableSignal('XYZ up today\n\nIf it gets to a target, we may consider a sell.\n\nIf not, happy to hold.')).toBe(false);
     });
-    it('conditional / speculative diagonal', () => {
-      expect(containsActionableSignal("BBY \"could\" be doing a \"leading diagonal\" which would look something like this. IF that happened, we'd likely sell around $80-$81ish.")).toBe(false);
+    it('conditional / speculative pattern', () => {
+      expect(containsActionableSignal("The stock could be forming a pattern. IF that happened, we'd likely sell around the target.")).toBe(false);
     });
     it('fundamental analysis without new entry', () => {
-      expect(containsActionableSignal("It's been around since 1951. 800.000 employees. $78 billion company. Forward P/E in the 8's. Almost $13 billion earned in a \"bad year\" for them, last year. Over $10 billion in cash. What's scary about that?")).toBe(false);
+      expect(containsActionableSignal("Large established company. Strong earnings, lots of cash, low forward P/E. What's scary about that?")).toBe(false);
     });
   });
 });

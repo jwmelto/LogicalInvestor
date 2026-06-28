@@ -1,7 +1,7 @@
 import * as Linking from 'expo-linking';
 import { stripHtml } from '@li/core';
 
-const REPORT_TO = 'jim@melton.space';
+const REPORT_TO = 'jwmelto@users.sourceforge.net';
 
 export interface ReportableItem {
   title?: string;
