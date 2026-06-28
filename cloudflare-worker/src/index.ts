@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FeedKey, type FilterItem, type NotifLevel } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, matchesLevel, containsActionableSignal, MAX_SEEN_IDS, type FeedKey, type FilterItem, type NotifLevel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -36,6 +36,39 @@ interface TopicEntry {
 interface TokenMeta {
   level?: NotifLevel;
   feedToken?: string; // stored for optional channels; used to recover a stale poll token
+}
+
+type FilterClause =
+  | 'always-pass'      // membersArea bypasses all filters
+  | 'blocked-none'     // level=none blocks everything
+  | 'blocked-minimal'  // level=minimal blocks non-membersArea
+  | 'blocked-author'   // author substring didn't match
+  | 'passed-all'       // level=all, author matched
+  | 'passed-star'      // stock/options with * title prefix
+  | 'blocked-star'     // stock/options missing * title prefix
+  | 'passed-signal'    // membersForum with actionable signal
+  | 'blocked-signal';  // membersForum, no actionable signal
+
+interface RunStats {
+  lastRun: string;
+  lastNotified: string | null;
+  itemsFetched: number;
+  newItems: number;
+  clauses: Partial<Record<FilterClause, number>>;
+  sent: number;
+}
+
+// ponytail: mirrors matchesLevel in @li/core — keep in sync if filter logic changes
+function classifyItem(item: RawItem, level: NotifLevel, authorFilter: string, actionPatterns?: string[]): FilterClause {
+  if (level === 'none') return 'blocked-none';
+  if (item.feedKey === FeedKeys.membersArea) return 'always-pass';
+  if (level === 'minimal') return 'blocked-minimal';
+  if (!item.author.toLowerCase().includes(authorFilter)) return 'blocked-author';
+  if (level === 'all') return 'passed-all';
+  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
+    return stripReplyPrefix(item.title).startsWith('*') ? 'passed-star' : 'blocked-star';
+  }
+  return containsActionableSignal(stripHtml(item.description), actionPatterns) ? 'passed-signal' : 'blocked-signal';
 }
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
@@ -131,6 +164,41 @@ export default {
   //                Only required for optional channels (stock, options).
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === 'GET' && url.pathname === '/status') {
+      if (url.searchParams.get('secret') !== env.FEED_TOKEN) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      const result: Record<string, unknown> = {};
+      for (const channel of CHANNELS) {
+        const [tokens, seenJson, topicsJson, pollToken, statsJson] = await Promise.all([
+          env.TOKENS.list({ prefix: `${channel}:` }),
+          env.STATE.get(`seen:${channel}`),
+          env.STATE.get(`topics:${channel}`),
+          channel === 'members' ? Promise.resolve(null) : env.STATE.get(`poll:${channel}`),
+          env.STATE.get(`stats:${channel}`),
+        ]);
+        const stats: RunStats | null = statsJson ? JSON.parse(statsJson) : null;
+        result[channel] = {
+          registeredTokens: tokens.keys.length,
+          seenIds:   seenJson   ? (JSON.parse(seenJson) as string[]).length            : 0,
+          topics:    topicsJson ? Object.keys(JSON.parse(topicsJson) as object).length : 0,
+          pollToken: channel === 'members' ? 'built-in' : (pollToken ? 'present' : 'missing'),
+          lastRun:      stats?.lastRun      ?? null,
+          lastNotified: stats?.lastNotified ?? null,
+          lastRunStats: stats ? {
+            itemsFetched: stats.itemsFetched,
+            newItems:     stats.newItems,
+            clauses:      stats.clauses,
+            sent:         stats.sent,
+          } : null,
+        };
+      }
+      return new Response(JSON.stringify(result, null, 2), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     if (request.method !== 'POST') return new Response('not found', { status: 404 });
 
     const body = await request.json() as Record<string, string>;
@@ -213,6 +281,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
   const now = new Date();
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, clauses: {}, sent: 0 };
   const feeds = CHANNEL_FEEDS[channel];
 
   const topicsKey = `topics:${channel}`;
@@ -241,7 +310,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
         if (feed.discoverTopics) {
           const topicUrl = extractTopicUrl(link);
           const topicTitle = stripReplyPrefix(title);
-          if (topicUrl && (feed.feedKey !== 'stock-insights' || topicTitle.startsWith('*'))) {
+          if (topicUrl && (feed.feedKey !== FeedKeys.stockInsights || topicTitle.startsWith('*'))) {
             topics[topicUrl] = { lastSeen: now.toISOString(), title: topicTitle, feedKey: feed.feedKey };
           }
         }
@@ -301,7 +370,13 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   allItems.forEach(i => seen.add(i.guid));
   await env.STATE.put(seenKey, JSON.stringify(Array.from(seen).slice(-MAX_SEEN_IDS)));
 
-  if (newItems.length === 0) return;
+  runStats.itemsFetched = allItems.length;
+  runStats.newItems = newItems.length;
+
+  if (newItems.length === 0) {
+    await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+    return;
+  }
 
   const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
   const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
@@ -319,9 +394,17 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
 
-  if (Object.keys(tokensByLevel).length === 0) return;
+  if (Object.keys(tokensByLevel).length === 0) {
+    await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+    return;
+  }
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
+    for (const item of newItems) {
+      const clause = classifyItem(item, level, authorFilter, actionPatterns);
+      runStats.clauses[clause] = (runStats.clauses[clause] ?? 0) + 1;
+    }
+
     const toNotify = newItems
       .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength, actionPatterns))
       .slice(0, 5);
@@ -339,7 +422,11 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(messages),
     });
+    runStats.sent += toNotify.length;
   }
+
+  if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
+  await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
 }
 
 function toFilterItem(item: RawItem): FilterItem {
