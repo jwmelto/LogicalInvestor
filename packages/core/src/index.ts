@@ -32,46 +32,68 @@ export function formatTitle(item: { author?: string; title?: string }): string {
   return topic ? `${author} in ${topic}:` : author;
 }
 
-// Action patterns: any match signals a buy/sell/entry post worth alerting on.
-// Each string is compiled to a case-insensitive RegExp at call time.
-// ponytail: tuned on small training set; expect iteration once real-world data arrives.
-export const DEFAULT_ACTION_PATTERNS: string[] = [
-  '\\bnew pick\\b',
-  // Formal tranche price lines: "1st Tranche: $210"
-  '\\b(1st|2nd|3rd|4th|first|second|third|fourth)\\s+tranche:\\s*\\$',
-  // "get in (a/our/your) ... tranche"
-  '\\bget\\s+in\\b[\\s\\S]{0,30}\\btranche\\b',
-  // Direct buy/enter with a price nearby
-  '\\b(buy|enter)\\b[\\s\\S]{0,60}\\$\\d+',
-  // Explicit sell-fraction commands ("sell half", "selling half of your...")
-  '\\bsell(?:ing)?\\s+(half|all|a\\s+third|a\\s+quarter|\\d+\\/\\d+)\\b',
-  // Averaging down — specific enough on its own; price may precede or follow
-  '\\baveraging?\\s+down\\b',
-  // All-caps urgency marker Sean uses for immediate entries
-  '\\bIMMEDIATELY\\b',
+export type ActionableResult =
+  | 'pass-new-pick'
+  | 'pass-tranche-price'
+  | 'pass-get-in-tranche'
+  | 'pass-buy-with-price'
+  | 'pass-sell-fraction'
+  | 'pass-averaging-down'
+  | 'pass-immediately'
+  | 'fail-personal-advice'
+  | 'fail-historical'
+  | 'fail-hypothetical'
+  | 'fail-too-short'
+  | 'fail-no-signal';
+
+// Negative patterns checked first — a match suppresses positive pattern evaluation.
+const NEG_PATTERNS: [RegExp, ActionableResult][] = [
+  [/\bin (your|my|his|her|their) case\b/i,              'fail-personal-advice'],
+  [/\bI'?d personally\b/i,                              'fail-personal-advice'],
+  [/\bwe may consider\b|\bwe'?d likely\b/i,             'fail-hypothetical'],
+  [/\bif it should\b/i,                                 'fail-hypothetical'],
+  [/\bI was (urging|pushing|saying|telling|recommending)\b/i, 'fail-historical'],
 ];
 
-export function containsActionableSignal(
-  text: string,
-  patterns: string[] = DEFAULT_ACTION_PATTERNS,
-): boolean {
-  return patterns.some((p) => new RegExp(p, 'is').test(text));
+const POS_PATTERNS: [RegExp, ActionableResult][] = [
+  [/\bnew pick\b/i,                                                               'pass-new-pick'],
+  [/\b(1st|2nd|3rd|4th|first|second|third|fourth)\s+tranche:\s*\$/i,            'pass-tranche-price'],
+  [/\bget\s+in\b[\s\S]{0,30}\btranche\b/i,                                       'pass-get-in-tranche'],
+  [/\b(buy|enter)\b[\s\S]{0,60}\$\d+/i,                                          'pass-buy-with-price'],
+  [/\bsell(?:ing)?\s+(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,             'pass-sell-fraction'],
+  [/\baveraging?\s+down\b/i,                                                       'pass-averaging-down'],
+  [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
+];
+
+export function classifySignal(text: string, minLength: number): ActionableResult {
+  if (text.length < minLength) return 'fail-too-short';
+  for (const [re, clause] of NEG_PATTERNS) {
+    if (re.test(text)) return clause;
+  }
+  for (const [re, clause] of POS_PATTERNS) {
+    if (re.test(text)) return clause;
+  }
+  return 'fail-no-signal';
 }
 
+export function containsActionableSignal(text: string, minLength = 200): boolean {
+  return classifySignal(text, minLength).startsWith('pass');
+}
 
 export function matchesLevel(
   item: FilterItem,
   level: NotifLevel,
   authorFilter: string,
   minLength: number,
-  actionPatterns: string[] = DEFAULT_ACTION_PATTERNS,
+  _actionPatterns?: unknown,
 ): boolean {
   if (level === 'none') return false;
   if (item.feedKey === FeedKeys.membersArea) return true;
   if (level === 'minimal') return false;
   if (!item.author?.toLowerCase().includes(authorFilter.toLowerCase())) return false;
   if (level === 'all') return true;
-  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) return stripReplyPrefix(item.title ?? '').startsWith('*');
-  const text = stripHtml(item.content ?? '');
-  return containsActionableSignal(text, actionPatterns);
+  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
+    return stripReplyPrefix(item.title ?? '').startsWith('*');
+  }
+  return containsActionableSignal(stripHtml(item.content ?? ''), minLength);
 }

@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, containsActionableSignal, MAX_SEEN_IDS, type FeedKey, type NotifLevel } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, MAX_SEEN_IDS, type FeedKey, type NotifLevel, type ActionableResult } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -7,7 +7,6 @@ export interface Env {
   FEED_TOKEN: string;              // polling token for members channel
   AUTHOR_FILTER: string;           // wrangler.toml [vars], default "Sean Hyman"
   MIN_CONTENT_LENGTH: string;      // wrangler.toml [vars], default "200"
-  ACTION_PATTERNS?: string;        // wrangler.toml [vars], JSON array of regex strings; omit to use DEFAULT_ACTION_PATTERNS
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
   POLL_INTERVAL_OVERNIGHT?: string; // minutes between polls outside market hours, default "60"
@@ -38,45 +37,52 @@ interface TokenMeta {
   feedToken?: string; // stored for optional channels; used to recover a stale poll token
 }
 
-const FilterClauses = {
-  alwaysPass:     'always-pass',    // membersArea bypasses all filters
-  blockedNone:    'blocked-none',   // level=none blocks everything
-  blockedMinimal: 'blocked-minimal',// level=minimal blocks non-membersArea
-  blockedAuthor:  'blocked-author', // author substring didn't match
-  passedAll:      'passed-all',     // level=all, author matched
-  passedStar:     'passed-star',    // stock/options with * title prefix
-  blockedStar:    'blocked-star',   // stock/options missing * title prefix
-  passedSignal:   'passed-signal',  // membersForum with actionable signal
-  blockedSignal:  'blocked-signal', // membersForum, no actionable signal
-} as const;
-type FilterClause = typeof FilterClauses[keyof typeof FilterClauses];
+type AuthorResult = 'pass-author' | 'fail-author';
+type ForumResult  = 'bypass'     // membersArea: skip all other filters
+                  | 'pass-star'  // stock/options with * title prefix
+                  | 'fail-no-star' // stock/options without * prefix
+                  | 'pass-forum';  // membersForum: no topic gate, proceed to actionable
+
+interface ItemClassification {
+  author:     AuthorResult;
+  forum:      ForumResult;
+  actionable: ActionableResult;
+}
 
 interface RunStats {
   lastRun: string;
   lastNotified: string | null;
   itemsFetched: number;
   newItems: number;
-  clauses: Partial<Record<FilterClause, number>>;
+  author:     Partial<Record<AuthorResult, number>>;
+  forum:      Partial<Record<ForumResult, number>>;
+  actionable: Partial<Record<ActionableResult, number>>;
   sent: number;
 }
 
-const PASS_CLAUSES = new Set<FilterClause>([
-  FilterClauses.alwaysPass,
-  FilterClauses.passedAll,
-  FilterClauses.passedStar,
-  FilterClauses.passedSignal,
-]);
+function classifyItem(item: RawItem, authorFilter: string, minLength: number): ItemClassification {
+  const forum: ForumResult =
+    item.feedKey === FeedKeys.membersArea ? 'bypass' :
+    (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights)
+      ? (stripReplyPrefix(item.title).startsWith('*') ? 'pass-star' : 'fail-no-star')
+      : 'pass-forum';
 
-function classifyItem(item: RawItem, level: NotifLevel, authorFilter: string, actionPatterns?: string[]): FilterClause {
-  if (level === 'none') return FilterClauses.blockedNone;
-  if (item.feedKey === FeedKeys.membersArea) return FilterClauses.alwaysPass;
-  if (level === 'minimal') return FilterClauses.blockedMinimal;
-  if (!item.author.toLowerCase().includes(authorFilter)) return FilterClauses.blockedAuthor;
-  if (level === 'all') return FilterClauses.passedAll;
-  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
-    return stripReplyPrefix(item.title).startsWith('*') ? FilterClauses.passedStar : FilterClauses.blockedStar;
-  }
-  return containsActionableSignal(stripHtml(item.description), actionPatterns) ? FilterClauses.passedSignal : FilterClauses.blockedSignal;
+  const author: AuthorResult = item.author.toLowerCase().includes(authorFilter) ? 'pass-author' : 'fail-author';
+  const actionable: ActionableResult = classifySignal(stripHtml(item.description), minLength);
+
+  return { author, forum, actionable };
+}
+
+function shouldNotify(level: NotifLevel, c: ItemClassification): boolean {
+  if (level === 'none') return false;
+  if (c.forum === 'bypass') return true;       // membersArea always notifies
+  if (level === 'minimal') return false;
+  if (c.author === 'fail-author') return false;
+  if (level === 'all') return true;
+  // standard: star topic OR membersForum with actionable signal
+  if (c.forum === 'pass-star') return true;
+  if (c.forum === 'fail-no-star') return false;
+  return c.actionable.startsWith('pass');
 }
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
@@ -197,7 +203,9 @@ export default {
           lastRunStats: stats ? {
             itemsFetched: stats.itemsFetched,
             newItems:     stats.newItems,
-            clauses:      stats.clauses,
+            author:       stats.author,
+            forum:        stats.forum,
+            actionable:   stats.actionable,
             sent:         stats.sent,
           } : null,
         };
@@ -289,7 +297,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
   const now = new Date();
-  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, clauses: {}, sent: 0 };
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0 };
   const feeds = CHANNEL_FEEDS[channel];
 
   const topicsKey = `topics:${channel}`;
@@ -387,7 +395,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   }
 
   const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
-  const actionPatterns: string[] | undefined = env.ACTION_PATTERNS ? JSON.parse(env.ACTION_PATTERNS) : undefined;
+  const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
 
   const tokensByLevel: Partial<Record<NotifLevel, string[]>> = {};
   let cursor: string | undefined;
@@ -407,13 +415,15 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   }
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
-    const classified = newItems.map(item => ({ item, clause: classifyItem(item, level, authorFilter, actionPatterns) }));
-    for (const { clause } of classified) {
-      runStats.clauses[clause] = (runStats.clauses[clause] ?? 0) + 1;
+    const classified = newItems.map(item => ({ item, c: classifyItem(item, authorFilter, minLength) }));
+    for (const { c } of classified) {
+      runStats.author[c.author]     = (runStats.author[c.author]     ?? 0) + 1;
+      runStats.forum[c.forum]       = (runStats.forum[c.forum]       ?? 0) + 1;
+      runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
     }
 
     const toNotify = classified
-      .filter(({ clause }) => PASS_CLAUSES.has(clause))
+      .filter(({ c }) => shouldNotify(level, c))
       .map(({ item }) => item)
       .slice(0, 5);
     if (toNotify.length === 0) continue;
