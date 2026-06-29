@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Shell Command Rules
+
+**ALWAYS use subshell syntax for directory changes. Never use bare `cd`.**
+
+```bash
+# CORRECT
+(cd cloudflare-worker && npm test)
+
+# WRONG — never do this
+cd cloudflare-worker && npm test
+```
+
+The Bash tool shell state persists across calls. A bare `cd` leaves the working directory wrong for subsequent calls.
+
 ## Project Overview
 
 LogicalInvestor is a React Native (Expo) iOS/Android app that serves as a full replacement for visiting logicalinvestor.net. It reads paywalled WordPress/bbPress forum content using a per-user feed token for authentication. The app is intended to be distributed to other subscribers of the site.

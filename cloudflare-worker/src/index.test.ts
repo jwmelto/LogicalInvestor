@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow } from './index';
+import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes } from './index';
 import { FeedKeys, containsActionableSignal } from '@li/core';
 import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
 
@@ -115,44 +115,54 @@ describe('channelFromCron', () => {
 });
 
 
+describe('getIntervalMinutes', () => {
+  it('returns trading interval (5) during market hours', () => {
+    expect(getIntervalMinutes(new Date('2025-06-04T09:15:00-04:00'))).toBe(5);
+    expect(getIntervalMinutes(new Date('2025-06-04T13:55:00-04:00'))).toBe(5);
+  });
+
+  it('returns lateday interval (15) during late-day window', () => {
+    expect(getIntervalMinutes(new Date('2025-06-04T14:00:00-04:00'))).toBe(15);
+    expect(getIntervalMinutes(new Date('2025-06-04T16:14:00-04:00'))).toBe(15);
+  });
+
+  it('returns overnight interval (60) before open and after close on weekdays', () => {
+    expect(getIntervalMinutes(new Date('2025-06-04T08:00:00-04:00'))).toBe(60);
+    expect(getIntervalMinutes(new Date('2025-06-04T17:00:00-04:00'))).toBe(60);
+  });
+
+  it('returns overnight interval (60) on weekends', () => {
+    expect(getIntervalMinutes(new Date('2025-06-07T10:00:00-04:00'))).toBe(60);
+    expect(getIntervalMinutes(new Date('2025-06-08T14:00:00-04:00'))).toBe(60);
+  });
+});
+
 describe('shouldPollNow', () => {
-  it('runs every invocation during trading hours (0915–1400 ET)', () => {
-    expect(shouldPollNow(new Date('2025-06-04T09:15:00-04:00'))).toBe(true);
-    expect(shouldPollNow(new Date('2025-06-04T09:17:00-04:00'))).toBe(true); // mid-5min interval
-    expect(shouldPollNow(new Date('2025-06-04T13:55:00-04:00'))).toBe(true); // near close
+  const t = (iso: string) => new Date(iso);
+  const ago = (now: Date, minutes: number) => new Date(now.getTime() - minutes * 60_000);
+
+  it('always polls when lastRun is null', () => {
+    expect(shouldPollNow(t('2025-06-04T09:15:00-04:00'), null, 5)).toBe(true);
+    expect(shouldPollNow(t('2025-06-04T14:00:00-04:00'), null, 15)).toBe(true);
   });
 
-  it('runs hourly before 0915 ET on a weekday (overnight rate)', () => {
-    expect(shouldPollNow(new Date('2025-06-04T09:00:00-04:00'))).toBe(true);  // on the hour → fires
-    expect(shouldPollNow(new Date('2025-06-04T09:03:00-04:00'))).toBe(false); // not on hour → skip
+  it('polls when elapsed time meets or exceeds interval', () => {
+    const now = t('2025-06-04T14:30:00-04:00');
+    expect(shouldPollNow(now, ago(now, 15), 15)).toBe(true);
+    expect(shouldPollNow(now, ago(now, 60), 60)).toBe(true);
   });
 
-  it('runs every 15 min during late-day window (1400–1615 ET)', () => {
-    expect(shouldPollNow(new Date('2025-06-04T14:00:00-04:00'))).toBe(true);
-    expect(shouldPollNow(new Date('2025-06-04T14:05:00-04:00'))).toBe(false);
-    expect(shouldPollNow(new Date('2025-06-04T14:15:00-04:00'))).toBe(true);
-    expect(shouldPollNow(new Date('2025-06-04T14:30:00-04:00'))).toBe(true);
-    expect(shouldPollNow(new Date('2025-06-04T14:31:00-04:00'))).toBe(false);
+  it('skips when elapsed time is less than interval', () => {
+    const now = t('2025-06-04T14:30:00-04:00');
+    expect(shouldPollNow(now, ago(now, 14), 15)).toBe(false);
+    expect(shouldPollNow(now, ago(now, 59), 60)).toBe(false);
   });
 
-  it('runs hourly overnight (after 1615 ET)', () => {
-    expect(shouldPollNow(new Date('2025-06-04T17:00:00-04:00'))).toBe(true);
-    expect(shouldPollNow(new Date('2025-06-04T17:05:00-04:00'))).toBe(false);
-    expect(shouldPollNow(new Date('2025-06-04T17:30:00-04:00'))).toBe(false);
-  });
-
-  it('runs hourly on weekends regardless of time', () => {
-    expect(shouldPollNow(new Date('2025-06-07T10:00:00-04:00'))).toBe(true);  // Sat, would be trading hours on weekday
-    expect(shouldPollNow(new Date('2025-06-07T10:05:00-04:00'))).toBe(false);
-    expect(shouldPollNow(new Date('2025-06-08T16:00:00-04:00'))).toBe(true);  // Sun, on the hour
-    expect(shouldPollNow(new Date('2025-06-08T16:15:00-04:00'))).toBe(false);
-  });
-
-  it('handles EST (winter) correctly', () => {
-    expect(shouldPollNow(new Date('2025-01-07T09:15:00-05:00'))).toBe(true);  // trading hours
-    expect(shouldPollNow(new Date('2025-01-07T14:00:00-05:00'))).toBe(true);  // 15-min mark
-    expect(shouldPollNow(new Date('2025-01-07T14:05:00-05:00'))).toBe(false);
-    expect(shouldPollNow(new Date('2025-01-07T08:55:00-05:00'))).toBe(false); // before open, not on hour
+  it('works correctly for stock/options channel offset (lastRun 1 min after boundary)', () => {
+    // Stock cron fires at :01, :16, :31, :46 — simulate lastRun at 14:01, now is 14:16
+    const lastRun = t('2025-06-04T14:01:00-04:00');
+    const now     = t('2025-06-04T14:16:00-04:00');
+    expect(shouldPollNow(now, lastRun, 15)).toBe(true); // 15 min elapsed
   });
 });
 

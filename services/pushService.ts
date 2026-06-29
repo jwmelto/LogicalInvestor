@@ -6,14 +6,16 @@ const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
 const PUSH_LEVEL_KEY = 'push_level';
 const PUSH_CHANNELS_KEY = 'push_channels';
 
-export type { NotifLevel as PushLevel } from '@li/core';
+import { FeedKeys } from '@li/core';
+import type { FeedKey, NotifLevel as PushLevel } from '@li/core';
+export type { PushLevel };
 type Channel = 'members' | 'stock' | 'options';
 
-const FEEDKEY_TO_CHANNEL: Record<string, Channel> = {
-  'members-area':    'members',
-  'members-forum':   'members',
-  'stock-insights':  'stock',
-  'options-insights': 'options',
+const FEEDKEY_TO_CHANNEL: Record<FeedKey, Channel> = {
+  [FeedKeys.membersArea]:    'members',
+  [FeedKeys.membersForum]:   'members',
+  [FeedKeys.stockInsights]:  'stock',
+  [FeedKeys.optionsInsights]: 'options',
 };
 
 async function getExpoPushToken(): Promise<string | null> {
@@ -47,7 +49,7 @@ async function addRegisteredChannel(channel: Channel): Promise<void> {
 
 // Called by ForumFeed after first successful load of an accessible feed.
 // Sends feed_token so the Worker can use it to poll optional channel feeds.
-export async function registerPushChannel(feedKey: string, feedToken: string, level?: PushLevel): Promise<void> {
+export async function registerPushChannel(feedKey: FeedKey, feedToken: string, level?: PushLevel): Promise<void> {
   try {
     const pushToken = await getExpoPushToken();
     if (!pushToken) return;

@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, matchesLevel, MAX_SEEN_IDS, type FeedKey, type FilterItem, type NotifLevel } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, MAX_SEEN_IDS, type FeedKey, type NotifLevel, type ActionableResult } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -7,7 +7,6 @@ export interface Env {
   FEED_TOKEN: string;              // polling token for members channel
   AUTHOR_FILTER: string;           // wrangler.toml [vars], default "Sean Hyman"
   MIN_CONTENT_LENGTH: string;      // wrangler.toml [vars], default "200"
-  ACTION_PATTERNS?: string;        // wrangler.toml [vars], JSON array of regex strings; omit to use DEFAULT_ACTION_PATTERNS
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
   POLL_INTERVAL_OVERNIGHT?: string; // minutes between polls outside market hours, default "60"
@@ -36,6 +35,71 @@ interface TopicEntry {
 interface TokenMeta {
   level?: NotifLevel;
   feedToken?: string; // stored for optional channels; used to recover a stale poll token
+}
+
+type AuthorResult = 'pass-author' | 'fail-author';
+type ForumResult  = 'bypass'     // membersArea: skip all other filters
+                  | 'pass-star'  // stock/options with * title prefix
+                  | 'fail-no-star' // stock/options without * prefix
+                  | 'pass-forum';  // membersForum: no topic gate, proceed to actionable
+
+interface ItemClassification {
+  author:     AuthorResult;
+  forum:      ForumResult;
+  actionable: ActionableResult;
+}
+
+interface RunStats {
+  lastRun: string;
+  lastNotified: string | null;
+  itemsFetched: number;
+  newItems: number;
+  author:     Partial<Record<AuthorResult, number>>;
+  forum:      Partial<Record<ForumResult, number>>;
+  actionable: Partial<Record<ActionableResult, number>>;
+  sent: number;
+}
+
+interface DailyStats {
+  date: string;
+  runs: number;
+  itemsFetched: number;
+  newItems: number;
+  author:     Partial<Record<AuthorResult, number>>;
+  forum:      Partial<Record<ForumResult, number>>;
+  actionable: Partial<Record<ActionableResult, number>>;
+  sent: number;
+}
+
+function mergeTally<K extends string>(dst: Partial<Record<K, number>>, src: Partial<Record<K, number>>): void {
+  for (const [k, v] of Object.entries(src) as [K, number][]) {
+    dst[k] = (dst[k] ?? 0) + v;
+  }
+}
+
+function classifyItem(item: RawItem, authorFilter: string, minLength: number): ItemClassification {
+  const forum: ForumResult =
+    item.feedKey === FeedKeys.membersArea ? 'bypass' :
+    (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights)
+      ? (stripReplyPrefix(item.title).startsWith('*') ? 'pass-star' : 'fail-no-star')
+      : 'pass-forum';
+
+  const author: AuthorResult = item.author.toLowerCase().includes(authorFilter) ? 'pass-author' : 'fail-author';
+  const actionable: ActionableResult = classifySignal(stripHtml(item.description), minLength);
+
+  return { author, forum, actionable };
+}
+
+function shouldNotify(level: NotifLevel, c: ItemClassification): boolean {
+  if (level === 'none') return false;
+  if (c.forum === 'bypass') return true;       // membersArea always notifies
+  if (level === 'minimal') return false;
+  if (c.author === 'fail-author') return false;
+  if (level === 'all') return true;
+  // standard: star topic OR membersForum with actionable signal
+  if (c.forum === 'pass-star') return true;
+  if (c.forum === 'fail-no-star') return false;
+  return c.actionable.startsWith('pass');
 }
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
@@ -94,27 +158,30 @@ function hhmmToMinutes(s: string): number {
   return Math.floor(n / 100) * 60 + (n % 100);
 }
 
-// Gate: returns true if this invocation should do real work.
-// All values configurable via env vars; defaults match original behavior:
-//   trading hours  (OPEN–LATEDAY ET weekdays):  every 5 min
-//   late day       (LATEDAY–CLOSE ET weekdays):  every 15 min
-//   overnight + weekends:                        every 60 min
-// Intervals must be multiples of 5 (cron base cadence). Trading interval ≤5 runs every invocation.
-// Boundary defaults (minutes since midnight):
-//   open:    555  (09*60+15 = 09:15 ET, market open)
-//   lateday: 840  (14*60+00 = 14:00 ET, reduced-activity window begins)
-//   close:   975  (16*60+15 = 16:15 ET, after-hours begins)
-export function shouldPollNow(
+// Returns the appropriate poll interval (minutes) for the current ET time.
+// Boundary defaults (minutes since midnight ET):
+//   open:    555  (09:15 ET, market open)
+//   lateday: 840  (14:00 ET, reduced-activity window begins)
+//   close:   975  (16:15 ET, after-hours begins)
+export function getIntervalMinutes(
   now: Date,
   intervals  = { trading: 5, lateday: 15, overnight: 60 },
   boundaries = { open: 555, lateday: 840, close: 975 },
-): boolean {
-  const { day, timeOfDay, min } = getETComponents(now);
+): number {
+  const { day, timeOfDay } = getETComponents(now);
+  if (day === 0 || day === 6) return intervals.overnight;
+  if (timeOfDay >= boundaries.open    && timeOfDay < boundaries.lateday) return intervals.trading;
+  if (timeOfDay >= boundaries.lateday && timeOfDay < boundaries.close)   return intervals.lateday;
+  return intervals.overnight;
+}
 
-  if (day === 0 || day === 6) return min % intervals.overnight === 0;
-  if (timeOfDay >= boundaries.open    && timeOfDay < boundaries.lateday) return intervals.trading <= 5 ? true : min % intervals.trading === 0;
-  if (timeOfDay >= boundaries.lateday && timeOfDay < boundaries.close)   return min % intervals.lateday === 0;
-  return min % intervals.overnight === 0;
+// Returns true if enough time has elapsed since lastRun for the given interval (minutes).
+export function shouldPollNow(now: Date, lastRun: Date | null, interval: number): boolean {
+  return (!lastRun) || (now.getTime() - lastRun.getTime() >= interval * 60_000);
+}
+
+function getETDate(now: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
 }
 
 export default {
@@ -131,6 +198,44 @@ export default {
   //                Only required for optional channels (stock, options).
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === 'GET' && url.pathname === '/status') {
+      if (url.searchParams.get('secret') !== env.FEED_TOKEN) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      const result: Record<string, unknown> = {};
+      for (const channel of CHANNELS) {
+        const [tokens, seenJson, topicsJson, pollToken, statsJson] = await Promise.all([
+          env.TOKENS.list({ prefix: `${channel}:` }),
+          env.STATE.get(`seen:${channel}`),
+          env.STATE.get(`topics:${channel}`),
+          channel === 'members' ? Promise.resolve(null) : env.STATE.get(`poll:${channel}`),
+          env.STATE.get(`stats:${channel}`),
+        ]);
+        const stats: RunStats | null = statsJson ? JSON.parse(statsJson) : null;
+        result[channel] = {
+          registeredTokens: tokens.keys.length,
+          seenIds:   seenJson   ? (JSON.parse(seenJson) as string[]).length            : 0,
+          topics:    topicsJson ? Object.keys(JSON.parse(topicsJson) as object).length : 0,
+          pollToken: channel === 'members' ? 'built-in' : (pollToken ? 'present' : 'missing'),
+          lastRun:      stats?.lastRun      ?? null,
+          lastNotified: stats?.lastNotified ?? null,
+          lastRunStats: stats ? {
+            itemsFetched: stats.itemsFetched,
+            newItems:     stats.newItems,
+            author:       stats.author,
+            forum:        stats.forum,
+            actionable:   stats.actionable,
+            sent:         stats.sent,
+          } : null,
+          todayStats: await env.STATE.get<DailyStats>(`daily:${channel}:${getETDate(new Date())}`, 'json'),
+        };
+      }
+      return new Response(JSON.stringify(result, null, 2), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     if (request.method !== 'POST') return new Response('not found', { status: 404 });
 
     const body = await request.json() as Record<string, string>;
@@ -195,6 +300,7 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
 }
 
 async function runChannel(channel: Channel, env: Env): Promise<void> {
+  const now = new Date();
   const intervals = {
     trading:  parseInt(env.POLL_INTERVAL_TRADING  ?? '5',  10),
     lateday:  parseInt(env.POLL_INTERVAL_LATEDAY  ?? '15', 10),
@@ -205,14 +311,17 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     lateday: hhmmToMinutes(env.POLL_BOUNDARY_LATEDAY ?? '1400'),
     close:   hhmmToMinutes(env.POLL_BOUNDARY_CLOSE   ?? '1615'),
   };
-  if (!shouldPollNow(new Date(), intervals, boundaries)) return;
+  const statsKey = `stats:${channel}`;
+  const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
+  const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
+  if (!shouldPollNow(now, lastRun, getIntervalMinutes(now, intervals, boundaries))) return;
 
   const feedToken = channel === 'members'
     ? env.FEED_TOKEN
     : await env.STATE.get(`poll:${channel}`);
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
-  const now = new Date();
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0 };
   const feeds = CHANNEL_FEEDS[channel];
 
   const topicsKey = `topics:${channel}`;
@@ -241,7 +350,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
         if (feed.discoverTopics) {
           const topicUrl = extractTopicUrl(link);
           const topicTitle = stripReplyPrefix(title);
-          if (topicUrl && (feed.feedKey !== 'stock-insights' || topicTitle.startsWith('*'))) {
+          if (topicUrl && (feed.feedKey !== FeedKeys.stockInsights || topicTitle.startsWith('*'))) {
             topics[topicUrl] = { lastSeen: now.toISOString(), title: topicTitle, feedKey: feed.feedKey };
           }
         }
@@ -301,11 +410,16 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   allItems.forEach(i => seen.add(i.guid));
   await env.STATE.put(seenKey, JSON.stringify(Array.from(seen).slice(-MAX_SEEN_IDS)));
 
-  if (newItems.length === 0) return;
+  runStats.itemsFetched = allItems.length;
+  runStats.newItems = newItems.length;
+
+  if (newItems.length === 0) {
+    await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+    return;
+  }
 
   const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
   const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
-  const actionPatterns: string[] | undefined = env.ACTION_PATTERNS ? JSON.parse(env.ACTION_PATTERNS) : undefined;
 
   const tokensByLevel: Partial<Record<NotifLevel, string[]>> = {};
   let cursor: string | undefined;
@@ -319,11 +433,22 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
 
-  if (Object.keys(tokensByLevel).length === 0) return;
+  if (Object.keys(tokensByLevel).length === 0) {
+    await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+    return;
+  }
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
-    const toNotify = newItems
-      .filter(item => matchesLevel(toFilterItem(item), level, authorFilter, minLength, actionPatterns))
+    const classified = newItems.map(item => ({ item, c: classifyItem(item, authorFilter, minLength) }));
+    for (const { c } of classified) {
+      runStats.author[c.author]     = (runStats.author[c.author]     ?? 0) + 1;
+      runStats.forum[c.forum]       = (runStats.forum[c.forum]       ?? 0) + 1;
+      runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
+    }
+
+    const toNotify = classified
+      .filter(({ c }) => shouldNotify(level, c))
+      .map(({ item }) => item)
       .slice(0, 5);
     if (toNotify.length === 0) continue;
 
@@ -339,12 +464,26 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(messages),
     });
+    runStats.sent += toNotify.length;
   }
+
+  if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
+  await env.STATE.put(statsKey, JSON.stringify(runStats));
+
+  const dailyKey = `daily:${channel}:${getETDate(now)}`;
+  const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
+    date: getETDate(now), runs: 0, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0,
+  };
+  daily.runs += 1;
+  daily.itemsFetched += runStats.itemsFetched;
+  daily.newItems += runStats.newItems;
+  daily.sent += runStats.sent;
+  mergeTally(daily.author, runStats.author);
+  mergeTally(daily.forum, runStats.forum);
+  mergeTally(daily.actionable, runStats.actionable);
+  await env.STATE.put(dailyKey, JSON.stringify(daily));
 }
 
-function toFilterItem(item: RawItem): FilterItem {
-  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
-}
 
 export { matchesLevel, stripReplyPrefix } from '@li/core';
 
