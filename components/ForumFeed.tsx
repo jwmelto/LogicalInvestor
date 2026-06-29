@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,6 @@ import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptio
 import { useFeed } from '../contexts/FeedContext';
 import { addNotificationAuthor } from '../services/notificationService';
 import { reportMissedAlert, type ReportableItem } from '../services/reportService';
-import { registerPushChannel } from '../services/pushService';
-import { getToken } from '../services/authService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
 import { useColorScheme } from '../hooks/use-color-scheme';
 import { Palette } from '../constants/theme';
@@ -100,7 +98,6 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
   const { feedResults, setFeedUnreadCount, triggerRefresh } = useFeed();
   const result = feedResults[feedKey];
-  const pushRegisteredRef = useRef(false);
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
     const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
@@ -159,13 +156,6 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
   useEffect(() => {
     if (!result) return;
-
-    if (result.accessible && !pushRegisteredRef.current) {
-      pushRegisteredRef.current = true;
-      getToken().then(feedToken => {
-        if (feedToken) registerPushChannel(feedKey, feedToken);
-      });
-    }
 
     (async () => {
       try {
