@@ -66,14 +66,13 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
 ];
 
 export function classifySignal(text: string, minLength: number): ActionableResult {
-  if (text.length < minLength) return 'fail-too-short';
   for (const [re, clause] of NEG_PATTERNS) {
     if (re.test(text)) return clause;
   }
   for (const [re, clause] of POS_PATTERNS) {
     if (re.test(text)) return clause;
   }
-  return 'fail-no-signal';
+  return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
 }
 
 export function containsActionableSignal(text: string, minLength = 200): boolean {

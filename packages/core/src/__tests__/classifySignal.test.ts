@@ -31,8 +31,8 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad("Yeah, I was urging everyone to get it while close to $80/averaging down"), MIN)).toBe('fail-historical');
   });
 
-  test('fail-too-short: below minLength', () => {
-    expect(classifySignal('Buy at $50', MIN)).toBe('fail-too-short');
+  test('fail-too-short: no pattern match and below minLength', () => {
+    expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });
 });
 

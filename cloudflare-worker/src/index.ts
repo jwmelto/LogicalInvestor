@@ -60,6 +60,23 @@ interface RunStats {
   sent: number;
 }
 
+interface DailyStats {
+  date: string;
+  runs: number;
+  itemsFetched: number;
+  newItems: number;
+  author:     Partial<Record<AuthorResult, number>>;
+  forum:      Partial<Record<ForumResult, number>>;
+  actionable: Partial<Record<ActionableResult, number>>;
+  sent: number;
+}
+
+function mergeTally<K extends string>(dst: Partial<Record<K, number>>, src: Partial<Record<K, number>>): void {
+  for (const [k, v] of Object.entries(src) as [K, number][]) {
+    dst[k] = (dst[k] ?? 0) + v;
+  }
+}
+
 function classifyItem(item: RawItem, authorFilter: string, minLength: number): ItemClassification {
   const forum: ForumResult =
     item.feedKey === FeedKeys.membersArea ? 'bypass' :
@@ -141,27 +158,30 @@ function hhmmToMinutes(s: string): number {
   return Math.floor(n / 100) * 60 + (n % 100);
 }
 
-// Gate: returns true if this invocation should do real work.
-// All values configurable via env vars; defaults match original behavior:
-//   trading hours  (OPEN–LATEDAY ET weekdays):  every 5 min
-//   late day       (LATEDAY–CLOSE ET weekdays):  every 15 min
-//   overnight + weekends:                        every 60 min
-// Intervals must be multiples of 5 (cron base cadence). Trading interval ≤5 runs every invocation.
-// Boundary defaults (minutes since midnight):
-//   open:    555  (09*60+15 = 09:15 ET, market open)
-//   lateday: 840  (14*60+00 = 14:00 ET, reduced-activity window begins)
-//   close:   975  (16*60+15 = 16:15 ET, after-hours begins)
-export function shouldPollNow(
+// Returns the appropriate poll interval (minutes) for the current ET time.
+// Boundary defaults (minutes since midnight ET):
+//   open:    555  (09:15 ET, market open)
+//   lateday: 840  (14:00 ET, reduced-activity window begins)
+//   close:   975  (16:15 ET, after-hours begins)
+export function getIntervalMinutes(
   now: Date,
   intervals  = { trading: 5, lateday: 15, overnight: 60 },
   boundaries = { open: 555, lateday: 840, close: 975 },
-): boolean {
-  const { day, timeOfDay, min } = getETComponents(now);
+): number {
+  const { day, timeOfDay } = getETComponents(now);
+  if (day === 0 || day === 6) return intervals.overnight;
+  if (timeOfDay >= boundaries.open    && timeOfDay < boundaries.lateday) return intervals.trading;
+  if (timeOfDay >= boundaries.lateday && timeOfDay < boundaries.close)   return intervals.lateday;
+  return intervals.overnight;
+}
 
-  if (day === 0 || day === 6) return min % intervals.overnight === 0;
-  if (timeOfDay >= boundaries.open    && timeOfDay < boundaries.lateday) return intervals.trading <= 5 ? true : min % intervals.trading === 0;
-  if (timeOfDay >= boundaries.lateday && timeOfDay < boundaries.close)   return min % intervals.lateday === 0;
-  return min % intervals.overnight === 0;
+// Returns true if enough time has elapsed since lastRun for the given interval (minutes).
+export function shouldPollNow(now: Date, lastRun: Date | null, interval: number): boolean {
+  return (!lastRun) || (now.getTime() - lastRun.getTime() >= interval * 60_000);
+}
+
+function getETDate(now: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
 }
 
 export default {
@@ -208,6 +228,7 @@ export default {
             actionable:   stats.actionable,
             sent:         stats.sent,
           } : null,
+          todayStats: await env.STATE.get<DailyStats>(`daily:${channel}:${getETDate(new Date())}`, 'json'),
         };
       }
       return new Response(JSON.stringify(result, null, 2), {
@@ -279,6 +300,7 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
 }
 
 async function runChannel(channel: Channel, env: Env): Promise<void> {
+  const now = new Date();
   const intervals = {
     trading:  parseInt(env.POLL_INTERVAL_TRADING  ?? '5',  10),
     lateday:  parseInt(env.POLL_INTERVAL_LATEDAY  ?? '15', 10),
@@ -289,14 +311,16 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     lateday: hhmmToMinutes(env.POLL_BOUNDARY_LATEDAY ?? '1400'),
     close:   hhmmToMinutes(env.POLL_BOUNDARY_CLOSE   ?? '1615'),
   };
-  if (!shouldPollNow(new Date(), intervals, boundaries)) return;
+  const statsKey = `stats:${channel}`;
+  const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
+  const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
+  if (!shouldPollNow(now, lastRun, getIntervalMinutes(now, intervals, boundaries))) return;
 
   const feedToken = channel === 'members'
     ? env.FEED_TOKEN
     : await env.STATE.get(`poll:${channel}`);
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
-  const now = new Date();
   const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0 };
   const feeds = CHANNEL_FEEDS[channel];
 
@@ -444,7 +468,20 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   }
 
   if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
-  await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+  await env.STATE.put(statsKey, JSON.stringify(runStats));
+
+  const dailyKey = `daily:${channel}:${getETDate(now)}`;
+  const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
+    date: getETDate(now), runs: 0, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0,
+  };
+  daily.runs += 1;
+  daily.itemsFetched += runStats.itemsFetched;
+  daily.newItems += runStats.newItems;
+  daily.sent += runStats.sent;
+  mergeTally(daily.author, runStats.author);
+  mergeTally(daily.forum, runStats.forum);
+  mergeTally(daily.actionable, runStats.actionable);
+  await env.STATE.put(dailyKey, JSON.stringify(daily));
 }
 
 
