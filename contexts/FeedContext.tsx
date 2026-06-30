@@ -3,6 +3,8 @@ import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
 import { getCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
+import { registerPushChannel } from '../services/pushService';
+import { getToken } from '../services/authService';
 
 type UnreadCounts = Partial<Record<FeedKey, number>>;
 export type FeedResults = Partial<Record<FeedKey, FeedResult>>;
@@ -27,6 +29,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const foregroundDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastRefreshAtRef = useRef<number>(Date.now());
+  const pushRegisteredRef = useRef<Set<FeedKey>>(new Set());
 
   // Seed badges from storage immediately so all tabs show counts before they load
   useEffect(() => {
@@ -41,6 +44,16 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const next: FeedResults = {};
     keys.forEach((k, i) => { next[k] = results[i]; });
     setFeedResults(next);
+
+    const feedToken = await getToken();
+    if (feedToken) {
+      for (const k of keys) {
+        if (next[k]?.accessible && !pushRegisteredRef.current.has(k)) {
+          pushRegisteredRef.current.add(k);
+          registerPushChannel(k, feedToken);
+        }
+      }
+    }
   }
 
   function fireRefresh() {
