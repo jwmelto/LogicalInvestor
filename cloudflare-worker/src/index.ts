@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, MAX_SEEN_IDS, type FeedKey, type NotifLevel, type ActionableResult } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -215,7 +215,7 @@ export default {
         const stats: RunStats | null = statsJson ? JSON.parse(statsJson) : null;
         result[channel] = {
           registeredTokens: tokens.keys.length,
-          seenIds:   seenJson   ? (JSON.parse(seenJson) as string[]).length            : 0,
+          seenIds:   seenJson   ? (() => { const s = JSON.parse(seenJson); return Array.isArray(s) ? s.length : Object.values(s as Record<string, string[]>).reduce((a, b) => a + b.length, 0); })() : 0,
           topics:    topicsJson ? Object.keys(JSON.parse(topicsJson) as object).length : 0,
           pollToken: channel === 'members' ? 'built-in' : (pollToken ? 'present' : 'missing'),
           lastRun:      stats?.lastRun      ?? null,
@@ -399,16 +399,29 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   const seenKey = `seen:${channel}`;
   const seenJson = await env.STATE.get(seenKey);
-  const seen = new Set<string>(seenJson ? JSON.parse(seenJson) : []);
+  const rawSeen = seenJson ? JSON.parse(seenJson) : {};
+  // Migrate: old format was string[], new is Record<feedKey, string[]>
+  const seenMap: Partial<Record<string, string[]>> = Array.isArray(rawSeen) ? {} : rawSeen;
 
-  if (seen.size === 0) {
-    await env.STATE.put(seenKey, JSON.stringify(allItems.map(i => i.guid)));
-    return;
+  const byFeed: Partial<Record<string, RawItem[]>> = {};
+  for (const item of allItems) {
+    (byFeed[item.feedKey] ??= []).push(item);
   }
 
-  const newItems = allItems.filter(i => !seen.has(i.guid));
-  allItems.forEach(i => seen.add(i.guid));
-  await env.STATE.put(seenKey, JSON.stringify(Array.from(seen).slice(-MAX_SEEN_IDS)));
+  const newItems: RawItem[] = [];
+  for (const [feedKey, feedItems] of Object.entries(byFeed) as [string, RawItem[]][]) {
+    const seen = new Set(seenMap[feedKey] ?? []);
+    if (seen.size === 0) {
+      seenMap[feedKey] = feedItems.map((i) => i.guid).slice(-MAX_SEEN_IDS_PER_FEED);
+      continue;
+    }
+    const newForFeed = feedItems.filter((i) => !seen.has(i.guid));
+    feedItems.forEach((i) => seen.add(i.guid));
+    seenMap[feedKey] = Array.from(seen).slice(-MAX_SEEN_IDS_PER_FEED);
+    newItems.push(...newForFeed);
+  }
+
+  await env.STATE.put(seenKey, JSON.stringify(seenMap));
 
   runStats.itemsFetched = allItems.length;
   runStats.newItems = newItems.length;

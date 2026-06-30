@@ -1,4 +1,4 @@
-export const MAX_SEEN_IDS = 2000;
+export const MAX_SEEN_IDS_PER_FEED = 500;
 
 export type NotifLevel = 'none' | 'minimal' | 'standard' | 'all';
 
