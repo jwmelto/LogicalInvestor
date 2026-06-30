@@ -104,9 +104,13 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
       feedKey,
     }));
 
-    // Discover topics from this feed if it has subfeeds
+    // Topic discovery is best-effort — never let it discard fetched items
     if (feed.hasSubFeeds) {
-      await updateTopicsFromFeedItems(items, feedKey);
+      try {
+        await updateTopicsFromFeedItems(items, feedKey);
+      } catch (e: any) {
+        if (__DEV__) console.warn(`[feedService] topic discovery failed for ${feedKey}:`, e.message);
+      }
     }
 
     return { feedKey, items, accessible: true };

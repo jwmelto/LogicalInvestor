@@ -46,3 +46,6 @@ scripts/fonts/
 
 # editor
 .vscode/
+
+# training data (paid content, not for commit)
+training-*.txt
