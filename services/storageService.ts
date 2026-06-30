@@ -91,6 +91,16 @@ export async function setCachedUnreadCounts(counts: Record<string, number>): Pro
   await storageSetObject(CACHED_UNREAD_KEY, counts);
 }
 
+const LAST_TAB_KEY = 'last_opened_tab';
+
+export async function getLastOpenedTab(): Promise<string | null> {
+  return storageGet(LAST_TAB_KEY);
+}
+
+export async function setLastOpenedTab(feedKey: string): Promise<void> {
+  await storageSet(LAST_TAB_KEY, feedKey);
+}
+
 // Background refresh interval (in minutes, 1-120)
 const DEFAULT_REFRESH_INTERVAL = 30;
 const MIN_REFRESH_INTERVAL = 1;
