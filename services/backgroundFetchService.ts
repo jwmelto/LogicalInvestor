@@ -1,10 +1,12 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { fetchAllFeeds } from './feedService';
+import { fetchAllFeeds, FEEDS } from './feedService';
 import { isAuthenticated } from './authService';
 import { getUnreadCount } from './readStateService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from './storageService';
 import { processNewItemsForNotifications } from './notificationService';
+import { getTopicsForForum, extractTopicFromTitle } from './topicService';
+import { isTopicSubscribed } from './subscriptionService';
 
 export const BACKGROUND_FETCH_TASK = 'background-feed-refresh';
 
@@ -23,7 +25,20 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     const existing = await getCachedUnreadCounts();
     const updated = { ...existing };
     for (const result of results) {
-      if (result.accessible) {
+      if (!result.accessible) continue;
+      if (FEEDS[result.feedKey].hasSubFeeds) {
+        // Match ForumFeed's topic-based counting so the badge agrees with what the user sees
+        const topics = await getTopicsForForum(result.feedKey);
+        let total = 0;
+        for (const topic of topics) {
+          if (!await isTopicSubscribed(topic.id, result.feedKey)) continue;
+          const topicItems = result.items.filter(
+            (item) => extractTopicFromTitle(item.title) === topic.name
+          );
+          total += await getUnreadCount(topicItems.map((i) => i.id));
+        }
+        updated[result.feedKey] = total;
+      } else {
         updated[result.feedKey] = await getUnreadCount(result.items.map((i) => i.id));
       }
     }
