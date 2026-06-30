@@ -10,6 +10,7 @@ const parser = new XMLParser({
 export const FEEDS = {
   membersArea: {
     name: 'Members Area',
+    route: 'members-area',
     url: 'https://logicalinvestor.net/feed/',
     priority: 'high',
     alwaysVisible: true,
@@ -17,6 +18,7 @@ export const FEEDS = {
   },
   membersForum: {
     name: 'Members Forum',
+    route: 'members-forum',
     url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',
     priority: 'normal',
     alwaysVisible: true,
@@ -24,6 +26,7 @@ export const FEEDS = {
   },
   stockInsights: {
     name: 'Stock Insights',
+    route: 'stock-insights',
     url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',
     priority: 'normal',
     alwaysVisible: false,
@@ -31,6 +34,7 @@ export const FEEDS = {
   },
   optionsInsights: {
     name: 'Options Insights',
+    route: 'options-insights',
     url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',
     priority: 'normal',
     alwaysVisible: false,

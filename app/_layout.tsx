@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Linking } from 'react-native';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -40,8 +41,12 @@ function RootLayoutInner() {
     });
 
     registerBackgroundFetch();
-    // Push channels are registered per-feed in ForumFeed after a successful load,
-    // not here — so the Worker knows which optional channels each device can access.
+
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const link = response.notification.request.content.data?.link as string | undefined;
+      if (link) Linking.openURL(link);
+    });
+    return () => sub.remove();
   }, []);
 
 
