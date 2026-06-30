@@ -25,14 +25,14 @@ export default function TabsIndex() {
         const unread = visible.filter((k) => (counts[k] ?? 0) > 0);
 
         let target: FeedKey;
-        if (unread.length === 0) {
-          target = 'membersForum';
-        } else if (unread.length === 1) {
-          target = unread[0];
+        if (lastTab && unread.includes(lastTab as FeedKey)) {
+          target = lastTab as FeedKey;                              // last visited has unread
+        } else if (unread.length > 0) {
+          target = unread[0];                                       // any unread tab
+        } else if (lastTab && visible.includes(lastTab as FeedKey)) {
+          target = lastTab as FeedKey;                              // last visited, nothing unread
         } else {
-          target = (lastTab && unread.includes(lastTab as FeedKey))
-            ? (lastTab as FeedKey)
-            : unread[0];
+          target = 'membersForum';                                  // fallback
         }
 
         router.replace(TAB_PATH[target] as any);
