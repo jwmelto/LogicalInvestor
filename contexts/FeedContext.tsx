@@ -5,6 +5,7 @@ import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedSer
 import { getCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
+import { useAuth } from './AuthContext';
 
 type UnreadCounts = Partial<Record<FeedKey, number>>;
 export type FeedResults = Partial<Record<FeedKey, FeedResult>>;
@@ -23,6 +24,7 @@ const FeedContext = createContext<FeedContextType | undefined>(undefined);
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
 export function FeedProvider({ children }: { children: React.ReactNode }) {
+  const { authed } = useAuth();
   const [feedResults, setFeedResults] = useState<FeedResults>({});
   const [counts, setCounts] = useState<UnreadCounts>({});
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -67,6 +69,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
+    if (!authed) return;
     fetchAllFeeds();
     getRefreshInterval().then((minutes) => startTimer(minutes * 60 * 1000));
 
@@ -110,7 +113,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       if (timerRef.current) clearInterval(timerRef.current);
       if (foregroundDelayRef.current) clearTimeout(foregroundDelayRef.current);
     };
-  }, []);
+  }, [authed]);
 
   const setFeedUnreadCount = useCallback((feedKey: FeedKey, count: number) => {
     setCounts((prev) => {
