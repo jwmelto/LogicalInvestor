@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { stripHtml, formatTitle, matchesLevel, MAX_SEEN_IDS, type FilterItem, type NotifLevel } from '@li/core';
 import type { FeedItem } from './feedService';
@@ -36,7 +37,9 @@ export async function fireTestNotification(items: FeedItem[], delaySecs?: number
   const body = stripHtml(match.excerpt ?? '').slice(0, 150);
   await Notifications.scheduleNotificationAsync({
     content: { title: `[TEST] ${formatTitle(match)}`, body: body || match.feedName, sound: true, data: { link: match.link } },
-    trigger: delaySecs ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: delaySecs } : null,
+    trigger: delaySecs
+      ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: delaySecs, channelId: 'feed-alerts' }
+      : (Platform.OS === 'android' ? { channelId: 'feed-alerts' } : null),
   });
 }
 
@@ -89,7 +92,7 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
 
   const pushLevel = await getPushLevel();
   const toNotify = newItems
-    .filter((item) => !wouldServerPush(item, pushLevel) && passes(item, settings))
+    .filter((item) => (Platform.OS !== 'ios' || !wouldServerPush(item, pushLevel)) && passes(item, settings))
     .slice(0, 5);
 
   for (const item of toNotify) {
@@ -101,7 +104,7 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
         sound: true,
         data: { link: item.link },
       },
-      trigger: null,
+      trigger: Platform.OS === 'android' ? { channelId: 'feed-alerts' } : null,
     });
   }
 }
