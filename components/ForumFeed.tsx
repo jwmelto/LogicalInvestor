@@ -619,7 +619,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                   })}
 
               {section.topics.length === 0 && section.items.length === 0 && (
-                <Text style={[styles.empty, { color: c.textMuted }]}>No posts found.</Text>
+                <Text style={[styles.empty, { color: c.textMuted }]}>
+                  {section.error ? `Failed to load: ${section.error}` : 'No posts found.'}
+                </Text>
               )}
             </View>
           ) : null

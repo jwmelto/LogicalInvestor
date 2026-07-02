@@ -9,6 +9,10 @@ crons = [
   "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
 ]
 
+[observability.logs]
+enabled = true
+invocation_logs = true
+
 [vars]
 AUTHOR_FILTER = "Sean Hyman"
 MIN_CONTENT_LENGTH = "200"

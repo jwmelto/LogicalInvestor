@@ -11,5 +11,15 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit*)",
+      "Bash(npm test*)",
+      "Bash(npm run test*)",
+      "Bash(npm run lint*)",
+      "Bash(\\(cd cloudflare-worker && npm test*)",
+      "Bash(\\(cd cloudflare-worker && npm run test*)"
+    ]
   }
 }

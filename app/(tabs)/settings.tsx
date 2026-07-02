@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
 import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, processNewItemsForNotifications, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
-import { getPushLevel, updatePushLevel, type PushLevel } from '../../services/pushService';
+import { getPushLevel, updatePushLevel, unregisterPushToken, type PushLevel } from '../../services/pushService';
 import { fetchAllFeeds } from '../../services/feedService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
@@ -88,6 +88,7 @@ export default function SettingsScreen() {
   }
 
   async function handleLogout() {
+    await unregisterPushToken();
     await logout();
     setAuthed(false);
   }
@@ -342,7 +343,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
 
         <Text style={[styles.buildInfo, { color: c.textMuted }]}>
-          v{Constants.expoConfig?.version} ({Constants.expoConfig?.ios?.buildNumber})
+          v{Application.nativeApplicationVersion} ({Application.nativeBuildVersion})
         </Text>
       </ScrollView>
     </SafeAreaView>

@@ -61,6 +61,8 @@ npm run ios         # Build and run on iOS simulator
 
 Use feature branches for all work (e.g., `feature/push-notifications`). Merge to `main` when complete. This keeps history clean and provides safe rollback.
 
+Track planned work, bugs, and open questions as GitHub Issues — not in this file. A roadmap list here goes stale the moment work lands and nobody remembers to edit it back out.
+
 ## Tech Stack
 
 - **Framework**: Expo 54 (React Native) with New Architecture enabled
@@ -207,12 +209,9 @@ Two-tier storage abstraction (app code never touches storage directly):
 
 **Critical**: iCloud KVS is NOT encrypted. Do not store feed token there. Token stays in `expo-secure-store`. Topic preferences and read state are safe in iCloud KVS.
 
-**iCloud Setup**: Requires paid Apple Developer account. When account is active:
-1. Restore `"@nauverse/expo-cloud-settings"` to the `plugins` array in `app.json` (currently removed for personal-team compatibility)
-2. Set `useICloud = true` in `storageService.ts`
-3. Run `npx expo prebuild --platform ios --clean`
+**iCloud Setup**: Requires a paid Apple Developer account — active as of the account used for this project. `"@nauverse/expo-cloud-settings"` is in the `plugins` array in `app.json` and `useICloud = Platform.OS === 'ios'` in `storageService.ts` — no conditional setup remaining.
 
-Full iCloud sync requires Apple Developer account + physical device. Simulator uses AsyncStorage fallback silently.
+Full iCloud sync requires a physical device; Simulator uses AsyncStorage fallback silently.
 
 **iCloud verification checklist** (run on physical device with iCloud signed in):
 - [ ] Install app on two devices under the same Apple ID
@@ -256,7 +255,8 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 **Key logic**:
 - First run: seeds all current item IDs as "seen" without notifying (flood prevention)
 - Subsequent runs: notifies only for truly new items that pass filters, max 5 per cycle
-- Notification title format: `"Sean Hyman in EWZ:"` (strips `Reply To:` prefix)
+- Notification title format: `"[LOCAL] Sean Hyman in EWZ:"` (strips `Reply To:` prefix). The `[LOCAL]`/`[PUSH]` tag lets delivery-channel dedup (below) be visually verified on a real device
+- Local notification is skipped whenever `wouldServerPush()` predicts the Worker's server push already covers that item — one alert per item, not two, on either platform
 - `fireTestNotification()` bypasses seen-ID tracking for dev testing (`__DEV__` gated button in Settings)
 - `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
 
@@ -266,7 +266,18 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 - App filters live in `notificationService.ts` (`processNewItemsForNotifications`)
 - Worker filters live in `cloudflare-worker/src/index.ts` (the cron handler)
 - The Worker suppresses pushes for items the app's local filter would catch anyway; if the Worker's filters are looser than the app's, users may receive push notifications for items that would have been silenced locally
-- Current Worker behavior: Members Area always notifies; Members Forum = Sean Hyman + 200 chars; Stock Insights = Sean Hyman + topic title contains `*`
+- Current Worker behavior, by notification level (`none`/`minimal`/`standard`/`all`, set per-device at registration via `pushService.ts`):
+  - `none`: nothing notifies, not even Members Area
+  - `minimal`: only Members Area notifies
+  - `standard`: Members Area always notifies; Members Forum/Stock/Options Insights require author = Sean Hyman, AND (for Stock/Options Insights only) topic title contains `*`, AND the content passes the actionable-signal check — a starred topic does not exempt low-signal replies like "good job" from that last check
+  - `all`: Members Area always notifies; other forums require author = Sean Hyman but skip the star/actionable checks entirely
+- `/register` requires `feed_token` on every call, for every channel — `pushService.ts`'s `registerPushChannel()` and `updatePushLevel()` both always send it. Every channel verifies it via `feedTokenHasAccess` and stores it as `poll:<channel>`, the token `runChannel()` polls that channel's content with. The `members` **channel** (the push-registration grouping that bundles both Members Area and Members Forum — see `CHANNEL_FEEDS`) checks access against Members Forum specifically, since Members Area's own feed is readable regardless of token validity and would never catch an expired or invalid one.
+
+**Checking Worker status**: `GET /status` requires the Worker's `FEED_TOKEN` secret as a Bearer header — not a query param, so it can't be checked by pasting a URL into a browser (no `WWW-Authenticate` challenge is sent, so browsers won't prompt for credentials either). Use curl:
+```bash
+curl -H "Authorization: Bearer $FEED_TOKEN" https://logicalinvestor-push.logicalinvestor.workers.dev/status
+```
+The Worker already pretty-prints the JSON response, so no `jq` needed. `FEED_TOKEN` is the same secret set via `wrangler secret put FEED_TOKEN` — not stored in any file in this repo.
 
 ### Contexts
 
@@ -354,25 +365,13 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Local notifications triggered by background fetch — filtered by author whitelist + minimum content length
 - ✅ Long-press any post/preview to add that author to notification whitelist
 - ✅ Notification settings in Settings screen (collapsible section: enable toggle, min length slider, author whitelist list)
-- ✅ Build number auto-increments via `preios` npm hook + `scripts/bump-build.js`
-
-### Not Yet Implemented (Prioritized)
-
-1. **Remote Push Notifications** (APNs) — replace background fetch polling with server-triggered push; requires paid Apple Developer account
-2. **Topic Subscription UI** in Settings screen
-   - Per-forum default subscription toggles
-   - List of all discovered topics with individual subscribe/unsubscribe
-   - "Silenced Topics" section to restore previously hidden topics
-3. **Android Build** (untested)
-4. **iCloud Sync Testing** on physical device (requires Apple Developer account)
-5. **Search** (deferred; use site's native search via WebView)
+- ✅ Build number auto-increments via `eas.json`'s `autoIncrement: true` on the `production` profile — this patches the compiled native binary directly during the EAS build, not `app.json`; read it at runtime via `expo-application`'s `Application.nativeBuildVersion`, not `Constants.expoConfig`
 
 ### Known Issues
 
 **Minor Issues**:
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
-- `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
 - reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing

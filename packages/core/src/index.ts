@@ -1,4 +1,4 @@
-export const MAX_SEEN_IDS = 500;
+export const MAX_SEEN_IDS_PER_FEED = 500;
 
 export type NotifLevel = 'none' | 'minimal' | 'standard' | 'all';
 
@@ -92,7 +92,7 @@ export function matchesLevel(
   if (!item.author?.toLowerCase().includes(authorFilter.toLowerCase())) return false;
   if (level === 'all') return true;
   if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
-    return stripReplyPrefix(item.title ?? '').startsWith('*');
+    if (!stripReplyPrefix(item.title ?? '').startsWith('*')) return false;
   }
   return containsActionableSignal(stripHtml(item.content ?? ''), minLength);
 }

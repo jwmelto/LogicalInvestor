@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes } from './index';
+import worker, { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr } from './index';
 import { FeedKeys, containsActionableSignal } from '@li/core';
 import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
 
@@ -54,10 +54,11 @@ describe('matchesLevel', () => {
     expect(matchesLevel(item(FK.membersForum, { description: 'short' }), 'all', AUTHOR, MIN)).toBe(true);
   });
 
-  it('standard: stock-insights requires * prefix after stripping Reply To', () => {
-    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.stockInsights, { title: 'Discussion post',        description: long }), 'standard', AUTHOR, MIN)).toBe(false);
+  it('standard: stock-insights requires * prefix AND an action signal — a starred topic does not excuse a "good job" reply', () => {
+    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: long }),            'standard', AUTHOR, MIN)).toBe(false); // starred but no signal
+    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.stockInsights, { title: 'Discussion post',        description: longWithSignal }), 'standard', AUTHOR, MIN)).toBe(false); // no star at all
   });
 
   it('standard: members-forum requires action signal only (length irrelevant)', () => {
@@ -67,10 +68,11 @@ describe('matchesLevel', () => {
     expect(matchesLevel(item(FK.membersForum, { description: '<p>' + longWithSignal + '</p>' }),     'standard', AUTHOR, MIN)).toBe(true);  // long + signal
   });
 
-  it('standard: options-insights requires * prefix after stripping Reply To', () => {
-    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: long }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.optionsInsights, { title: 'Discussion post',       description: long }), 'standard', AUTHOR, MIN)).toBe(false);
+  it('standard: options-insights requires * prefix AND an action signal — a starred topic does not excuse a "good job" reply', () => {
+    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: long }),           'standard', AUTHOR, MIN)).toBe(false); // starred but no signal
+    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: longWithSignal }), 'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);
+    expect(matchesLevel(item(FK.optionsInsights, { title: 'Discussion post',       description: longWithSignal }), 'standard', AUTHOR, MIN)).toBe(false); // no star at all
   });
 });
 
@@ -219,6 +221,161 @@ describe('findAndStorePollToken', () => {
     ], statePut));
     expect(result).toBe('working');
     expect(statePut).toHaveBeenCalledWith('poll:options', 'working');
+  });
+});
+
+describe('registerDevice (logic, plain-object inputs)', () => {
+  function mockEnv() {
+    return {
+      TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
+      STATE: { put: vi.fn().mockResolvedValue(undefined) },
+    } as any;
+  }
+
+  it('rejects an optional-channel registration whose feed_token has no access', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'unauthorized' }, env);
+    expect(res.status).toBe(403);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('accepts an optional-channel registration whose feed_token has access, and stores it as the poll token', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
+    expect(res.status).toBe(200);
+    expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { level: 'standard', feedToken: 'valid' } });
+  });
+
+  it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
+    expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard', feedToken: 'valid' } });
+  });
+
+  it('rejects a members registration with an expired or invalid feed_token', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard', feedToken: 'expired' }, env);
+    expect(res.status).toBe(403);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+});
+
+describe('/register endpoint validation (HTTP boundary)', () => {
+  function mockEnv() {
+    return {
+      TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
+      STATE: { put: vi.fn().mockResolvedValue(undefined) },
+    } as any;
+  }
+
+  function registerRequest(body: Record<string, string>) {
+    return new Request('https://worker.test/register', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  it('rejects a missing token', async () => {
+    const res = await worker.fetch(registerRequest({ channel: 'members', level: 'standard' }), mockEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a missing or unknown channel', async () => {
+    const res = await worker.fetch(registerRequest({ token: 'push1', level: 'standard' }), mockEnv());
+    expect(res.status).toBe(400);
+    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'bogus', level: 'standard' }), mockEnv());
+    expect(res2.status).toBe(400);
+  });
+
+  it('rejects a missing or invalid level rather than silently defaulting it', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members' }), env);
+    expect(res.status).toBe(400);
+    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'bogus' }), env);
+    expect(res2.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('valid members registration reaches registerDevice and succeeds', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard', feed_token: 'anything' }), env);
+    expect(res.status).toBe(200);
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard', feedToken: 'anything' } });
+  });
+
+  it('rejects an empty-string feed_token', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'options', level: 'standard', feed_token: '' }), env);
+    expect(res.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing feed_token for the members channel', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard' }), env);
+    expect(res.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+});
+
+describe('timingSafeEqualStr', () => {
+  it('true for identical strings', () => {
+    expect(timingSafeEqualStr('same-secret', 'same-secret')).toBe(true);
+  });
+  it('false for different strings of the same length', () => {
+    expect(timingSafeEqualStr('secret-aaaa', 'secret-bbbb')).toBe(false);
+  });
+  it('false for different-length strings (no throw)', () => {
+    expect(timingSafeEqualStr('short', 'a-much-longer-secret')).toBe(false);
+  });
+  it('false against an empty string', () => {
+    expect(timingSafeEqualStr('', 'non-empty')).toBe(false);
+  });
+});
+
+describe('GET /status auth', () => {
+  function mockEnv(feedToken: string) {
+    return {
+      FEED_TOKEN: feedToken,
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }) },
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+    } as any;
+  }
+
+  function statusRequest(authHeader?: string) {
+    return new Request('https://worker.test/status', {
+      headers: authHeader ? { Authorization: authHeader } : {},
+    });
+  }
+
+  it('rejects a missing Authorization header', async () => {
+    const res = await worker.fetch(statusRequest(), mockEnv('real-secret'));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a wrong bearer secret', async () => {
+    const res = await worker.fetch(statusRequest('Bearer wrong-secret'), mockEnv('real-secret'));
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts the correct bearer secret', async () => {
+    const res = await worker.fetch(statusRequest('Bearer real-secret'), mockEnv('real-secret'));
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects the secret passed as a query string', async () => {
+    const res = await worker.fetch(
+      new Request('https://worker.test/status?secret=real-secret'),
+      mockEnv('real-secret'),
+    );
+    expect(res.status).toBe(401);
   });
 });
 

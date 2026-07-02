@@ -32,7 +32,7 @@ export default function TabsIndex() {
         } else if (lastTab && visible.includes(lastTab as FeedKey)) {
           target = lastTab as FeedKey;                              // last visited, nothing unread
         } else {
-          target = 'membersForum';                                  // fallback
+          target = 'membersForum';                                  // nothing unread, no valid last tab
         }
 
         router.replace(TAB_PATH[target] as any);
