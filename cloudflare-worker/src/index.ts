@@ -197,9 +197,22 @@ function getETDate(now: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
 }
 
+// Constant-time string comparison — a plain !== on secrets leaks timing information.
+// Manual XOR accumulator rather than crypto.subtle.timingSafeEqual: that's a workerd-only
+// extension, unavailable under the plain-Node runtime this test suite runs in.
+export function timingSafeEqualStr(a: string, b: string): boolean {
+  const bufA = new TextEncoder().encode(a);
+  const bufB = new TextEncoder().encode(b);
+  if (bufA.byteLength !== bufB.byteLength) return false;
+  let diff = 0;
+  for (let i = 0; i < bufA.byteLength; i++) diff |= bufA[i] ^ bufB[i];
+  return diff === 0;
+}
+
 export default {
   // HTTP API (called by the app's pushService.ts):
   //
+  //   GET  /status       Authorization: Bearer <FEED_TOKEN>
   //   POST /register    { token, channel, level, feed_token? }
   //   POST /unregister  { token, channel }
   //
@@ -213,7 +226,9 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/status') {
-      if (url.searchParams.get('secret') !== env.FEED_TOKEN) {
+      const auth = request.headers.get('Authorization') ?? '';
+      const secret = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      if (!timingSafeEqualStr(secret, env.FEED_TOKEN)) {
         return new Response('unauthorized', { status: 401 });
       }
       const result: Record<string, unknown> = {};

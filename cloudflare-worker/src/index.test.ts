@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice } from './index';
+import worker, { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr } from './index';
 import { FeedKeys, containsActionableSignal } from '@li/core';
 import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
 
@@ -319,6 +319,60 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'options', level: 'standard', feed_token: '' }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+});
+
+describe('timingSafeEqualStr', () => {
+  it('true for identical strings', () => {
+    expect(timingSafeEqualStr('same-secret', 'same-secret')).toBe(true);
+  });
+  it('false for different strings of the same length', () => {
+    expect(timingSafeEqualStr('secret-aaaa', 'secret-bbbb')).toBe(false);
+  });
+  it('false for different-length strings (no throw)', () => {
+    expect(timingSafeEqualStr('short', 'a-much-longer-secret')).toBe(false);
+  });
+  it('false against an empty string', () => {
+    expect(timingSafeEqualStr('', 'non-empty')).toBe(false);
+  });
+});
+
+describe('GET /status auth', () => {
+  function mockEnv(feedToken: string) {
+    return {
+      FEED_TOKEN: feedToken,
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }) },
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+    } as any;
+  }
+
+  function statusRequest(authHeader?: string) {
+    return new Request('https://worker.test/status', {
+      headers: authHeader ? { Authorization: authHeader } : {},
+    });
+  }
+
+  it('rejects a missing Authorization header', async () => {
+    const res = await worker.fetch(statusRequest(), mockEnv('real-secret'));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a wrong bearer secret', async () => {
+    const res = await worker.fetch(statusRequest('Bearer wrong-secret'), mockEnv('real-secret'));
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts the correct bearer secret', async () => {
+    const res = await worker.fetch(statusRequest('Bearer real-secret'), mockEnv('real-secret'));
+    expect(res.status).toBe(200);
+  });
+
+  it('no longer accepts the secret via query string', async () => {
+    const res = await worker.fetch(
+      new Request('https://worker.test/status?secret=real-secret'),
+      mockEnv('real-secret'),
+    );
+    expect(res.status).toBe(401);
   });
 });
 
