@@ -13,6 +13,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
+import { FEED_ALERTS_CHANNEL_ID } from '../services/notificationService';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -24,7 +25,7 @@ Notifications.setNotificationHandler({
 });
 
 if (Platform.OS === 'android') {
-  void Notifications.setNotificationChannelAsync('feed-alerts', {
+  void Notifications.setNotificationChannelAsync(FEED_ALERTS_CHANNEL_ID, {
     name: 'Feed Alerts',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],

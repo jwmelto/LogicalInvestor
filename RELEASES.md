@@ -2,11 +2,12 @@
 
 ## 0.9.4 — July 2026
 
-- Android notification support: local and background notifications now work on Android, not just iOS
+- Added local and background notification support for Android
 - Fixed a bug where users without a Stock Insights or Options Insights subscription could still receive push alerts for that forum
 - Starred topics in Stock/Options Insights no longer alert on every reply in the thread — only replies with real trade content do, cutting down noise from "good job"-style replies
 - Fixed an Android cold-start issue where feeds could fail to load on first launch
 - Notification reliability fixes: prevented cross-feed notification floods and a duplicate-count bug in alert stats
+- Restored Members Forum as the default landing tab when nothing is unread (had regressed to Members Area in a prior release)
 
 ---
 

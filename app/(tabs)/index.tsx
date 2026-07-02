@@ -32,7 +32,7 @@ export default function TabsIndex() {
         } else if (lastTab && visible.includes(lastTab as FeedKey)) {
           target = lastTab as FeedKey;                              // last visited, nothing unread
         } else {
-          target = 'membersArea';                                   // fallback: flat feed, no topic discovery
+          target = 'membersForum';                                  // fallback: the unread-priority branches above already send us to Members Area if it has unread content
         }
 
         router.replace(TAB_PATH[target] as any);

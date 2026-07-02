@@ -548,7 +548,9 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
     const messages = toNotify.map((item, i) => ({
       to: levelTokens,
-      title: formatTitle(item),
+      // [PUSH] tag lets a device visually confirm which channel actually delivered an
+      // alert — pairs with the app's [LOCAL] tag in notificationService.ts.
+      title: `[PUSH] ${formatTitle(item)}`,
       body: stripHtml(item.description).slice(0, 150) || 'New post',
       sound: i === 0 ? 'default' : undefined,
     }));

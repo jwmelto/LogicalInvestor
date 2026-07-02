@@ -5,6 +5,11 @@ import type { FeedItem } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 import { getPushLevel } from './pushService';
 
+// Android requires every notification to belong to a channel (created once in app/_layout.tsx
+// via setNotificationChannelAsync); iOS has no channel concept, so trigger.channelId is ignored
+// there and a `null` trigger just fires immediately.
+export const FEED_ALERTS_CHANNEL_ID = 'feed-alerts';
+
 export interface NotificationSettings {
   enabled: boolean;
   authorFilters: string[];  // case-insensitive substring whitelist; empty = all authors
@@ -38,8 +43,8 @@ export async function fireTestNotification(items: FeedItem[], delaySecs?: number
   await Notifications.scheduleNotificationAsync({
     content: { title: `[TEST] ${formatTitle(match)}`, body: body || match.feedName, sound: true, data: { link: match.link } },
     trigger: delaySecs
-      ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: delaySecs, channelId: 'feed-alerts' }
-      : (Platform.OS === 'android' ? { channelId: 'feed-alerts' } : null),
+      ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: delaySecs, channelId: FEED_ALERTS_CHANNEL_ID }
+      : (Platform.OS === 'android' ? { channelId: FEED_ALERTS_CHANNEL_ID } : null),
   });
 }
 
@@ -104,20 +109,23 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
   if (!settings.enabled) return;
 
   const pushLevel = await getPushLevel();
+  // Skip the local notification whenever the Worker's server push would already cover this
+  // item — one alert per item, not two, on either platform. [LOCAL]/[PUSH] title tags exist
+  // specifically so this dedup can be observed working (or not) on a real device.
   const toNotify = newItems
-    .filter((item) => (Platform.OS !== 'ios' || !wouldServerPush(item, pushLevel)) && passes(item, settings))
+    .filter((item) => !wouldServerPush(item, pushLevel) && passes(item, settings))
     .slice(0, 5);
 
   for (const item of toNotify) {
     const body = stripHtml(item.excerpt ?? '').slice(0, 150);
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: formatTitle(item),
+        title: `[LOCAL] ${formatTitle(item)}`,
         body: body || item.feedName,
         sound: true,
         data: { link: item.link },
       },
-      trigger: Platform.OS === 'android' ? { channelId: 'feed-alerts' } : null,
+      trigger: Platform.OS === 'android' ? { channelId: FEED_ALERTS_CHANNEL_ID } : null,
     });
   }
 }
