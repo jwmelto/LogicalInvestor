@@ -360,7 +360,7 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Local notifications triggered by background fetch — filtered by author whitelist + minimum content length
 - ✅ Long-press any post/preview to add that author to notification whitelist
 - ✅ Notification settings in Settings screen (collapsible section: enable toggle, min length slider, author whitelist list)
-- ✅ Build number auto-increments via `preios` npm hook + `scripts/bump-build.js`
+- ✅ Build number auto-increments via `eas.json`'s `autoIncrement: true` on the `production` profile — this patches the compiled native binary directly during the EAS build, not `app.json`; read it at runtime via `expo-application`'s `Application.nativeBuildVersion`, not `Constants.expoConfig`
 
 ### Known Issues
 

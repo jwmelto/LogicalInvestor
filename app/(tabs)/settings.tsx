@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -342,7 +342,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
 
         <Text style={[styles.buildInfo, { color: c.textMuted }]}>
-          v{Constants.expoConfig?.version} ({Constants.expoConfig?.ios?.buildNumber})
+          v{Application.nativeApplicationVersion} ({Application.nativeBuildVersion})
         </Text>
       </ScrollView>
     </SafeAreaView>
