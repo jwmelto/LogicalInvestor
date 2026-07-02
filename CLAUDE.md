@@ -269,6 +269,12 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 - Current Worker behavior: Members Area always notifies; Members Forum = Sean Hyman + actionable signal; Stock/Options Insights = Sean Hyman + topic title contains `*` **AND** an actionable signal (a starred topic does not exempt low-signal replies like "good job" from the content gate)
 - `/register` on the Worker requires the registering device's `feed_token` to prove access (via `feedTokenHasAccess`) before it's added to an optional channel's (stock/options) push distribution list — otherwise a user without that subscription could register for and receive its alerts. Level-only updates (`updatePushLevel`, no `feed_token`) are only honored for a device already registered.
 
+**Checking Worker status**: `GET /status` requires the Worker's `FEED_TOKEN` secret as a Bearer header — not a query param, so it can't be checked by pasting a URL into a browser (no `WWW-Authenticate` challenge is sent, so browsers won't prompt for credentials either). Use curl:
+```bash
+curl -H "Authorization: Bearer $FEED_TOKEN" https://logicalinvestor-push.logicalinvestor.workers.dev/status | jq
+```
+`FEED_TOKEN` is the same secret set via `wrangler secret put FEED_TOKEN` — not stored in any file in this repo.
+
 ### Contexts
 
 **Location**: `contexts/` directory
