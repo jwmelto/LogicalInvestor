@@ -49,11 +49,14 @@ interface ItemClassification {
   actionable: ActionableResult;
 }
 
+type ByLevel = Partial<Record<NotifLevel, Partial<Record<string, number>>>>;
+
 interface RunStats {
   lastRun: string;
   lastNotified: string | null;
   itemsFetched: number;
   newItems: number;
+  byLevel: ByLevel;
   author:     Partial<Record<AuthorResult, number>>;
   forum:      Partial<Record<ForumResult, number>>;
   actionable: Partial<Record<ActionableResult, number>>;
@@ -65,6 +68,7 @@ interface DailyStats {
   runs: number;
   itemsFetched: number;
   newItems: number;
+  byLevel: ByLevel;
   author:     Partial<Record<AuthorResult, number>>;
   forum:      Partial<Record<ForumResult, number>>;
   actionable: Partial<Record<ActionableResult, number>>;
@@ -74,6 +78,15 @@ interface DailyStats {
 function mergeTally<K extends string>(dst: Partial<Record<K, number>>, src: Partial<Record<K, number>>): void {
   for (const [k, v] of Object.entries(src) as [K, number][]) {
     dst[k] = (dst[k] ?? 0) + v;
+  }
+}
+
+function mergeByLevel(dst: ByLevel, src: ByLevel): void {
+  for (const [level, feedCounts] of Object.entries(src) as [NotifLevel, Partial<Record<string, number>>][]) {
+    const dstFeed = (dst[level] ??= {});
+    for (const [feedKey, count] of Object.entries(feedCounts)) {
+      dstFeed[feedKey] = (dstFeed[feedKey] ?? 0) + (count ?? 0);
+    }
   }
 }
 
@@ -321,7 +334,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     : await env.STATE.get(`poll:${channel}`);
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
-  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0 };
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, byLevel: {}, author: {}, forum: {}, actionable: {}, sent: 0 };
   const feeds = CHANNEL_FEEDS[channel];
 
   const topicsKey = `topics:${channel}`;
@@ -451,14 +464,20 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     return;
   }
 
-  for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
-    const classified = newItems.map(item => ({ item, c: classifyItem(item, authorFilter, minLength) }));
-    for (const { c } of classified) {
-      runStats.author[c.author]     = (runStats.author[c.author]     ?? 0) + 1;
-      runStats.forum[c.forum]       = (runStats.forum[c.forum]       ?? 0) + 1;
-      runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
+  const classified = newItems.map(item => ({ item, c: classifyItem(item, authorFilter, minLength) }));
+  for (const { item, c } of classified) {
+    runStats.author[c.author]         = (runStats.author[c.author]         ?? 0) + 1;
+    runStats.forum[c.forum]           = (runStats.forum[c.forum]           ?? 0) + 1;
+    runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
+    for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
+      if (shouldNotify(level, c)) {
+        const feedCounts = (runStats.byLevel[level] ??= {});
+        feedCounts[item.feedKey] = (feedCounts[item.feedKey] ?? 0) + 1;
+      }
     }
+  }
 
+  for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
     const toNotify = classified
       .filter(({ c }) => shouldNotify(level, c))
       .map(({ item }) => item)
@@ -485,12 +504,13 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   const dailyKey = `daily:${channel}:${getETDate(now)}`;
   const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
-    date: getETDate(now), runs: 0, itemsFetched: 0, newItems: 0, author: {}, forum: {}, actionable: {}, sent: 0,
+    date: getETDate(now), runs: 0, itemsFetched: 0, newItems: 0, byLevel: {}, author: {}, forum: {}, actionable: {}, sent: 0,
   };
   daily.runs += 1;
   daily.itemsFetched += runStats.itemsFetched;
   daily.newItems += runStats.newItems;
   daily.sent += runStats.sent;
+  mergeByLevel(daily.byLevel, runStats.byLevel);
   mergeTally(daily.author, runStats.author);
   mergeTally(daily.forum, runStats.forum);
   mergeTally(daily.actionable, runStats.actionable);
