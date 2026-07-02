@@ -109,8 +109,8 @@ function shouldNotify(level: NotifLevel, c: ItemClassification): boolean {
   if (level === 'minimal') return false;
   if (c.author === 'fail-author') return false;
   if (level === 'all') return true;
-  // standard: star topic OR membersForum with actionable signal
-  if (c.forum === 'pass-star') return true;
+  // standard: star topic gates eligibility, but every post (star or membersForum)
+  // still needs an actionable signal — a starred topic doesn't excuse "good job" replies.
   if (c.forum === 'fail-no-star') return false;
   return c.actionable.startsWith('pass');
 }
@@ -262,19 +262,15 @@ export default {
     const kvKey = `${channel}:${pushToken}`;
 
     if (url.pathname === '/register') {
-      const level = (body.level ?? 'standard') as NotifLevel;
-      const feedToken = body.feed_token;
-      const meta: TokenMeta = { level };
-      if (feedToken && channel !== 'members') {
-        meta.feedToken = feedToken;
-        // Only adopt this as the active poll token if it actually has access,
-        // so an unauthorized device can't stomp a working token on re-registration.
-        if (await feedTokenHasAccess(channel, feedToken)) {
-          await env.STATE.put(`poll:${channel}`, feedToken);
-        }
+      const level = body.level as NotifLevel;
+      if (!VALID_LEVELS.includes(level)) {
+        return new Response('missing or invalid level', { status: 400 });
       }
-      await env.TOKENS.put(kvKey, '1', { metadata: meta });
-      return new Response('ok');
+      const feedToken = body.feed_token;
+      if (feedToken !== undefined && (typeof feedToken !== 'string' || feedToken === '')) {
+        return new Response('invalid feed_token', { status: 400 });
+      }
+      return registerDevice({ channel, pushToken, level, feedToken }, env);
     }
     if (url.pathname === '/unregister') {
       await env.TOKENS.delete(kvKey);
@@ -288,6 +284,50 @@ export default {
     await runChannel(channel, env);
   },
 };
+
+export const VALID_LEVELS: NotifLevel[] = ['none', 'minimal', 'standard', 'all'];
+
+export interface RegisterParams {
+  channel: Channel;
+  pushToken: string;
+  level: NotifLevel;
+  feedToken?: string;
+}
+
+// All inputs are assumed pre-validated (non-empty pushToken, known channel, valid level) —
+// validation lives at the HTTP boundary in fetch(). This function only encodes the
+// access/storage decision, so it can be unit tested with plain objects, no Request/env plumbing.
+export async function registerDevice(
+  { channel, pushToken, level, feedToken }: RegisterParams,
+  env: Pick<Env, 'TOKENS' | 'STATE'>,
+): Promise<Response> {
+  const kvKey = `${channel}:${pushToken}`;
+  let storedFeedToken = feedToken;
+
+  if (channel !== 'members') {
+    if (feedToken) {
+      // Registering (or refreshing) with a feed_token: must prove access before
+      // this device is added to the channel's push list, so a user who isn't
+      // subscribed can't receive alerts for a forum they can't read.
+      if (!(await feedTokenHasAccess(channel, feedToken))) {
+        return new Response('no access', { status: 403 });
+      }
+      await env.STATE.put(`poll:${channel}`, feedToken);
+    } else {
+      // Level-only update (e.g. updatePushLevel): only allowed for a device
+      // that already proved access at initial registration; carry its
+      // stored feedToken forward so poll-token recovery still works.
+      const existing = await env.TOKENS.getWithMetadata<TokenMeta>(kvKey);
+      if (!existing.metadata) return new Response('no access', { status: 403 });
+      storedFeedToken = existing.metadata.feedToken;
+    }
+  }
+
+  const meta: TokenMeta = { level };
+  if (storedFeedToken) meta.feedToken = storedFeedToken;
+  await env.TOKENS.put(kvKey, '1', { metadata: meta });
+  return new Response('ok');
+}
 
 // True if this feedToken returns any items from the channel's primary feed.
 // Signal: authorized tokens always return items; unauthorized/stale ones return 0.

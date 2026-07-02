@@ -50,7 +50,10 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const feedToken = await getToken();
     if (feedToken) {
       for (const k of keys) {
-        if (next[k]?.accessible && !pushRegisteredRef.current.has(k)) {
+        // Optional feeds (Stock/Options Insights) return accessible:true with 0 items
+        // when the user isn't subscribed — require actual items too, so we don't
+        // register push for a forum the user can't read.
+        if (next[k]?.accessible && (next[k]?.items.length ?? 0) > 0 && !pushRegisteredRef.current.has(k)) {
           pushRegisteredRef.current.add(k);
           registerPushChannel(k, feedToken);
         }

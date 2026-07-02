@@ -92,7 +92,7 @@ export function matchesLevel(
   if (!item.author?.toLowerCase().includes(authorFilter.toLowerCase())) return false;
   if (level === 'all') return true;
   if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
-    return stripReplyPrefix(item.title ?? '').startsWith('*');
+    if (!stripReplyPrefix(item.title ?? '').startsWith('*')) return false;
   }
   return containsActionableSignal(stripHtml(item.content ?? ''), minLength);
 }

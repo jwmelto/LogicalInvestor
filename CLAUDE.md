@@ -266,7 +266,8 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 - App filters live in `notificationService.ts` (`processNewItemsForNotifications`)
 - Worker filters live in `cloudflare-worker/src/index.ts` (the cron handler)
 - The Worker suppresses pushes for items the app's local filter would catch anyway; if the Worker's filters are looser than the app's, users may receive push notifications for items that would have been silenced locally
-- Current Worker behavior: Members Area always notifies; Members Forum = Sean Hyman + 200 chars; Stock Insights = Sean Hyman + topic title contains `*`
+- Current Worker behavior: Members Area always notifies; Members Forum = Sean Hyman + actionable signal; Stock/Options Insights = Sean Hyman + topic title contains `*` **AND** an actionable signal (a starred topic does not exempt low-signal replies like "good job" from the content gate)
+- `/register` on the Worker requires the registering device's `feed_token` to prove access (via `feedTokenHasAccess`) before it's added to an optional channel's (stock/options) push distribution list — otherwise a user without that subscription could register for and receive its alerts. Level-only updates (`updatePushLevel`, no `feed_token`) are only honored for a device already registered.
 
 ### Contexts
 
