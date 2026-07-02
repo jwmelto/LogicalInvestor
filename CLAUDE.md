@@ -61,6 +61,8 @@ npm run ios         # Build and run on iOS simulator
 
 Use feature branches for all work (e.g., `feature/push-notifications`). Merge to `main` when complete. This keeps history clean and provides safe rollback.
 
+Track planned work, bugs, and open questions as GitHub Issues — not in this file. A roadmap list here goes stale the moment work lands and nobody remembers to edit it back out.
+
 ## Tech Stack
 
 - **Framework**: Expo 54 (React Native) with New Architecture enabled
@@ -207,12 +209,9 @@ Two-tier storage abstraction (app code never touches storage directly):
 
 **Critical**: iCloud KVS is NOT encrypted. Do not store feed token there. Token stays in `expo-secure-store`. Topic preferences and read state are safe in iCloud KVS.
 
-**iCloud Setup**: Requires paid Apple Developer account. When account is active:
-1. Restore `"@nauverse/expo-cloud-settings"` to the `plugins` array in `app.json` (currently removed for personal-team compatibility)
-2. Set `useICloud = true` in `storageService.ts`
-3. Run `npx expo prebuild --platform ios --clean`
+**iCloud Setup**: Requires a paid Apple Developer account — active as of the account used for this project. `"@nauverse/expo-cloud-settings"` is in the `plugins` array in `app.json` and `useICloud = Platform.OS === 'ios'` in `storageService.ts` — no conditional setup remaining.
 
-Full iCloud sync requires Apple Developer account + physical device. Simulator uses AsyncStorage fallback silently.
+Full iCloud sync requires a physical device; Simulator uses AsyncStorage fallback silently.
 
 **iCloud verification checklist** (run on physical device with iCloud signed in):
 - [ ] Install app on two devices under the same Apple ID
@@ -363,23 +362,11 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Notification settings in Settings screen (collapsible section: enable toggle, min length slider, author whitelist list)
 - ✅ Build number auto-increments via `preios` npm hook + `scripts/bump-build.js`
 
-### Not Yet Implemented (Prioritized)
-
-1. **Remote Push Notifications** (APNs) — replace background fetch polling with server-triggered push; requires paid Apple Developer account
-2. **Topic Subscription UI** in Settings screen
-   - Per-forum default subscription toggles
-   - List of all discovered topics with individual subscribe/unsubscribe
-   - "Silenced Topics" section to restore previously hidden topics
-3. **Android Build** (untested)
-4. **iCloud Sync Testing** on physical device (requires Apple Developer account)
-5. **Search** (deferred; use site's native search via WebView)
-
 ### Known Issues
 
 **Minor Issues**:
 - 4 moderate npm vulnerabilities in toolchain (uuid, glob, rimraf, inflight) — Expo upstream, unfixable without breaking Expo
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
-- `@nauverse/expo-cloud-settings` plugin temporarily removed from `app.json` (personal Apple Developer team can't sign iCloud entitlement). Restore when paid account is active.
 
 **Behavior Notes**:
 - reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing
