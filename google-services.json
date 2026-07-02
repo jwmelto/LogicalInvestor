@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "153978859232",
+    "project_id": "logicalinvestor-b061b",
+    "storage_bucket": "logicalinvestor-b061b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:153978859232:android:7df69aacd18e23bf8eaa85",
+        "android_client_info": {
+          "package_name": "space.melton.logicalinvestor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvNyXLySZljCe6LxWgvbldf_AmUC_HYjE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
