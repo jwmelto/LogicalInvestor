@@ -267,7 +267,11 @@ export default {
       const meta: TokenMeta = { level };
       if (feedToken && channel !== 'members') {
         meta.feedToken = feedToken;
-        await env.STATE.put(`poll:${channel}`, feedToken);
+        // Only adopt this as the active poll token if it actually has access,
+        // so an unauthorized device can't stomp a working token on re-registration.
+        if (await feedTokenHasAccess(channel, feedToken)) {
+          await env.STATE.put(`poll:${channel}`, feedToken);
+        }
       }
       await env.TOKENS.put(kvKey, '1', { metadata: meta });
       return new Response('ok');
@@ -285,27 +289,30 @@ export default {
   },
 };
 
+// True if this feedToken returns any items from the channel's primary feed.
+// Signal: authorized tokens always return items; unauthorized/stale ones return 0.
+export async function feedTokenHasAccess(channel: Channel, feedToken: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${CHANNEL_FEEDS[channel][0].url}?feed_token=${feedToken}`);
+    if (!res.ok) return false;
+    const raw = parser.parse(await res.text())?.rss?.channel?.item ?? [];
+    return (Array.isArray(raw) ? raw : [raw]).length > 0;
+  } catch { return false; }
+}
+
 // Iterates registered users for a channel to find one whose feedToken
 // returns content, then stores it as the new poll token.
-// Recovery signal: valid tokens always return items; stale tokens return 0 items.
 export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TOKENS' | 'STATE'>): Promise<string | null> {
-  const testUrl = CHANNEL_FEEDS[channel][0].url;
   let cursor: string | undefined;
   do {
     const page = await env.TOKENS.list<TokenMeta>({ prefix: `${channel}:`, cursor });
     for (const key of page.keys) {
       const feedToken = key.metadata?.feedToken;
       if (!feedToken) continue;
-      try {
-        const res = await fetch(`${testUrl}?feed_token=${feedToken}`);
-        if (!res.ok) continue;
-        const raw = parser.parse(await res.text())?.rss?.channel?.item ?? [];
-        const items = Array.isArray(raw) ? raw : [raw];
-        if (items.length > 0) {
-          await env.STATE.put(`poll:${channel}`, feedToken);
-          return feedToken;
-        }
-      } catch { continue; }
+      if (await feedTokenHasAccess(channel, feedToken)) {
+        await env.STATE.put(`poll:${channel}`, feedToken);
+        return feedToken;
+      }
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
