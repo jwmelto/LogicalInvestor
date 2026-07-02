@@ -8,7 +8,7 @@ import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
 import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, processNewItemsForNotifications, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
-import { getPushLevel, updatePushLevel, type PushLevel } from '../../services/pushService';
+import { getPushLevel, updatePushLevel, unregisterPushToken, type PushLevel } from '../../services/pushService';
 import { fetchAllFeeds } from '../../services/feedService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
@@ -88,6 +88,7 @@ export default function SettingsScreen() {
   }
 
   async function handleLogout() {
+    await unregisterPushToken();
     await logout();
     setAuthed(false);
   }

@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { storageGet, storageSet } from './storageService';
+import { getToken } from './authService';
 
 const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
 const PUSH_LEVEL_KEY = 'push_level';
@@ -67,12 +68,13 @@ export async function registerPushChannel(feedKey: FeedKey, feedToken: string, l
 }
 
 // Called by Settings when the user changes their notification level.
-// Re-registers all channels the user is enrolled in; does NOT send feed_token
-// so poll tokens on the Worker are not overwritten.
+// Re-registers all channels the user is enrolled in.
 export async function updatePushLevel(level: PushLevel): Promise<void> {
   try {
     const pushToken = await getExpoPushToken();
     if (!pushToken) return;
+    const feedToken = await getToken();
+    if (!feedToken) return;
     await storageSet(PUSH_LEVEL_KEY, level);
     const channels = await getRegisteredChannels();
     await Promise.all(
@@ -80,7 +82,7 @@ export async function updatePushLevel(level: PushLevel): Promise<void> {
         fetch(`${WORKER_URL}/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: pushToken, channel, level }),
+          body: JSON.stringify({ token: pushToken, channel, level, feed_token: feedToken }),
         })
       )
     );

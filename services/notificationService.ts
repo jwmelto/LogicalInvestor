@@ -110,8 +110,7 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
 
   const pushLevel = await getPushLevel();
   // Skip the local notification whenever the Worker's server push would already cover this
-  // item — one alert per item, not two, on either platform. [LOCAL]/[PUSH] title tags exist
-  // specifically so this dedup can be observed working (or not) on a real device.
+  // item — one alert per item, not two.
   const toNotify = newItems
     .filter((item) => !wouldServerPush(item, pushLevel) && passes(item, settings))
     .slice(0, 5);

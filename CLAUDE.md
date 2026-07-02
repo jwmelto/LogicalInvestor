@@ -255,8 +255,8 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 **Key logic**:
 - First run: seeds all current item IDs as "seen" without notifying (flood prevention)
 - Subsequent runs: notifies only for truly new items that pass filters, max 5 per cycle
-- Notification title format: `"[LOCAL] Sean Hyman in EWZ:"` (strips `Reply To:` prefix). The `[LOCAL]`/`[PUSH]` tag is deliberate, not decorative — it's how delivery-channel dedup (below) can be visually verified on a real device instead of assumed
-- Local notification is skipped whenever `wouldServerPush()` predicts the Worker's server push already covers that item — one alert per item, not two, on either platform (not iOS-only; this used to be gated to iOS before Android had server push, and was lifted once FCM was wired up)
+- Notification title format: `"[LOCAL] Sean Hyman in EWZ:"` (strips `Reply To:` prefix). The `[LOCAL]`/`[PUSH]` tag lets delivery-channel dedup (below) be visually verified on a real device
+- Local notification is skipped whenever `wouldServerPush()` predicts the Worker's server push already covers that item — one alert per item, not two, on either platform
 - `fireTestNotification()` bypasses seen-ID tracking for dev testing (`__DEV__` gated button in Settings)
 - `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
 
@@ -271,7 +271,7 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
   - `minimal`: only Members Area notifies
   - `standard`: Members Area always notifies; Members Forum/Stock/Options Insights require author = Sean Hyman, AND (for Stock/Options Insights only) topic title contains `*`, AND the content passes the actionable-signal check — a starred topic does not exempt low-signal replies like "good job" from that last check
   - `all`: Members Area always notifies; other forums require author = Sean Hyman but skip the star/actionable checks entirely
-- `/register` on the Worker requires the registering device's `feed_token` to prove access (via `feedTokenHasAccess`) before it's added to an optional channel's (stock/options) push distribution list — otherwise a user without that subscription could register for and receive its alerts. Level-only updates (`updatePushLevel`, no `feed_token`) are only honored for a device already registered.
+- `/register` requires `feed_token` on every call, for every channel — `pushService.ts`'s `registerPushChannel()` and `updatePushLevel()` both always send it. Every channel verifies it via `feedTokenHasAccess` and stores it as `poll:<channel>`, the token `runChannel()` polls that channel's content with. The `members` **channel** (the push-registration grouping that bundles both Members Area and Members Forum — see `CHANNEL_FEEDS`) checks access against Members Forum specifically, since Members Area's own feed is readable regardless of token validity and would never catch an expired or invalid one.
 
 **Checking Worker status**: `GET /status` requires the Worker's `FEED_TOKEN` secret as a Bearer header — not a query param, so it can't be checked by pasting a URL into a browser (no `WWW-Authenticate` challenge is sent, so browsers won't prompt for credentials either). Use curl:
 ```bash

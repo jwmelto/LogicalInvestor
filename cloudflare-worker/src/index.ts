@@ -4,7 +4,7 @@ import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, MAX
 export interface Env {
   TOKENS: KVNamespace;
   STATE: KVNamespace;
-  FEED_TOKEN: string;              // polling token for members channel
+  FEED_TOKEN: string;              // secret for GET /status (Authorization: Bearer)
   AUTHOR_FILTER: string;           // wrangler.toml [vars], default "Sean Hyman"
   MIN_CONTENT_LENGTH: string;      // wrangler.toml [vars], default "200"
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
@@ -34,7 +34,7 @@ interface TopicEntry {
 
 interface TokenMeta {
   level?: NotifLevel;
-  feedToken?: string; // stored for optional channels; used to recover a stale poll token
+  feedToken?: string; // optional here only for KV entries predating universal storage; recovers a stale stock/options poll token
 }
 
 type AuthorResult = 'pass-author' | 'fail-author';
@@ -85,7 +85,8 @@ function mergeByLevel(dst: ByLevel, src: ByLevel): void {
   for (const [level, feedCounts] of Object.entries(src) as [NotifLevel, Partial<Record<string, number>>][]) {
     const dstFeed = (dst[level] ??= {});
     for (const [feedKey, count] of Object.entries(feedCounts)) {
-      dstFeed[feedKey] = (dstFeed[feedKey] ?? 0) + (count ?? 0);
+      // count is always a real number here — ByLevel entries only ever come from increments.
+      dstFeed[feedKey] = (dstFeed[feedKey] ?? 0) + count!;
     }
   }
 }
@@ -109,8 +110,7 @@ function shouldNotify(level: NotifLevel, c: ItemClassification): boolean {
   if (level === 'minimal') return false;
   if (c.author === 'fail-author') return false;
   if (level === 'all') return true;
-  // standard: star topic gates eligibility, but every post (star or membersForum)
-  // still needs an actionable signal — a starred topic doesn't excuse "good job" replies.
+  // standard: star topic gates eligibility, but every post still needs an actionable signal.
   if (c.forum === 'fail-no-star') return false;
   return c.actionable.startsWith('pass');
 }
@@ -129,10 +129,16 @@ export function channelFromCron(cron: string): Channel {
   return CHANNELS[offset] ?? 'members';
 }
 
+// The 'members' Channel bundles two distinct feeds under one push-registration grouping.
+// feedTokenHasAccess() below always checks index [0] of a channel's feed list, so order is
+// deliberate here: Members Forum is first because its feed requires a valid feed_token to
+// return any items, making it a real check of membership status (catches an expired or
+// invalid token). Members Area's feed is readable regardless of token validity — only the
+// content snippet is paywalled — so it would never catch anything if checked instead.
 const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
   members: [
-    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: FeedKeys.membersArea,     discoverTopics: false },
     { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: FeedKeys.membersForum,    discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: FeedKeys.membersArea,     discoverTopics: false },
   ],
   stock: [
     { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: FeedKeys.stockInsights,   discoverTopics: true  },
@@ -198,8 +204,7 @@ function getETDate(now: Date): string {
 }
 
 // Constant-time string comparison — a plain !== on secrets leaks timing information.
-// Manual XOR accumulator rather than crypto.subtle.timingSafeEqual: that's a workerd-only
-// extension, unavailable under the plain-Node runtime this test suite runs in.
+// Manual XOR accumulator that runs under the plain-Node runtime.
 export function timingSafeEqualStr(a: string, b: string): boolean {
   const bufA = new TextEncoder().encode(a);
   const bufB = new TextEncoder().encode(b);
@@ -213,15 +218,15 @@ export default {
   // HTTP API (called by the app's pushService.ts):
   //
   //   GET  /status       Authorization: Bearer <FEED_TOKEN>
-  //   POST /register    { token, channel, level, feed_token? }
+  //   POST /register    { token, channel, level, feed_token }
   //   POST /unregister  { token, channel }
   //
   //   token      — Expo push token (device identifier for APNs/FCM delivery)
   //   channel    — 'members' | 'stock' | 'options'
   //   level      — 'minimal' | 'standard' | 'all'
-  //   feed_token — WordPress auth token used by the Worker to poll this channel's
-  //                feed on the user's behalf. Distinct from the push token.
-  //                Only required for optional channels (stock, options).
+  //   feed_token — WordPress auth token, required on every /register call regardless of
+  //                channel. For stock/options it also proves access — rejected with 403
+  //                if missing, invalid, or the account isn't subscribed to that channel.
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
@@ -237,7 +242,7 @@ export default {
           env.TOKENS.list({ prefix: `${channel}:` }),
           env.STATE.get(`seen:${channel}`),
           env.STATE.get(`topics:${channel}`),
-          channel === 'members' ? Promise.resolve(null) : env.STATE.get(`poll:${channel}`),
+          env.STATE.get(`poll:${channel}`),
           env.STATE.get(`stats:${channel}`),
         ]);
         const stats: RunStats | null = statsJson ? JSON.parse(statsJson) : null;
@@ -245,7 +250,7 @@ export default {
           registeredTokens: tokens.keys.length,
           seenIds:   seenJson   ? (() => { const s = JSON.parse(seenJson); return Array.isArray(s) ? s.length : Object.values(s as Record<string, string[]>).reduce((a, b) => a + b.length, 0); })() : 0,
           topics:    topicsJson ? Object.keys(JSON.parse(topicsJson) as object).length : 0,
-          pollToken: channel === 'members' ? 'built-in' : (pollToken ? 'present' : 'missing'),
+          pollToken: pollToken ? 'present' : 'missing',
           lastRun:      stats?.lastRun      ?? null,
           lastNotified: stats?.lastNotified ?? null,
           lastRunStats: stats ? {
@@ -282,8 +287,8 @@ export default {
         return new Response('missing or invalid level', { status: 400 });
       }
       const feedToken = body.feed_token;
-      if (feedToken !== undefined && (typeof feedToken !== 'string' || feedToken === '')) {
-        return new Response('invalid feed_token', { status: 400 });
+      if (typeof feedToken !== 'string' || feedToken === '') {
+        return new Response('missing or invalid feed_token', { status: 400 });
       }
       return registerDevice({ channel, pushToken, level, feedToken }, env);
     }
@@ -306,41 +311,24 @@ export interface RegisterParams {
   channel: Channel;
   pushToken: string;
   level: NotifLevel;
-  feedToken?: string;
+  feedToken: string;
 }
 
-// All inputs are assumed pre-validated (non-empty pushToken, known channel, valid level) —
-// validation lives at the HTTP boundary in fetch(). This function only encodes the
-// access/storage decision, so it can be unit tested with plain objects, no Request/env plumbing.
+// All inputs are assumed pre-validated (non-empty pushToken, known channel, valid level,
+// non-empty feedToken) — validation lives at the HTTP boundary in fetch(). This function
+// only encodes the access/storage decision, so it can be unit tested with plain objects,
+// no Request/env plumbing.
 export async function registerDevice(
   { channel, pushToken, level, feedToken }: RegisterParams,
   env: Pick<Env, 'TOKENS' | 'STATE'>,
 ): Promise<Response> {
-  const kvKey = `${channel}:${pushToken}`;
-  let storedFeedToken = feedToken;
-
-  if (channel !== 'members') {
-    if (feedToken) {
-      // Registering (or refreshing) with a feed_token: must prove access before
-      // this device is added to the channel's push list, so a user who isn't
-      // subscribed can't receive alerts for a forum they can't read.
-      if (!(await feedTokenHasAccess(channel, feedToken))) {
-        return new Response('no access', { status: 403 });
-      }
-      await env.STATE.put(`poll:${channel}`, feedToken);
-    } else {
-      // Level-only update (e.g. updatePushLevel): only allowed for a device
-      // that already proved access at initial registration; carry its
-      // stored feedToken forward so poll-token recovery still works.
-      const existing = await env.TOKENS.getWithMetadata<TokenMeta>(kvKey);
-      if (!existing.metadata) return new Response('no access', { status: 403 });
-      storedFeedToken = existing.metadata.feedToken;
-    }
+  if (!(await feedTokenHasAccess(channel, feedToken))) {
+    return new Response('no access', { status: 403 });
   }
+  await env.STATE.put(`poll:${channel}`, feedToken);
 
-  const meta: TokenMeta = { level };
-  if (storedFeedToken) meta.feedToken = storedFeedToken;
-  await env.TOKENS.put(kvKey, '1', { metadata: meta });
+  const meta: TokenMeta = { level, feedToken };
+  await env.TOKENS.put(`${channel}:${pushToken}`, '1', { metadata: meta });
   return new Response('ok');
 }
 
@@ -391,9 +379,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
   if (!shouldPollNow(now, lastRun, getIntervalMinutes(now, intervals, boundaries))) return;
 
-  const feedToken = channel === 'members'
-    ? env.FEED_TOKEN
-    : await env.STATE.get(`poll:${channel}`);
+  const feedToken = await env.STATE.get(`poll:${channel}`);
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
   const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, byLevel: {}, author: {}, forum: {}, actionable: {}, sent: 0 };
@@ -435,7 +421,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   // Valid tokens always return items; 0 items means the poll token is stale.
   // Attempt recovery from registered users' stored feedTokens.
-  if (channel !== 'members' && mainItems.length === 0) {
+  if (mainItems.length === 0) {
     await findAndStorePollToken(channel, env);
     return; // recovered token (if any) will be used on the next cron cycle
   }
@@ -474,9 +460,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   const seenKey = `seen:${channel}`;
   const seenJson = await env.STATE.get(seenKey);
-  const rawSeen = seenJson ? JSON.parse(seenJson) : {};
-  // Migrate: old format was string[], new is Record<feedKey, string[]>
-  const seenMap: Partial<Record<string, string[]>> = Array.isArray(rawSeen) ? {} : rawSeen;
+  const seenMap: Partial<Record<string, string[]>> = seenJson ? JSON.parse(seenJson) : {};
 
   const byFeed: Partial<Record<string, RawItem[]>> = {};
   for (const item of allItems) {

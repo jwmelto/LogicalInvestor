@@ -225,26 +225,16 @@ describe('findAndStorePollToken', () => {
 });
 
 describe('registerDevice (logic, plain-object inputs)', () => {
-  function mockEnv(existingMeta: Record<string, unknown> | null = null) {
+  function mockEnv() {
     return {
-      TOKENS: {
-        put: vi.fn().mockResolvedValue(undefined),
-        getWithMetadata: vi.fn().mockResolvedValue({ value: existingMeta ? '1' : null, metadata: existingMeta }),
-      },
+      TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
       STATE: { put: vi.fn().mockResolvedValue(undefined) },
     } as any;
   }
 
-  it('rejects an optional-channel registration with no feed_token and no prior registration', async () => {
-    const env = mockEnv(null);
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard' }, env);
-    expect(res.status).toBe(403);
-    expect(env.TOKENS.put).not.toHaveBeenCalled();
-  });
-
   it('rejects an optional-channel registration whose feed_token has no access', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
-    const env = mockEnv(null);
+    const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'unauthorized' }, env);
     expect(res.status).toBe(403);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
@@ -252,32 +242,37 @@ describe('registerDevice (logic, plain-object inputs)', () => {
 
   it('accepts an optional-channel registration whose feed_token has access, and stores it as the poll token', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
-    const env = mockEnv(null);
+    const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
     expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { level: 'standard', feedToken: 'valid' } });
   });
 
-  it('allows a level-only update (no feed_token) for a device already registered, carrying its stored feedToken forward', async () => {
-    const env = mockEnv({ level: 'standard', feedToken: 'valid' });
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'all' }, env);
+  it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { level: 'all', feedToken: 'valid' } });
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
+    expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard', feedToken: 'valid' } });
   });
 
-  it('members channel never requires a feed_token', async () => {
-    const env = mockEnv(null);
-    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard' }, env);
-    expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard' } });
+  it('rejects a members registration with an expired or invalid feed_token', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard', feedToken: 'expired' }, env);
+    expect(res.status).toBe(403);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
 });
 
 describe('/register endpoint validation (HTTP boundary)', () => {
   function mockEnv() {
     return {
-      TOKENS: { put: vi.fn().mockResolvedValue(undefined), getWithMetadata: vi.fn() },
+      TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
       STATE: { put: vi.fn().mockResolvedValue(undefined) },
     } as any;
   }
@@ -308,15 +303,23 @@ describe('/register endpoint validation (HTTP boundary)', () => {
   });
 
   it('valid members registration reaches registerDevice and succeeds', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard' }), env);
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard', feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard' } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard', feedToken: 'anything' } });
   });
 
-  it('rejects an empty-string feed_token instead of silently treating it as absent', async () => {
+  it('rejects an empty-string feed_token', async () => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'options', level: 'standard', feed_token: '' }), env);
+    expect(res.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing feed_token for the members channel', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard' }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -367,7 +370,7 @@ describe('GET /status auth', () => {
     expect(res.status).toBe(200);
   });
 
-  it('no longer accepts the secret via query string', async () => {
+  it('rejects the secret passed as a query string', async () => {
     const res = await worker.fetch(
       new Request('https://worker.test/status?secret=real-secret'),
       mockEnv('real-secret'),
