@@ -1,12 +1,10 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { fetchAllFeeds, FEEDS } from './feedService';
+import { fetchAllFeeds } from './feedService';
 import { isAuthenticated } from './authService';
-import { getUnreadCount } from './readStateService';
+import { computeFeedUnreadCounts } from './readStateService';
 import { getCachedUnreadCounts, setCachedUnreadCounts } from './storageService';
 import { processNewItemsForNotifications } from './notificationService';
-import { getTopicsForForum, extractTopicFromTitle } from './topicService';
-import { isTopicSubscribed } from './subscriptionService';
 
 export const BACKGROUND_FETCH_TASK = 'background-feed-refresh';
 
@@ -23,26 +21,8 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 
     // Compute unread counts and persist so all tabs have correct badges on next foreground
     const existing = await getCachedUnreadCounts();
-    const updated = { ...existing };
-    for (const result of results) {
-      if (!result.accessible) continue;
-      if (FEEDS[result.feedKey].hasSubFeeds) {
-        // Match ForumFeed's topic-based counting so the badge agrees with what the user sees
-        const topics = await getTopicsForForum(result.feedKey);
-        let total = 0;
-        for (const topic of topics) {
-          if (!await isTopicSubscribed(topic.id, result.feedKey)) continue;
-          const topicItems = result.items.filter(
-            (item) => extractTopicFromTitle(item.title) === topic.name
-          );
-          total += await getUnreadCount(topicItems.map((i) => i.id));
-        }
-        updated[result.feedKey] = total;
-      } else {
-        updated[result.feedKey] = await getUnreadCount(result.items.map((i) => i.id));
-      }
-    }
-    await setCachedUnreadCounts(updated);
+    const computed = await computeFeedUnreadCounts(results);
+    await setCachedUnreadCounts({ ...existing, ...computed });
 
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {

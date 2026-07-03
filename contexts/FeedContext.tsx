@@ -2,9 +2,10 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
-import { getCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
+import { getCachedUnreadCounts, setCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
+import { computeFeedUnreadCounts } from '../services/readStateService';
 import { useAuth } from './AuthContext';
 
 type UnreadCounts = Partial<Record<FeedKey, number>>;
@@ -46,6 +47,13 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const next: FeedResults = {};
     keys.forEach((k, i) => { next[k] = results[i]; });
     setFeedResults(next);
+
+    const computed = await computeFeedUnreadCounts(results);
+    (Object.entries(computed) as [FeedKey, number][]).forEach(([k, count]) => {
+      setFeedUnreadCount(k, count);
+    });
+    const cached = await getCachedUnreadCounts();
+    await setCachedUnreadCounts({ ...cached, ...computed });
 
     const feedToken = await getToken();
     if (feedToken) {
