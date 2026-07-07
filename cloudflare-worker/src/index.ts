@@ -498,6 +498,16 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   do {
     const page = await env.TOKENS.list<TokenMeta>({ prefix: `${channel}:`, cursor });
     for (const key of page.keys) {
+      // Access is only checked at registration time (registerDevice). A subscription can lapse
+      // afterward, so re-verify here — same signal findAndStorePollToken uses for stale tokens —
+      // and prune dead registrations before they get another channel's worth of content pushed
+      // to them. metadata comes free with the list() call above, so this adds no extra KV reads;
+      // only an HTTP fetch per device, and only when there's new content to notify about.
+      const feedToken = key.metadata?.feedToken;
+      if (feedToken && !(await feedTokenHasAccess(channel, feedToken))) {
+        await env.TOKENS.delete(key.name);
+        continue;
+      }
       const level: NotifLevel = key.metadata?.level ?? 'standard';
       const token = key.name.slice(channel.length + 1);
       (tokensByLevel[level] ??= []).push(token);

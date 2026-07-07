@@ -325,6 +325,65 @@ describe('/register endpoint validation (HTTP boundary)', () => {
   });
 });
 
+describe('runChannel (via scheduled) — stale registration pruning', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
+  const itemWithAuthor = (guid: string, author: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
+
+  function mockEnv() {
+    const stateStore: Record<string, string | null> = {
+      'stats:options': null,
+      'poll:options': 'poll-token',
+      'topics:options': null,
+      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [
+            { name: 'options:good-push', metadata: { level: 'all', feedToken: 'good-device-token' } },
+            { name: 'options:bad-push',  metadata: { level: 'all', feedToken: 'bad-device-token' } },
+          ],
+          list_complete: true,
+        }),
+        delete: tokensDelete,
+      },
+      AUTHOR_FILTER: 'Sean Hyman',
+      MIN_CONTENT_LENGTH: '200',
+    } as any;
+    return { env, statePut, tokensDelete };
+  }
+
+  it('prunes a device whose feedToken lost access, and excludes it from the push', async () => {
+    const { env, tokensDelete } = mockEnv();
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('feed_token=poll-token')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
+      }
+      if (url.includes('feed_token=good-device-token')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+      }
+      if (url.includes('feed_token=bad-device-token')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    expect(tokensDelete).toHaveBeenCalledWith('options:bad-push');
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined();
+    const body = JSON.parse(pushCall![1]!.body as string);
+    expect(body.flatMap((m: { to: string[] }) => m.to)).toEqual(['good-push']);
+  });
+});
+
 describe('timingSafeEqualStr', () => {
   it('true for identical strings', () => {
     expect(timingSafeEqualStr('same-secret', 'same-secret')).toBe(true);
