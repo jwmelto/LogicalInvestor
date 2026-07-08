@@ -102,8 +102,14 @@ For creating production-ready builds to submit to the App Store or TestFlight:
 npm install -g eas-cli             # Install globally (one-time)
 eas login                          # Authenticate with Expo account
 eas build:configure                # Configure project for EAS (one-time)
-eas build --platform ios           # Create production build for App Store
+npm run eas-build                  # Production builds, both platforms (see below)
 ```
+
+**Use `npm run eas-build`** (`scripts/eas-build.sh`) rather than calling `eas build` directly — it submits iOS first (typically serviced faster in the queue), then Android, both with `--no-wait` so they queue concurrently instead of Android waiting for iOS to finish (`eas build`'s `wait` flag defaults to `true`), and exports two env vars that suppress benign warnings before each call:
+- `EAS_BUILD_NO_EXPO_GO_WARNING` — dev workflow uses `expo prebuild` + native builds, not the Expo Go app, so EAS's "you're using Expo Go" detection is a false positive here
+- `EAS_BUILD_SKIP_LOCKFILE_CHECK` — `package-lock.json` is intentionally gitignored, so EAS's local check for its presence always fails
+
+Both checks read `process.env` directly inside `eas-cli`'s local pre-flight step, before the project is packaged and uploaded — `eas.json`'s per-profile `env` block only reaches the *remote* build container, so it can't suppress either one. They have to be real shell env vars at invocation time, which is what the script does.
 
 **Notes:**
 - Local development continues via `npm run ios` (faster iteration)
