@@ -446,6 +446,14 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     return; // recovered token (if any) will be used on the next cron cycle
   }
 
+  // Claim this run now, before the slower topic-fetch/dedup/notify work below. Cloudflare can
+  // dispatch a channel's cron trigger twice for the same tick (observed: duplicate pushes for
+  // the same post ~1 min apart; #24 already documents this cron infra as flaky). Writing lastRun
+  // here — instead of only at the exit points further down — shrinks the window in which a
+  // concurrent second invocation could read the same stale prevStats and double-send. Not a hard
+  // guarantee (KV has no compare-and-swap), just a much smaller race window.
+  await env.STATE.put(statsKey, JSON.stringify(runStats));
+
   // Prune stale topics
   const cutoff = new Date(now.getTime() - TOPIC_GC_DAYS * 86400 * 1000);
   for (const [url, entry] of Object.entries(topics)) {

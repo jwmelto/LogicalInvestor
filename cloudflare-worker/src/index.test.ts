@@ -384,6 +384,55 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
   });
 });
 
+describe('runChannel — claims lastRun before slow notify work (cron double-dispatch race)', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const NEW_ITEM_RSS = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>new-guid</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description></item></channel></rss>';
+
+  it('writes an updated stats:<channel> before sending any push', async () => {
+    const stateStore: Record<string, string | null> = {
+      'stats:options': null,
+      'poll:options': 'poll-token',
+      'topics:options': null,
+      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
+    };
+    const callOrder: string[] = [];
+    const statePut = vi.fn((key: string, value: string) => {
+      stateStore[key] = value;
+      if (key === 'stats:options' && JSON.parse(value).lastRun) callOrder.push('stats-claimed');
+      return Promise.resolve();
+    });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'options:push1', metadata: { level: 'all', feedToken: 'device-token' } }],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      AUTHOR_FILTER: 'Sean Hyman',
+      MIN_CONTENT_LENGTH: '200',
+    } as any;
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) {
+        callOrder.push('push-sent');
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      }
+      // Both the main-feed poll and the per-device access re-check resolve to the same item.
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(NEW_ITEM_RSS) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    // stats:options gets claimed early (before the slow notify work) and written again at the
+    // end with final counts — both are expected. What matters is the *first* claim lands before
+    // the push send, narrowing the window a concurrent dispatch could race through.
+    expect(callOrder.indexOf('stats-claimed')).toBeLessThan(callOrder.indexOf('push-sent'));
+  });
+});
+
 describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
   const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const STOCK_CRON = '1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
