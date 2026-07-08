@@ -40,7 +40,7 @@ export async function computeFeedUnreadCounts(
   const counts: Partial<Record<FeedKey, number>> = {};
   for (const result of results) {
     if (!result.accessible) continue;
-    counts[result.feedKey] = await getUnreadCount(result.items.map((i) => i.id));
+    counts[result.feedKey] = await getUnreadCount(result.items.map((i) => i.guid));
   }
   return counts;
 }

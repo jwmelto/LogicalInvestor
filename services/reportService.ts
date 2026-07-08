@@ -1,26 +1,25 @@
 import * as Linking from 'expo-linking';
-import { stripHtml } from '@li/core';
 
 const REPORT_TO = 'jwmelto@users.sourceforge.net';
 
+// Every caller sources this from either an RssItem or a Topic's latest* preview fields — both
+// guarantee all four of these (already stripped of HTML/entities), so nothing here is optional.
 export interface ReportableItem {
-  title?: string;
-  author?: string;
-  link?: string;
-  excerpt?: string;
+  title: string;
+  author: string;
+  link: string;
+  description: string;
 }
 
 export function reportMissedAlert(item: ReportableItem): void {
-  const title = item.title ?? '(no title)';
-  const stripped = stripHtml(item.excerpt ?? '');
-  const subject = `[LI Alert] Missed: ${title}`;
+  const subject = `[LI Alert] Missed: ${item.title}`;
   const body = [
-    `POST:   ${title}`,
-    `AUTHOR: ${item.author ?? '(unknown)'}`,
-    `LINK:   ${item.link ?? '(no link)'}`,
+    `POST:   ${item.title}`,
+    `AUTHOR: ${item.author}`,
+    `LINK:   ${item.link}`,
     ``,
-    `EXCERPT (${stripped.length} chars, threshold 200):`,
-    stripped.slice(0, 500),
+    `EXCERPT (${item.description.length} chars, threshold 200):`,
+    item.description.slice(0, 500),
     ``,
     `---`,
     `This post did NOT trigger a notification but should have.`,

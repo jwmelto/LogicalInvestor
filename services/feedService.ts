@@ -1,7 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
-import { extractRssItems } from '@li/core';
+import { extractRssItems, FeedKeys, type RssItem } from '@li/core';
 import { getToken } from './authService';
 import { updateTopicsFromFeedItems } from './topicService';
+
+export type { RssItem };
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -51,20 +53,9 @@ export const FEEDS = {
 
 export type FeedKey = keyof typeof FEEDS;
 
-export interface FeedItem {
-  id: string;
-  title: string;
-  link: string;
-  pubDate: string;
-  author?: string;
-  excerpt?: string;
-  feedName: string;
-  feedKey: FeedKey;
-}
-
 export interface FeedResult {
   feedKey: FeedKey;
-  items: FeedItem[];
+  items: RssItem[];
   accessible: boolean;
   error?: string;
 }
@@ -86,16 +77,7 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
     }
 
     const xml = await response.text();
-    const items: FeedItem[] = extractRssItems(parser.parse(xml)).map((rssItem) => ({
-      id: rssItem.guid ?? Math.random().toString(), // extractRssItems already falls back to link
-      title: rssItem.title ?? 'Untitled',
-      link: rssItem.link ?? '',
-      pubDate: rssItem.pubDate ?? '',
-      author: rssItem.author,
-      excerpt: rssItem.contentEncoded ?? rssItem.description,
-      feedName: feed.name,
-      feedKey,
-    }));
+    const items: RssItem[] = extractRssItems(parser.parse(xml)).map((rssItem) => ({ ...rssItem, feedKey }));
 
     // Topic discovery is best-effort — never let it discard fetched items
     if (feed.hasSubFeeds) {
@@ -123,7 +105,7 @@ export async function fetchSingleFeed(feedKey: FeedKey): Promise<FeedResult> {
   return fetchFeed(feedKey);
 }
 
-export async function fetchTopicFeed(topicUrl: string): Promise<FeedItem[]> {
+export async function fetchTopicFeed(topicUrl: string): Promise<RssItem[]> {
   const token = await getToken();
   const feedUrl = `${topicUrl.replace(/\/?$/, '/')  }feed/?feed_token=${token}`;
 
@@ -132,17 +114,7 @@ export async function fetchTopicFeed(topicUrl: string): Promise<FeedItem[]> {
     if (!response.ok) return [];
 
     const xml = await response.text();
-    return extractRssItems(parser.parse(xml)).map((rssItem) => ({
-      id: rssItem.guid ?? Math.random().toString(), // extractRssItems already falls back to link
-      title: rssItem.title ?? 'Untitled',
-      link: rssItem.link ?? '',
-      pubDate: rssItem.pubDate ?? '',
-      author: rssItem.author,
-      excerpt: rssItem.contentEncoded ?? rssItem.description,
-      feedName: rssItem.title ?? 'Topic',
-      feedKey: 'membersForum' as FeedKey,
-    }));
-
+    return extractRssItems(parser.parse(xml)).map((rssItem) => ({ ...rssItem, feedKey: FeedKeys.membersForum }));
   } catch {
     return [];
   }

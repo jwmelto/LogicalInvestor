@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, ChannelNames, stripHtml, stripReplyPrefix, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel } from '@li/core';
+import { FeedKeys, ChannelNames, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel, type RssItem } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -19,15 +19,6 @@ export interface Env {
   HEARTBEAT_URL_MEMBERS?: string;
   HEARTBEAT_URL_STOCK?: string;
   HEARTBEAT_URL_OPTIONS?: string;
-}
-
-interface RawItem {
-  guid: string;
-  title: string;
-  author: string;
-  description: string;
-  link: string;
-  feedKey: FeedKey;
 }
 
 interface TopicEntry {
@@ -95,15 +86,15 @@ function mergeByLevel(dst: ByLevel, src: ByLevel): void {
   }
 }
 
-function classifyItem(item: RawItem, authorFilter: string, minLength: number): ItemClassification {
+function classifyItem(item: RssItem, authorFilter: string, minLength: number): ItemClassification {
   const forum: ForumResult =
     item.feedKey === FeedKeys.membersArea ? 'bypass' :
     (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights)
-      ? (stripReplyPrefix(item.title).startsWith('*') ? 'pass-star' : 'fail-no-star')
+      ? (item.title.startsWith('*') ? 'pass-star' : 'fail-no-star') // title is already normalized
       : 'pass-forum';
 
   const author: AuthorResult = item.author.toLowerCase().includes(authorFilter) ? 'pass-author' : 'fail-author';
-  const actionable: ActionableResult = classifySignal(stripHtml(item.description), minLength);
+  const actionable: ActionableResult = classifySignal(item.description, minLength);
 
   return { author, forum, actionable };
 }
@@ -407,30 +398,18 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const topicsJson = await env.STATE.get(topicsKey);
   const topics: Record<string, TopicEntry> = topicsJson ? JSON.parse(topicsJson) : {};
 
-  const mainItems: RawItem[] = [];
+  const mainItems: RssItem[] = [];
   for (const feed of feeds) {
     try {
       const res = await fetch(`${feed.url}?feed_token=${feedToken}`);
       if (!res.ok) continue;
       const rssItems = extractRssItems(parser.parse(await res.text()));
       for (const rssItem of rssItems) {
-        // link/title are pulled out here (rather than read back off the pushed RawItem) because
-        // the topic-discovery block below needs them too.
-        const link = rssItem.link ?? '';
-        const title = rssItem.title ?? '';
-        mainItems.push({
-          guid: rssItem.guid ?? '', // extractRssItems already falls back to link; '' covers both missing
-          title,
-          author: rssItem.author ?? '',
-          description: rssItem.description ?? '',
-          link,
-          feedKey: feed.feedKey,
-        });
+        mainItems.push({ ...rssItem, feedKey: feed.feedKey });
         if (feed.discoverTopics) {
-          const topicUrl = extractTopicUrl(link);
-          const topicTitle = stripReplyPrefix(title);
-          if (topicUrl && (feed.feedKey !== FeedKeys.stockInsights || topicTitle.startsWith('*'))) {
-            topics[topicUrl] = { lastSeen: now.toISOString(), title: topicTitle, feedKey: feed.feedKey };
+          const topicUrl = extractTopicUrl(rssItem.link);
+          if (topicUrl && (feed.feedKey !== FeedKeys.stockInsights || rssItem.title.startsWith('*'))) {
+            topics[topicUrl] = { lastSeen: now.toISOString(), title: rssItem.title, feedKey: feed.feedKey };
           }
         }
       }
@@ -465,14 +444,9 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       try {
         const res = await fetch(`${topicUrl}feed/?feed_token=${feedToken}`);
         if (!res.ok) return [];
-        return extractRssItems(parser.parse(await res.text())).map((rssItem): RawItem => ({
-          guid: rssItem.guid ?? '', // extractRssItems already falls back to link; '' covers both missing
-          title: rssItem.title ?? '',
-          author: rssItem.author ?? '',
-          description: rssItem.description ?? '',
-          link: rssItem.link ?? '',
-          feedKey: topics[topicUrl].feedKey,
-        }));
+        return extractRssItems(parser.parse(await res.text())).map(
+          (rssItem): RssItem => ({ ...rssItem, feedKey: topics[topicUrl].feedKey })
+        );
       } catch { return []; }
     })
   );
@@ -485,13 +459,13 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const seenJson = await env.STATE.get(seenKey);
   const seenMap: Partial<Record<string, string[]>> = seenJson ? JSON.parse(seenJson) : {};
 
-  const byFeed: Partial<Record<string, RawItem[]>> = {};
+  const byFeed: Partial<Record<string, RssItem[]>> = {};
   for (const item of allItems) {
     (byFeed[item.feedKey] ??= []).push(item);
   }
 
-  const newItems: RawItem[] = [];
-  for (const [feedKey, feedItems] of Object.entries(byFeed) as [string, RawItem[]][]) {
+  const newItems: RssItem[] = [];
+  for (const [feedKey, feedItems] of Object.entries(byFeed) as [string, RssItem[]][]) {
     const seen = new Set(seenMap[feedKey] ?? []);
     if (seen.size === 0) {
       seenMap[feedKey] = feedItems.map((i) => i.guid).slice(-MAX_SEEN_IDS_PER_FEED);
@@ -568,7 +542,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       // [PUSH] tag lets a device visually confirm which channel actually delivered an
       // alert — pairs with the app's [LOCAL] tag in notificationService.ts.
       title: `[PUSH] ${formatTitle(item)}`,
-      body: stripHtml(item.description).slice(0, 150) || 'New post',
+      body: item.description.slice(0, 150) || 'New post',
       sound: i === 0 ? 'default' : undefined,
     }));
 
@@ -606,7 +580,7 @@ export function extractTopicUrl(link: string): string | null {
   return match ? match[1] : null;
 }
 
-function dedup(items: RawItem[]): RawItem[] {
+function dedup(items: RssItem[]): RssItem[] {
   const seen = new Set<string>();
   return items.filter(i => {
     if (seen.has(i.guid)) return false;

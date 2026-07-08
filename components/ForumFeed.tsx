@@ -12,11 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
-import { stripHtml, stripReplyPrefix } from '@li/core';
-import { fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
+import { fetchTopicFeed, RssItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
 import { getUnreadCount, markRead, markAllRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
-import { getTopicsForForum, generateTopicFeedUrl, extractTopicFromTitle, Topic } from '../services/topicService';
+import { getTopicsForForum, generateTopicFeedUrl, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
 import { addNotificationAuthor } from '../services/notificationService';
@@ -31,41 +30,19 @@ interface ItemReadState {
 
 interface TopicSection {
   topic: Topic;
-  items: FeedItem[];
+  items: RssItem[];
   unreadCount: number;
   expanded: boolean;
   loading: boolean;
 }
 
 interface SectionState {
-  items: FeedItem[];
+  items: RssItem[];
   topics: TopicSection[];
   unreadCount: number;
   accessible: boolean;
   loading: boolean;
   error?: string;
-}
-
-function decodeHtmlEntities(html: string): string {
-  const entities: Record<string, string> = {
-    '&amp;': '&',
-    '&lt;': '<',
-    '&gt;': '>',
-    '&quot;': '"',
-    '&#039;': "'",
-    '&#038;': '&',
-    '&apos;': "'",
-  };
-
-  let decoded = html;
-  Object.entries(entities).forEach(([entity, char]) => {
-    decoded = decoded.replace(new RegExp(entity, 'g'), char);
-  });
-
-  decoded = decoded.replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(parseInt(dec, 10)));
-  decoded = decoded.replace(/&#x([0-9a-f]+);/gi, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
-
-  return decoded;
 }
 
 async function getSectionExpandedState(feedKey: FeedKey): Promise<boolean> {
@@ -97,7 +74,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const result = feedResults[feedKey];
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
-    const unreadCount = await getUnreadCount(result.items.map((i) => i.id));
+    const unreadCount = await getUnreadCount(result.items.map((i) => i.guid));
 
     const feed = FEEDS[feedKey];
     let topicSections: TopicSection[] = []; // Always initialize
@@ -118,12 +95,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
           .filter(({ subscribed }) => subscribed)
           .map(async ({ topic }) => {
             const topicPosts = result.items.filter(
-              item => extractTopicFromTitle(item.title) === topic.name
+              item => item.title === topic.name
             );
-            const unreadCount = await getUnreadCount(topicPosts.map(p => p.id));
+            const unreadCount = await getUnreadCount(topicPosts.map(p => p.guid));
 
             const isExpanded = topicExpandedStates[topic.id] ?? false;
-            let items: FeedItem[] = [];
+            let items: RssItem[] = [];
 
             if (isExpanded) {
               const feedUrl = generateTopicFeedUrl(topic.slug);
@@ -174,7 +151,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
         const readStates: ItemReadState = {};
         for (const item of allItems) {
-          readStates[item.id] = await isRead(item.id);
+          readStates[item.guid] = await isRead(item.guid);
         }
         for (const id of previewItemIds) {
           if (!(id in readStates)) {
@@ -258,11 +235,11 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
       const readStates: ItemReadState = {};
       for (const post of posts) {
-        readStates[post.id] = await isRead(post.id);
+        readStates[post.guid] = await isRead(post.guid);
       }
       setItemReadStates((prev) => ({ ...prev, ...readStates }));
 
-      const topicUnreadCount = await getUnreadCount(posts.map((p) => p.id));
+      const topicUnreadCount = await getUnreadCount(posts.map((p) => p.guid));
 
       setSection((prev) =>
         prev
@@ -295,9 +272,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     }
   }
 
-  async function onPressItem(item: FeedItem) {
-    await markRead(item.id);
-    setItemReadStates((prev) => ({ ...prev, [item.id]: true }));
+  async function onPressItem(item: RssItem) {
+    await markRead(item.guid);
+    setItemReadStates((prev) => ({ ...prev, [item.guid]: true }));
     setSection((prev) => {
       if (!prev) return prev;
       return { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) };
@@ -325,12 +302,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   async function markAllFeedRead() {
     if (!section) return;
     const allIds = [
-      ...section.items.map(i => i.id),
+      ...section.items.map(i => i.guid),
       ...section.topics.flatMap(t => [
-        ...t.items.map(i => i.id),
+        ...t.items.map(i => i.guid),
         ...section.items
-          .filter(i => extractTopicFromTitle(i.title) === t.topic.name)
-          .map(i => i.id),
+          .filter(i => i.title === t.topic.name)
+          .map(i => i.guid),
       ]),
     ];
     if (allIds.length === 0) return;
@@ -354,11 +331,10 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   }
 
   function showPostMenu(item: ReportableItem) {
-    if (!item.author && !item.link) return;
-    const name = item.author ? decodeHtmlEntities(item.author) : undefined;
-    Alert.alert(name ?? 'Post options', item.title ? decodeHtmlEntities(item.title) : undefined, [
+    const name = item.author;
+    Alert.alert(name, item.title, [
       { text: 'Cancel', style: 'cancel' },
-      ...(name ? [{ text: 'Add author to alerts', onPress: () => addNotificationAuthor(name) }] : []),
+      { text: 'Add author to alerts', onPress: () => addNotificationAuthor(name) },
       { text: 'Report: missed alert', onPress: () => reportMissedAlert(item) },
     ]);
   }
@@ -374,7 +350,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     const itemsToMark = [
       ...topicSection.items,
       ...section.items.filter(
-        (item) => extractTopicFromTitle(item.title) === topicSection.topic.name
+        (item) => item.title === topicSection.topic.name
       ),
     ];
 
@@ -382,8 +358,8 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     // individual markRead calls would race (each does its own read-modify-write
     // on the same key and they overwrite each other).
     const unreadIds = itemsToMark
-      .filter((item) => !itemReadStates[item.id])
-      .map((item) => item.id);
+      .filter((item) => !itemReadStates[item.guid])
+      .map((item) => item.guid);
     if (unreadIds.length > 0) {
       await markAllRead(unreadIds);
     }
@@ -391,7 +367,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     // Storage is settled — now update in-memory state.
     setItemReadStates((prev) => {
       const updated = { ...prev };
-      itemsToMark.forEach((item) => { updated[item.id] = true; });
+      itemsToMark.forEach((item) => { updated[item.guid] = true; });
       return updated;
     });
 
@@ -461,7 +437,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           onPress={() => toggleTopic(topicSection.topic.id)}
                         >
                           <Text style={[styles.topicTitle, { color: c.textSecondary }]}>
-                            {topicSection.expanded ? '▼' : '▶'} {decodeHtmlEntities(topicSection.topic.name)}
+                            {topicSection.expanded ? '▼' : '▶'} {topicSection.topic.name}
                           </Text>
                         </TouchableOpacity>
                         <View style={styles.topicHeaderRight}>
@@ -485,42 +461,28 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         </View>
                       </View>
 
-                      {!topicSection.expanded && topicSection.unreadCount > 0 && topicSection.topic.latestExcerpt && (() => {
-                        const previewPostIsRead = topicSection.topic.latestItemId
-                          ? itemReadStates[topicSection.topic.latestItemId]
-                          : false;
-
-                        if (previewPostIsRead) return null;
-
-                        return (
-                          <TouchableOpacity
-                            style={[styles.topicPreview, { backgroundColor: c.surfaceAlt, borderBottomColor: c.borderSubtle }]}
-                            onPress={async () => {
-                              if (topicSection.topic.latestItemLink) {
-                                await markTopicAsRead(topicSection.topic.id);
-                                Linking.openURL(topicSection.topic.latestItemLink);
-                              }
-                            }}
-                            onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, excerpt: topicSection.topic.latestExcerpt })}
-                          >
-                            {(topicSection.topic.latestAuthor || topicSection.topic.latestPubDate) && (
-                              <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
-                                {topicSection.topic.latestAuthor ? `${decodeHtmlEntities(topicSection.topic.latestAuthor)}` : ''}
-                                {topicSection.topic.latestAuthor && topicSection.topic.latestPubDate ? ' · ' : ''}
-                                {topicSection.topic.latestPubDate ? new Date(topicSection.topic.latestPubDate).toLocaleDateString('en-US', {
-                                  month: 'numeric',
-                                  day: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                }) : ''}
-                              </Text>
-                            )}
-                            <Text style={[styles.topicPreviewExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
-                              {decodeHtmlEntities(stripHtml(topicSection.topic.latestExcerpt))}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })()}
+                      {!topicSection.expanded && topicSection.unreadCount > 0 && !itemReadStates[topicSection.topic.latestItemId] && (
+                        <TouchableOpacity
+                          style={[styles.topicPreview, { backgroundColor: c.surfaceAlt, borderBottomColor: c.borderSubtle }]}
+                          onPress={async () => {
+                            await markTopicAsRead(topicSection.topic.id);
+                            Linking.openURL(topicSection.topic.latestItemLink);
+                          }}
+                          onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, description: topicSection.topic.latestExcerpt })}
+                        >
+                          <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
+                            {topicSection.topic.latestAuthor} · {new Date(topicSection.topic.latestPubDate).toLocaleDateString('en-US', {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </Text>
+                          <Text style={[styles.topicPreviewExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
+                            {topicSection.topic.latestExcerpt}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
 
                       {topicSection.expanded && topicSection.loading && (
                         <View style={styles.topicLoading}>
@@ -531,20 +493,18 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                       {topicSection.expanded &&
                         !topicSection.loading &&
                         topicSection.items.map((item) => {
-                          const itemIsRead = itemReadStates[item.id];
-                          const displayTitle = decodeHtmlEntities(stripReplyPrefix(item.title));
+                          const itemIsRead = itemReadStates[item.guid];
 
                           return (
                             <TouchableOpacity
-                              key={item.id}
+                              key={item.guid}
                               style={[styles.topicItem, { backgroundColor: c.bg }]}
                               onPress={() => onPressItem(item)}
                               onLongPress={() => showPostMenu(item)}
                             >
                               <View style={styles.itemMeta}>
                                 <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
-                                  {item.author ? `${decodeHtmlEntities(item.author)} · ` : ''}
-                                  {new Date(item.pubDate).toLocaleDateString('en-US', {
+                                  {item.author} · {new Date(item.pubDate).toLocaleDateString('en-US', {
                                     month: 'numeric',
                                     day: 'numeric',
                                     hour: '2-digit',
@@ -552,16 +512,14 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                                   })}
                                 </Text>
                               </View>
-                              {displayTitle !== topicSection.topic.name && (
+                              {item.title !== topicSection.topic.name && (
                                 <View style={styles.titleRow}>
-                                  <Text style={[styles.itemTitle, { color: c.text }]}>{displayTitle}</Text>
+                                  <Text style={[styles.itemTitle, { color: c.text }]}>{item.title}</Text>
                                 </View>
                               )}
-                              {item.excerpt ? (
-                                <Text style={[styles.itemExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
-                                  {decodeHtmlEntities(stripHtml(item.excerpt))}
-                                </Text>
-                              ) : null}
+                              <Text style={[styles.itemExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
+                                {item.description}
+                              </Text>
                             </TouchableOpacity>
                           );
                         })}
@@ -572,24 +530,24 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                     </View>
                   ))
                 : section.items.map((item) => {
-                    const itemIsRead = itemReadStates[item.id];
+                    const itemIsRead = itemReadStates[item.guid];
                     const showSnippet = !itemIsRead || !hideSnippetOnRead;
 
                     return (
                       <TouchableOpacity
-                        key={item.id}
+                        key={item.guid}
                         style={[styles.item, { backgroundColor: c.bg }]}
                         onPress={() => onPressItem(item)}
                         onLongPress={() => showPostMenu(item)}
                       >
                         <View style={styles.titleRow}>
-                          <Text style={[styles.itemTitle, { color: c.text }]}>{decodeHtmlEntities(item.title)}</Text>
+                          <Text style={[styles.itemTitle, { color: c.text }]}>{item.title}</Text>
                           {!itemIsRead && (
                             <TouchableOpacity
                               onPress={async (e) => {
                                 e.stopPropagation();
-                                await markRead(item.id);
-                                setItemReadStates(prev => ({ ...prev, [item.id]: true }));
+                                await markRead(item.guid);
+                                setItemReadStates(prev => ({ ...prev, [item.guid]: true }));
                                 setSection(prev => prev ? { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) } : prev);
                                 setFeedUnreadCount(feedKey, Math.max(0, (section?.unreadCount ?? 1) - 1));
                               }}
@@ -599,14 +557,13 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                             </TouchableOpacity>
                           )}
                         </View>
-                        {showSnippet && item.excerpt ? (
+                        {showSnippet && (
                           <Text style={[styles.itemExcerpt, { color: c.textSecondary }]} numberOfLines={2}>
-                            {decodeHtmlEntities(stripHtml(item.excerpt))}
+                            {item.description}
                           </Text>
-                        ) : null}
+                        )}
                         <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
-                          {item.author ? `${decodeHtmlEntities(item.author)} · ` : ''}
-                          {new Date(item.pubDate).toLocaleDateString()}
+                          {item.author} · {new Date(item.pubDate).toLocaleDateString()}
                         </Text>
                       </TouchableOpacity>
                     );
