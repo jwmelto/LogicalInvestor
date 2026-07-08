@@ -14,12 +14,16 @@
   },
   "permissions": {
     "allow": [
-      "Bash(npx tsc --noEmit*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(tail:*)",
+      "Bash(echo:*)",
       "Bash(npm test*)",
       "Bash(npm run test*)",
       "Bash(npm run lint*)",
       "Bash(\\(cd cloudflare-worker && npm test*)",
-      "Bash(\\(cd cloudflare-worker && npm run test*)"
+      "Bash(\\(cd cloudflare-worker && npm run test*)",
+      "Bash(\\(cd cloudflare-worker && npx tsc:*)"
     ]
   }
 }
