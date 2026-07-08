@@ -1,5 +1,13 @@
 # Release History
 
+## 0.9.5 — July 2026
+
+- Local notifications now also fire on foreground refresh, not just the background task — background tasks are scheduled opportunistically by iOS/Android and can be skipped for hours
+- Fixed stale push registrations: the server now re-checks each device's subscription access on every notify-worthy run and stops pushing content you've lost access to, instead of continuing indefinitely
+- Unread badges for tabs you haven't opened yet now appear immediately on launch, instead of only after visiting that tab once
+
+---
+
 ## 0.9.4 — July 2026
 
 - Added local and background notification support for Android
