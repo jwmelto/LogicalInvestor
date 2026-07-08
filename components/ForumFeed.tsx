@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
+import { stripHtml, stripReplyPrefix } from '@li/core';
 import { fetchTopicFeed, FeedItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
 import { getUnreadCount, markRead, markAllRead, isRead } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
@@ -65,10 +66,6 @@ function decodeHtmlEntities(html: string): string {
   decoded = decoded.replace(/&#x([0-9a-f]+);/gi, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
 
   return decoded;
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, ' ').trim();
 }
 
 async function getSectionExpandedState(feedKey: FeedKey): Promise<boolean> {
@@ -535,10 +532,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         !topicSection.loading &&
                         topicSection.items.map((item) => {
                           const itemIsRead = itemReadStates[item.id];
-                          let displayTitle = item.title.startsWith('Reply To: ')
-                            ? item.title.slice(10).trim()
-                            : item.title;
-                          displayTitle = decodeHtmlEntities(displayTitle);
+                          const displayTitle = decodeHtmlEntities(stripReplyPrefix(item.title));
 
                           return (
                             <TouchableOpacity

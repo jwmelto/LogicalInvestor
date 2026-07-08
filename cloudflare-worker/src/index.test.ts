@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr } from './index';
-import { FeedKeys, containsActionableSignal } from '@li/core';
+import worker, { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS } from './index';
+import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
 
 const FK = FeedKeys;
@@ -101,6 +101,23 @@ describe('stripReplyPrefix', () => {
   });
   it('trims whitespace', () => {
     expect(stripReplyPrefix('  Market update  ')).toBe('Market update');
+  });
+});
+
+describe('CHANNEL_FEEDS consistency with @li/core FEEDKEY_TO_CHANNEL', () => {
+  it('every feed is listed under the channel FEEDKEY_TO_CHANNEL says it belongs to', () => {
+    for (const [channel, feeds] of Object.entries(CHANNEL_FEEDS) as [string, { feedKey: FeedKey }[]][]) {
+      for (const { feedKey } of feeds) {
+        expect(FEEDKEY_TO_CHANNEL[feedKey]).toBe(channel);
+      }
+    }
+  });
+
+  it('every feedKey in FEEDKEY_TO_CHANNEL is represented in CHANNEL_FEEDS', () => {
+    const listed = new Set(Object.values(CHANNEL_FEEDS).flat().map((f) => f.feedKey));
+    for (const feedKey of Object.keys(FEEDKEY_TO_CHANNEL) as FeedKey[]) {
+      expect(listed.has(feedKey)).toBe(true);
+    }
   });
 });
 

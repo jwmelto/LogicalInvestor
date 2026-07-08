@@ -11,6 +11,52 @@ export const FeedKeys = {
 
 export type FeedKey = typeof FeedKeys[keyof typeof FeedKeys];
 
+export type Channel = 'members' | 'stock' | 'options';
+
+// Single source of truth for which push channel a feed belongs to. Used directly by the app's
+// pushService.ts; the Worker's CHANNEL_FEEDS carries additional per-feed data (URL,
+// discoverTopics) this map doesn't, and its per-channel array order is load-bearing (see the
+// comment on CHANNEL_FEEDS in cloudflare-worker/src/index.ts), so the Worker keeps its own
+// structure but is tested against this map for drift (index.test.ts).
+export const FEEDKEY_TO_CHANNEL: Record<FeedKey, Channel> = {
+  [FeedKeys.membersArea]:     'members',
+  [FeedKeys.membersForum]:    'members',
+  [FeedKeys.stockInsights]:   'stock',
+  [FeedKeys.optionsInsights]: 'options',
+};
+
+// A <channel><item> entry from an RSS feed, after resolving the guid #text-vs-plain-string
+// variant that fast-xml-parser produces. Fields are left optional/unresolved (no '' defaults)
+// so each consumer can apply its own fallback semantics.
+export interface ParsedRssItem {
+  guid?: string;
+  title?: string;
+  author?: string;
+  description?: string;
+  contentEncoded?: string;
+  link?: string;
+  pubDate?: string;
+}
+
+// Normalizes an already-parsed RSS document (via fast-xml-parser) to an array of items —
+// fast-xml-parser collapses a single <item> to an object instead of a one-element array — and
+// extracts the handful of fields every consumer needs. Takes the parsed object, not the raw XML
+// string or a parser instance, so this has no dependency on which fast-xml-parser major version
+// produced it (the app and the Worker pin different majors).
+export function extractRssItems(parsedXml: unknown): ParsedRssItem[] {
+  const raw = (parsedXml as { rss?: { channel?: { item?: unknown } } })?.rss?.channel?.item ?? [];
+  const items = Array.isArray(raw) ? raw : [raw];
+  return items.map((item: any) => ({
+    guid: item.guid?.['#text'] ?? item.guid,
+    title: item.title,
+    author: item['dc:creator'] ?? item.author,
+    description: item.description,
+    contentEncoded: item['content:encoded'],
+    link: item.link,
+    pubDate: item.pubDate,
+  }));
+}
+
 export interface FilterItem {
   feedKey: FeedKey;
   author?: string;

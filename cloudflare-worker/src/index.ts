@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult } from '@li/core';
+import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -20,8 +20,6 @@ export interface Env {
   HEARTBEAT_URL_STOCK?: string;
   HEARTBEAT_URL_OPTIONS?: string;
 }
-
-type Channel = 'members' | 'stock' | 'options';
 
 interface RawItem {
   guid: string;
@@ -149,7 +147,7 @@ export function heartbeatUrlFor(channel: Channel, env: Env): string | undefined 
 // return any items, making it a real check of membership status (catches an expired or
 // invalid token). Members Area's feed is readable regardless of token validity — only the
 // content snippet is paywalled — so it would never catch anything if checked instead.
-const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
+export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
   members: [
     { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: FeedKeys.membersForum,    discoverTopics: true  },
     { url: 'https://logicalinvestor.net/feed/',                                        feedKey: FeedKeys.membersArea,     discoverTopics: false },
@@ -414,17 +412,15 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     try {
       const res = await fetch(`${feed.url}?feed_token=${feedToken}`);
       if (!res.ok) continue;
-      const parsed = parser.parse(await res.text());
-      const raw = parsed?.rss?.channel?.item ?? [];
-      const items = Array.isArray(raw) ? raw : [raw];
-      for (const item of items) {
-        const link: string = item.link ?? '';
-        const title: string = item.title ?? '';
+      const parsedItems = extractRssItems(parser.parse(await res.text()));
+      for (const m of parsedItems) {
+        const link = m.link ?? '';
+        const title = m.title ?? '';
         mainItems.push({
-          guid: item.guid?.['#text'] ?? item.guid ?? link,
+          guid: m.guid ?? link,
           title,
-          author: item['dc:creator'] ?? item.author ?? '',
-          description: item.description ?? '',
+          author: m.author ?? '',
+          description: m.description ?? '',
           link,
           feedKey: feed.feedKey,
         });
@@ -467,17 +463,14 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       try {
         const res = await fetch(`${topicUrl}feed/?feed_token=${feedToken}`);
         if (!res.ok) return [];
-        const parsed = parser.parse(await res.text());
-        const raw = parsed?.rss?.channel?.item ?? [];
-        const items = Array.isArray(raw) ? raw : [raw];
-        return items.map((item: Record<string, unknown>) => ({
-          guid: (item.guid as Record<string, string>)?.['#text'] ?? item.guid ?? item.link ?? '',
-          title: (item.title as string) ?? '',
-          author: (item['dc:creator'] as string) ?? (item.author as string) ?? '',
-          description: (item.description as string) ?? '',
-          link: (item.link as string) ?? '',
+        return extractRssItems(parser.parse(await res.text())).map((m): RawItem => ({
+          guid: m.guid ?? m.link ?? '',
+          title: m.title ?? '',
+          author: m.author ?? '',
+          description: m.description ?? '',
+          link: m.link ?? '',
           feedKey: topics[topicUrl].feedKey,
-        } as RawItem));
+        }));
       } catch { return []; }
     })
   );

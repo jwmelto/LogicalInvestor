@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { extractRssItems } from '@li/core';
 import { getToken } from './authService';
 import { updateTopicsFromFeedItems } from './topicService';
 
@@ -85,21 +86,13 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
     }
 
     const xml = await response.text();
-    const parsed = parser.parse(xml);
-    const channel = parsed?.rss?.channel;
-    const rawItems = Array.isArray(channel?.item)
-      ? channel.item
-      : channel?.item
-      ? [channel.item]
-      : [];
-
-    const items: FeedItem[] = rawItems.map((item: any) => ({
-      id: item.guid?.['#text'] ?? item.guid ?? item.link ?? Math.random().toString(),
-      title: item.title ?? 'Untitled',
-      link: item.link ?? '',
-      pubDate: item.pubDate ?? '',
-      author: item['dc:creator'] ?? item.author,
-      excerpt: item['content:encoded'] ?? item.description,
+    const items: FeedItem[] = extractRssItems(parser.parse(xml)).map((m) => ({
+      id: m.guid ?? m.link ?? Math.random().toString(),
+      title: m.title ?? 'Untitled',
+      link: m.link ?? '',
+      pubDate: m.pubDate ?? '',
+      author: m.author,
+      excerpt: m.contentEncoded ?? m.description,
       feedName: feed.name,
       feedKey,
     }));
@@ -139,22 +132,14 @@ export async function fetchTopicFeed(topicUrl: string): Promise<FeedItem[]> {
     if (!response.ok) return [];
 
     const xml = await response.text();
-    const parsed = parser.parse(xml);
-    const channel = parsed?.rss?.channel;
-    const rawItems = Array.isArray(channel?.item)
-      ? channel.item
-      : channel?.item
-      ? [channel.item]
-      : [];
-
-    return rawItems.map((item: any) => ({
-      id: item.guid?.['#text'] ?? item.guid ?? item.link ?? Math.random().toString(),
-      title: item.title ?? 'Untitled',
-      link: item.link ?? '',
-      pubDate: item.pubDate ?? '',
-      author: item['dc:creator'] ?? item.author,
-      excerpt: item['content:encoded'] ?? item.description,
-      feedName: item.title ?? 'Topic',
+    return extractRssItems(parser.parse(xml)).map((m) => ({
+      id: m.guid ?? m.link ?? Math.random().toString(),
+      title: m.title ?? 'Untitled',
+      link: m.link ?? '',
+      pubDate: m.pubDate ?? '',
+      author: m.author,
+      excerpt: m.contentEncoded ?? m.description,
+      feedName: m.title ?? 'Topic',
       feedKey: 'membersForum' as FeedKey,
     }));
 
