@@ -7,7 +7,7 @@ const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
 const PUSH_LEVEL_KEY = 'push_level';
 const PUSH_CHANNELS_KEY = 'push_channels';
 
-import { FEEDKEY_TO_CHANNEL } from '@li/core';
+import { FEEDKEY_TO_CHANNEL, ChannelNames } from '@li/core';
 import type { FeedKey, NotifLevel as PushLevel, Channel } from '@li/core';
 export type { PushLevel };
 
@@ -87,7 +87,7 @@ export async function unregisterPushToken(): Promise<void> {
     if (!pushToken) return;
     await storageSet(PUSH_CHANNELS_KEY, JSON.stringify([]));
     await Promise.all(
-      (['members', 'stock', 'options'] as const).map(channel =>
+      (Object.values(ChannelNames) as Channel[]).map(channel =>
         fetch(`${WORKER_URL}/unregister`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

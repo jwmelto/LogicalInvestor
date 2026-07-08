@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, stripHtml, stripReplyPrefix, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel } from '@li/core';
+import { FeedKeys, ChannelNames, stripHtml, stripReplyPrefix, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -126,11 +126,11 @@ function shouldNotify(level: NotifLevel, c: ItemClassification): boolean {
 //   options → "2,7,12,17,..."   (offset 2)
 // Changing either this array OR the wrangler.toml cron order silently breaks the channel mapping.
 // ponytail: brittle by design — simplest option available; revisit if a 4th channel is added.
-const CHANNELS: Channel[] = ['members', 'stock', 'options'];
+const CHANNELS: Channel[] = [ChannelNames.members, ChannelNames.stock, ChannelNames.options];
 
 export function channelFromCron(cron: string): Channel {
   const offset = parseInt(cron.split(' ')[0].split(',')[0], 10);
-  return CHANNELS[offset] ?? 'members';
+  return CHANNELS[offset] ?? ChannelNames.members;
 }
 
 export function heartbeatUrlFor(channel: Channel, env: Env): string | undefined {
@@ -287,7 +287,7 @@ export default {
     const pushToken = body.token;
     const channel = body.channel as Channel | null;
     if (!pushToken) return new Response('missing token', { status: 400 });
-    if (!channel || !['members', 'stock', 'options'].includes(channel)) {
+    if (!channel || !CHANNELS.includes(channel)) {
       return new Response('invalid channel', { status: 400 });
     }
 
@@ -412,15 +412,17 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     try {
       const res = await fetch(`${feed.url}?feed_token=${feedToken}`);
       if (!res.ok) continue;
-      const parsedItems = extractRssItems(parser.parse(await res.text()));
-      for (const m of parsedItems) {
-        const link = m.link ?? '';
-        const title = m.title ?? '';
+      const rssItems = extractRssItems(parser.parse(await res.text()));
+      for (const rssItem of rssItems) {
+        // link/title are pulled out here (rather than read back off the pushed RawItem) because
+        // the topic-discovery block below needs them too.
+        const link = rssItem.link ?? '';
+        const title = rssItem.title ?? '';
         mainItems.push({
-          guid: m.guid ?? link,
+          guid: rssItem.guid ?? '', // extractRssItems already falls back to link; '' covers both missing
           title,
-          author: m.author ?? '',
-          description: m.description ?? '',
+          author: rssItem.author ?? '',
+          description: rssItem.description ?? '',
           link,
           feedKey: feed.feedKey,
         });
@@ -463,12 +465,12 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       try {
         const res = await fetch(`${topicUrl}feed/?feed_token=${feedToken}`);
         if (!res.ok) return [];
-        return extractRssItems(parser.parse(await res.text())).map((m): RawItem => ({
-          guid: m.guid ?? m.link ?? '',
-          title: m.title ?? '',
-          author: m.author ?? '',
-          description: m.description ?? '',
-          link: m.link ?? '',
+        return extractRssItems(parser.parse(await res.text())).map((rssItem): RawItem => ({
+          guid: rssItem.guid ?? '', // extractRssItems already falls back to link; '' covers both missing
+          title: rssItem.title ?? '',
+          author: rssItem.author ?? '',
+          description: rssItem.description ?? '',
+          link: rssItem.link ?? '',
           feedKey: topics[topicUrl].feedKey,
         }));
       } catch { return []; }

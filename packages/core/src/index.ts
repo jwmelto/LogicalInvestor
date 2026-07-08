@@ -11,7 +11,13 @@ export const FeedKeys = {
 
 export type FeedKey = typeof FeedKeys[keyof typeof FeedKeys];
 
-export type Channel = 'members' | 'stock' | 'options';
+export const ChannelNames = {
+  members: 'members',
+  stock: 'stock',
+  options: 'options',
+} as const;
+
+export type Channel = typeof ChannelNames[keyof typeof ChannelNames];
 
 // Single source of truth for which push channel a feed belongs to. Used directly by the app's
 // pushService.ts; the Worker's CHANNEL_FEEDS carries additional per-feed data (URL,
@@ -19,15 +25,17 @@ export type Channel = 'members' | 'stock' | 'options';
 // comment on CHANNEL_FEEDS in cloudflare-worker/src/index.ts), so the Worker keeps its own
 // structure but is tested against this map for drift (index.test.ts).
 export const FEEDKEY_TO_CHANNEL: Record<FeedKey, Channel> = {
-  [FeedKeys.membersArea]:     'members',
-  [FeedKeys.membersForum]:    'members',
-  [FeedKeys.stockInsights]:   'stock',
-  [FeedKeys.optionsInsights]: 'options',
+  [FeedKeys.membersArea]:     ChannelNames.members,
+  [FeedKeys.membersForum]:    ChannelNames.members,
+  [FeedKeys.stockInsights]:   ChannelNames.stock,
+  [FeedKeys.optionsInsights]: ChannelNames.options,
 };
 
-// A <channel><item> entry from an RSS feed, after resolving the guid #text-vs-plain-string
-// variant that fast-xml-parser produces. Fields are left optional/unresolved (no '' defaults)
-// so each consumer can apply its own fallback semantics.
+// A <channel><item> entry from an RSS feed, after resolving the two cross-consumer quirks every
+// call site had to handle: fast-xml-parser's guid #text-vs-plain-string variant, and a missing
+// guid falling back to the item's link (its next-best unique identifier). Beyond that, fields are
+// left optional/unresolved (no '' or other placeholder defaults) so each consumer can apply its
+// own final fallback (e.g. a random ID vs an empty string) for the fully-missing case.
 export interface ParsedRssItem {
   guid?: string;
   title?: string;
@@ -47,7 +55,7 @@ export function extractRssItems(parsedXml: unknown): ParsedRssItem[] {
   const raw = (parsedXml as { rss?: { channel?: { item?: unknown } } })?.rss?.channel?.item ?? [];
   const items = Array.isArray(raw) ? raw : [raw];
   return items.map((item: any) => ({
-    guid: item.guid?.['#text'] ?? item.guid,
+    guid: item.guid?.['#text'] ?? item.guid ?? item.link,
     title: item.title,
     author: item['dc:creator'] ?? item.author,
     description: item.description,

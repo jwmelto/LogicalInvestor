@@ -86,13 +86,13 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
     }
 
     const xml = await response.text();
-    const items: FeedItem[] = extractRssItems(parser.parse(xml)).map((m) => ({
-      id: m.guid ?? m.link ?? Math.random().toString(),
-      title: m.title ?? 'Untitled',
-      link: m.link ?? '',
-      pubDate: m.pubDate ?? '',
-      author: m.author,
-      excerpt: m.contentEncoded ?? m.description,
+    const items: FeedItem[] = extractRssItems(parser.parse(xml)).map((rssItem) => ({
+      id: rssItem.guid ?? Math.random().toString(), // extractRssItems already falls back to link
+      title: rssItem.title ?? 'Untitled',
+      link: rssItem.link ?? '',
+      pubDate: rssItem.pubDate ?? '',
+      author: rssItem.author,
+      excerpt: rssItem.contentEncoded ?? rssItem.description,
       feedName: feed.name,
       feedKey,
     }));
@@ -132,14 +132,14 @@ export async function fetchTopicFeed(topicUrl: string): Promise<FeedItem[]> {
     if (!response.ok) return [];
 
     const xml = await response.text();
-    return extractRssItems(parser.parse(xml)).map((m) => ({
-      id: m.guid ?? m.link ?? Math.random().toString(),
-      title: m.title ?? 'Untitled',
-      link: m.link ?? '',
-      pubDate: m.pubDate ?? '',
-      author: m.author,
-      excerpt: m.contentEncoded ?? m.description,
-      feedName: m.title ?? 'Topic',
+    return extractRssItems(parser.parse(xml)).map((rssItem) => ({
+      id: rssItem.guid ?? Math.random().toString(), // extractRssItems already falls back to link
+      title: rssItem.title ?? 'Untitled',
+      link: rssItem.link ?? '',
+      pubDate: rssItem.pubDate ?? '',
+      author: rssItem.author,
+      excerpt: rssItem.contentEncoded ?? rssItem.description,
+      feedName: rssItem.title ?? 'Topic',
       feedKey: 'membersForum' as FeedKey,
     }));
 
