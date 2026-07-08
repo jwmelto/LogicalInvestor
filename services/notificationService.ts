@@ -1,9 +1,11 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { stripHtml, formatTitle, matchesLevel, MAX_SEEN_IDS_PER_FEED, type FilterItem, type NotifLevel } from '@li/core';
-import type { FeedItem } from './feedService';
+import { FEEDS, type FeedItem } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 import { getPushLevel } from './pushService';
+import { isTopicSubscribed } from './subscriptionService';
+import { generateTopicId, extractTopicFromTitle } from './topicService';
 
 // Android requires every notification to belong to a channel (created once in app/_layout.tsx
 // via setNotificationChannelAsync); iOS has no channel concept, so trigger.channelId is ignored
@@ -75,6 +77,23 @@ function passes(item: FeedItem, settings: NotificationSettings): boolean {
   return text.length >= settings.minContentLength;
 }
 
+async function isTopicMuted(item: FeedItem): Promise<boolean> {
+  if (!FEEDS[item.feedKey]?.hasSubFeeds) return false; // flat feeds (Members Area) have no topics
+  const topicId = generateTopicId(item.feedKey, extractTopicFromTitle(item.title));
+  return !(await isTopicSubscribed(topicId, item.feedKey));
+}
+
+// ponytail: background fetch is opportunistic and can go dormant for days (see
+// backgroundFetchService.ts); without this bound, the first foreground check after a long gap
+// would notify for a whole backlog at once. Bump if 48h proves too tight for real usage patterns.
+const MAX_NOTIFICATION_AGE_MS = 48 * 60 * 60 * 1000;
+
+function isFresh(item: FeedItem): boolean {
+  const published = new Date(item.pubDate).getTime();
+  if (isNaN(published)) return true; // unparseable date — don't let a formatting quirk suppress a real alert
+  return Date.now() - published <= MAX_NOTIFICATION_AGE_MS;
+}
+
 export async function processNewItemsForNotifications(items: FeedItem[]): Promise<void> {
   const stored = await storageGetObject<unknown>(SEEN_KEY);
   // Migrate: old format was string[], new is Record<feedKey, string[]>
@@ -111,9 +130,11 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
   const pushLevel = await getPushLevel();
   // Skip the local notification whenever the Worker's server push would already cover this
   // item — one alert per item, not two.
-  const toNotify = newItems
-    .filter((item) => !wouldServerPush(item, pushLevel) && passes(item, settings))
-    .slice(0, 5);
+  const eligible = newItems.filter(
+    (item) => !wouldServerPush(item, pushLevel) && passes(item, settings) && isFresh(item)
+  );
+  const muted = await Promise.all(eligible.map(isTopicMuted));
+  const toNotify = eligible.filter((_, i) => !muted[i]).slice(0, 5);
 
   for (const item of toNotify) {
     const body = stripHtml(item.excerpt ?? '').slice(0, 150);
