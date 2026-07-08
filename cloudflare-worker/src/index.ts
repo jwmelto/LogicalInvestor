@@ -13,6 +13,12 @@ export interface Env {
   POLL_BOUNDARY_OPEN?: string;      // hhmm ET when trading hours begin, default "915"
   POLL_BOUNDARY_LATEDAY?: string;   // hhmm ET when late-day window begins, default "1400"
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
+  // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
+  // One check per channel since each is an independent Cloudflare Cron Trigger registration
+  // and can get stuck without the others being affected.
+  HEARTBEAT_URL_MEMBERS?: string;
+  HEARTBEAT_URL_STOCK?: string;
+  HEARTBEAT_URL_OPTIONS?: string;
 }
 
 type Channel = 'members' | 'stock' | 'options';
@@ -127,6 +133,14 @@ const CHANNELS: Channel[] = ['members', 'stock', 'options'];
 export function channelFromCron(cron: string): Channel {
   const offset = parseInt(cron.split(' ')[0].split(',')[0], 10);
   return CHANNELS[offset] ?? 'members';
+}
+
+export function heartbeatUrlFor(channel: Channel, env: Env): string | undefined {
+  return {
+    members: env.HEARTBEAT_URL_MEMBERS,
+    stock: env.HEARTBEAT_URL_STOCK,
+    options: env.HEARTBEAT_URL_OPTIONS,
+  }[channel];
 }
 
 // The 'members' Channel bundles two distinct feeds under one push-registration grouping.
@@ -299,8 +313,14 @@ export default {
     return new Response('not found', { status: 404 });
   },
 
-  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const channel = channelFromCron(event.cron);
+    // Dead-man's-switch: proves Cloudflare actually dispatched this channel's cron trigger.
+    // See issue #24 — all three triggers silently stopped firing for ~15h with no error anywhere.
+    const heartbeatUrl = heartbeatUrlFor(channel, env);
+    if (heartbeatUrl) {
+      ctx.waitUntil(fetch(heartbeatUrl).catch(() => {}));
+    }
     await runChannel(channel, env);
   },
 };

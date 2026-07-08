@@ -279,6 +279,12 @@ curl -H "Authorization: Bearer $FEED_TOKEN" https://logicalinvestor-push.logical
 ```
 The Worker already pretty-prints the JSON response, so no `jq` needed. `FEED_TOKEN` is the same secret set via `wrangler secret put FEED_TOKEN` — not stored in any file in this repo.
 
+**Cron dead-man's-switch monitoring**: `/status` only tells you what happened on the last successful run — it can't tell you if runs have silently stopped happening. On 2026-07-01/02 all three Cron Triggers (`members`/`stock`/`options`) stopped dispatching to `scheduled()` for ~15h with nothing anywhere surfacing an error (root cause: a stuck Cloudflare Cron Trigger registration, not application code; see issue #24). To catch this class of failure:
+- Each channel's cron pings its own healthchecks.io check (`HEARTBEAT_URL_MEMBERS` / `HEARTBEAT_URL_STOCK` / `HEARTBEAT_URL_OPTIONS`, Worker secrets) at the top of `scheduled()`, fire-and-forget via `ctx.waitUntil(...).catch(() => {})` — a hung or failing ping can't block the actual channel poll
+- One check per channel, not one shared check: each cron entry in `wrangler.toml` is an independent Cloudflare Cron Trigger registration and can get stuck without the others being affected
+- healthchecks.io checks are configured as **Simple** schedule (not Cron) — period 5 min, grace 15 min — matching how often each channel's cron actually fires; alerts by default go to the account email
+- `heartbeatUrlFor(channel, env)` in `cloudflare-worker/src/index.ts` does the channel → secret lookup
+
 ### Contexts
 
 **Location**: `contexts/` directory

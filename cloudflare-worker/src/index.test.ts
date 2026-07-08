@@ -384,6 +384,40 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
   });
 });
 
+describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
+  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
+  const STOCK_CRON = '1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+
+  function mockEnv(urls: { members?: string; stock?: string; options?: string } = {}) {
+    return {
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+      HEARTBEAT_URL_MEMBERS: urls.members,
+      HEARTBEAT_URL_STOCK: urls.stock,
+      HEARTBEAT_URL_OPTIONS: urls.options,
+    } as any;
+  }
+
+  it.each([
+    [MEMBERS_CRON, 'members', 'https://hc-ping.com/members'],
+    [STOCK_CRON, 'stock', 'https://hc-ping.com/stock'],
+    [OPTIONS_CRON, 'options', 'https://hc-ping.com/options'],
+  ])('pings each channel\'s own HEARTBEAT_URL via ctx.waitUntil (%s)', async (cron, channel, url) => {
+    const waitUntil = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    await worker.scheduled({ cron } as any, mockEnv({ [channel]: url }), { waitUntil } as any);
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    await waitUntil.mock.calls[0][0];
+    expect(fetch).toHaveBeenCalledWith(url);
+  });
+
+  it('does not ping a channel whose own HEARTBEAT_URL is unset, even if others are set', async () => {
+    const waitUntil = vi.fn();
+    await worker.scheduled({ cron: STOCK_CRON } as any, mockEnv({ members: 'https://hc-ping.com/members' }), { waitUntil } as any);
+    expect(waitUntil).not.toHaveBeenCalled();
+  });
+});
+
 describe('timingSafeEqualStr', () => {
   it('true for identical strings', () => {
     expect(timingSafeEqualStr('same-secret', 'same-secret')).toBe(true);
