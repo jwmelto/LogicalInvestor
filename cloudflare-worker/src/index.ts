@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, ChannelNames, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel, type RssItem } from '@li/core';
+import { FeedKeys, ChannelNames, formatTitle, classifySignal, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel, type RssItem } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -13,6 +13,7 @@ export interface Env {
   POLL_BOUNDARY_OPEN?: string;      // hhmm ET when trading hours begin, default "915"
   POLL_BOUNDARY_LATEDAY?: string;   // hhmm ET when late-day window begins, default "1400"
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
+  MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -383,6 +384,10 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     lateday: hhmmToMinutes(env.POLL_BOUNDARY_LATEDAY ?? '1400'),
     close:   hhmmToMinutes(env.POLL_BOUNDARY_CLOSE   ?? '1615'),
   };
+  // Despite the 5–60 min poll cadence above, content can still surface as newly-seen well after
+  // publish (e.g. a newly-discovered topic pulling in its full reply history) — cap how old
+  // something can be and still get pushed (issue #48).
+  const maxPushAgeMs = parseInt(env.MAX_PUSH_AGE_MINUTES ?? '120', 10) * 60 * 1000;
   const statsKey = `stats:${channel}`;
   const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
   const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
@@ -517,13 +522,17 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     return;
   }
 
-  const classified = newItems.map(item => ({ item, c: classifyItem(item, authorFilter, minLength) }));
-  for (const { item, c } of classified) {
+  const classified = newItems.map(item => ({
+    item,
+    c: classifyItem(item, authorFilter, minLength),
+    fresh: isFresh(item.pubDate, maxPushAgeMs),
+  }));
+  for (const { item, c, fresh } of classified) {
     runStats.author[c.author]         = (runStats.author[c.author]         ?? 0) + 1;
     runStats.forum[c.forum]           = (runStats.forum[c.forum]           ?? 0) + 1;
     runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
     for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
-      if (shouldNotify(level, c)) {
+      if (fresh && shouldNotify(level, c)) {
         const feedCounts = (runStats.byLevel[level] ??= {});
         feedCounts[item.feedKey] = (feedCounts[item.feedKey] ?? 0) + 1;
       }
@@ -532,7 +541,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
     const toNotify = classified
-      .filter(({ c }) => shouldNotify(level, c))
+      .filter(({ c, fresh }) => fresh && shouldNotify(level, c))
       .map(({ item }) => item)
       .slice(0, 5);
     if (toNotify.length === 0) continue;

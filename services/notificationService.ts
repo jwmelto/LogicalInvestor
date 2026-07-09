@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { formatTitle, matchesLevel, MAX_SEEN_IDS_PER_FEED, type FilterItem, type NotifLevel, type RssItem } from '@li/core';
+import { formatTitle, isFresh, matchesLevel, MAX_SEEN_IDS_PER_FEED, type FilterItem, type NotifLevel, type RssItem } from '@li/core';
 import { FEEDS } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 import { getPushLevel } from './pushService';
@@ -88,12 +88,6 @@ async function isTopicMuted(item: RssItem): Promise<boolean> {
 // would notify for a whole backlog at once. Bump if 48h proves too tight for real usage patterns.
 const MAX_NOTIFICATION_AGE_MS = 48 * 60 * 60 * 1000;
 
-function isFresh(item: RssItem): boolean {
-  const published = new Date(item.pubDate).getTime();
-  if (isNaN(published)) return true; // unparseable date — don't let a formatting quirk suppress a real alert
-  return Date.now() - published <= MAX_NOTIFICATION_AGE_MS;
-}
-
 export async function processNewItemsForNotifications(items: RssItem[]): Promise<void> {
   const stored = await storageGetObject<unknown>(SEEN_KEY);
   // Migrate: old format was string[], new is Record<feedKey, string[]>
@@ -131,7 +125,7 @@ export async function processNewItemsForNotifications(items: RssItem[]): Promise
   // Skip the local notification whenever the Worker's server push would already cover this
   // item — one alert per item, not two.
   const eligible = newItems.filter(
-    (item) => !wouldServerPush(item, pushLevel) && passes(item, settings) && isFresh(item)
+    (item) => !wouldServerPush(item, pushLevel) && passes(item, settings) && isFresh(item.pubDate, MAX_NOTIFICATION_AGE_MS)
   );
   const muted = await Promise.all(eligible.map(isTopicMuted));
   const toNotify = eligible.filter((_, i) => !muted[i]).slice(0, 5);

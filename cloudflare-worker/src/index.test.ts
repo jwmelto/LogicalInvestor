@@ -450,6 +450,72 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
   });
 });
 
+describe('runChannel — staleness gate on push (issue #48)', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const itemWithPubDate = (guid: string, pubDate: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${pubDate}</pubDate></item></channel></rss>`;
+
+  function mockEnv(mainFeedRss: string) {
+    const stateStore: Record<string, string | null> = {
+      'stats:options': null,
+      'poll:options': 'poll-token',
+      'topics:options': null,
+      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'options:push1', metadata: { level: 'all', feedToken: 'device-token' } }],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      AUTHOR_FILTER: 'Sean Hyman',
+      MIN_CONTENT_LENGTH: '200',
+      MAX_PUSH_AGE_MINUTES: '120',
+    } as any;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(mainFeedRss) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { env, stateStore, fetchMock };
+  }
+
+  it('does not push an item older than the 2h window, but still marks it seen', async () => {
+    const staleDate = new Date(Date.now() - 3 * 60 * 60 * 1000).toUTCString();
+    const { env, stateStore, fetchMock } = mockEnv(itemWithPubDate('stale-guid', staleDate));
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('exp.host'))).toBe(false);
+    expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toContain('stale-guid');
+  });
+
+  it('pushes an item within the 2h window', async () => {
+    const freshDate = new Date(Date.now() - 30 * 60 * 1000).toUTCString();
+    const { env, fetchMock } = mockEnv(itemWithPubDate('fresh-guid', freshDate));
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined();
+  });
+
+  it('MAX_PUSH_AGE_MINUTES widens the window when set higher than the default', async () => {
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toUTCString();
+    const { env, fetchMock } = mockEnv(itemWithPubDate('old-but-allowed-guid', fourHoursAgo));
+    env.MAX_PUSH_AGE_MINUTES = '300';
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined();
+  });
+});
+
 describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
   const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const STOCK_CRON = '1,6,11,16,21,26,31,36,41,46,51,56 * * * *';

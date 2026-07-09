@@ -22,6 +22,7 @@ POLL_INTERVAL_OVERNIGHT = "60"  # minutes between polls overnight and weekends
 POLL_BOUNDARY_OPEN    = "0915"  # hhmm ET: start of trading hours
 POLL_BOUNDARY_LATEDAY = "1400"  # hhmm ET: start of late-day (reduced polling) window
 POLL_BOUNDARY_CLOSE   = "1615"  # hhmm ET: end of late-day window / start of overnight
+MAX_PUSH_AGE_MINUTES  = "120"   # content older than this won't be pushed even if newly-seen
 # FEED_TOKEN is a secret — set it with: wrangler secret put FEED_TOKEN
 
 # After running `wrangler kv namespace create TOKENS`, paste the id below
