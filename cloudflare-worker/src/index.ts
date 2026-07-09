@@ -13,6 +13,7 @@ export interface Env {
   POLL_BOUNDARY_OPEN?: string;      // hhmm ET when trading hours begin, default "915"
   POLL_BOUNDARY_LATEDAY?: string;   // hhmm ET when late-day window begins, default "1400"
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
+  MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -152,11 +153,6 @@ export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; dis
 };
 
 const TOPIC_GC_DAYS = 30;
-
-// The Worker polls every 5–60 min (POLL_INTERVAL_TRADING/LATEDAY/OVERNIGHT); content older than
-// this has already had several chances to be seen and pushed, so pushing it now is pure noise —
-// e.g. a newly-discovered topic's older replies surfacing as "new" on first sight (issue #48).
-const MAX_PUSH_AGE_MS = 2 * 60 * 60 * 1000;
 
 // Module-level parser shared across all calls within an invocation
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -388,6 +384,10 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     lateday: hhmmToMinutes(env.POLL_BOUNDARY_LATEDAY ?? '1400'),
     close:   hhmmToMinutes(env.POLL_BOUNDARY_CLOSE   ?? '1615'),
   };
+  // Despite the 5–60 min poll cadence above, content can still surface as newly-seen well after
+  // publish (e.g. a newly-discovered topic pulling in its full reply history) — cap how old
+  // something can be and still get pushed (issue #48).
+  const maxPushAgeMs = parseInt(env.MAX_PUSH_AGE_MINUTES ?? '120', 10) * 60 * 1000;
   const statsKey = `stats:${channel}`;
   const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
   const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
@@ -525,7 +525,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const classified = newItems.map(item => ({
     item,
     c: classifyItem(item, authorFilter, minLength),
-    fresh: isFresh(item.pubDate, MAX_PUSH_AGE_MS),
+    fresh: isFresh(item.pubDate, maxPushAgeMs),
   }));
   for (const { item, c, fresh } of classified) {
     runStats.author[c.author]         = (runStats.author[c.author]         ?? 0) + 1;
