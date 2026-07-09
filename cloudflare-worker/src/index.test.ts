@@ -455,7 +455,7 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
   const itemWithPubDate = (guid: string, pubDate: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${pubDate}</pubDate></item></channel></rss>`;
 
-  function mockEnv(mainFeedRss: string, maxPushAgeMinutes?: string) {
+  function mockEnv(mainFeedRss: string) {
     const stateStore: Record<string, string | null> = {
       'stats:options': null,
       'poll:options': 'poll-token',
@@ -474,7 +474,7 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
       },
       AUTHOR_FILTER: 'Sean Hyman',
       MIN_CONTENT_LENGTH: '200',
-      MAX_PUSH_AGE_MINUTES: maxPushAgeMinutes,
+      MAX_PUSH_AGE_MINUTES: '120',
     } as any;
     const fetchMock = vi.fn((url: string) => {
       if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
@@ -506,7 +506,8 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
 
   it('MAX_PUSH_AGE_MINUTES widens the window when set higher than the default', async () => {
     const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toUTCString();
-    const { env, fetchMock } = mockEnv(itemWithPubDate('old-but-allowed-guid', fourHoursAgo), '300');
+    const { env, fetchMock } = mockEnv(itemWithPubDate('old-but-allowed-guid', fourHoursAgo));
+    env.MAX_PUSH_AGE_MINUTES = '300';
 
     await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
 
