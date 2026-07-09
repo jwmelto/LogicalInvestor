@@ -29,12 +29,12 @@ describe('computeFeedUnreadCounts', () => {
     expect(await computeFeedUnreadCounts(results)).toEqual({ membersArea: 2, membersForum: 1 });
   });
 
-  it('skips inaccessible feeds', async () => {
+  it('zeroes out inaccessible feeds, clearing any stale cached badge', async () => {
     const results: FeedResult[] = [
       { feedKey: 'optionsInsights', accessible: false, items: [item('1', 'optionsInsights')] },
     ];
 
-    expect(await computeFeedUnreadCounts(results)).toEqual({});
+    expect(await computeFeedUnreadCounts(results)).toEqual({ optionsInsights: 0 });
   });
 
   it('returns zero for a fully-read feed', async () => {

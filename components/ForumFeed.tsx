@@ -104,7 +104,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
             if (isExpanded) {
               const feedUrl = generateTopicFeedUrl(topic.slug);
-              items = await fetchTopicFeed(feedUrl);
+              items = await fetchTopicFeed(feedUrl, feedKey);
             }
 
             return {
@@ -231,7 +231,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
     try {
       const feedUrl = generateTopicFeedUrl(topic.slug);
-      const posts = await fetchTopicFeed(feedUrl);
+      const posts = await fetchTopicFeed(feedUrl, feedKey);
 
       const readStates: ItemReadState = {};
       for (const post of posts) {

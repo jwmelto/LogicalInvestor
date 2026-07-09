@@ -39,8 +39,9 @@ export async function computeFeedUnreadCounts(
 ): Promise<Partial<Record<FeedKey, number>>> {
   const counts: Partial<Record<FeedKey, number>> = {};
   for (const result of results) {
-    if (!result.accessible) continue;
-    counts[result.feedKey] = await getUnreadCount(result.items.map((i) => i.guid));
+    counts[result.feedKey] = result.accessible
+      ? await getUnreadCount(result.items.map((i) => i.guid))
+      : 0; // inaccessible (revoked token, lost subscription) — clear any stale cached badge
   }
   return counts;
 }

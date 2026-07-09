@@ -148,7 +148,7 @@ export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; dis
     { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: FeedKeys.stockInsights,   discoverTopics: true  },
   ],
   options: [
-    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: true  },
   ],
 };
 
@@ -413,7 +413,8 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
         mainItems.push({ ...rssItem, feedKey: feed.feedKey });
         if (feed.discoverTopics) {
           const topicUrl = extractTopicUrl(rssItem.link);
-          if (topicUrl && (feed.feedKey !== FeedKeys.stockInsights || rssItem.title.startsWith('*'))) {
+          const requiresStar = feed.feedKey === FeedKeys.stockInsights || feed.feedKey === FeedKeys.optionsInsights;
+          if (topicUrl && (!requiresStar || rssItem.title.startsWith('*'))) {
             topics[topicUrl] = { lastSeen: now.toISOString(), title: rssItem.title, feedKey: feed.feedKey };
           }
         }
