@@ -284,6 +284,15 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(res.status).toBe(403);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
+
+  it('returns 503 (not 403) when the access check itself fails, and does not store anything (issue #42)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
+    expect(res.status).toBe(503);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+    expect(env.STATE.put).not.toHaveBeenCalled();
+  });
 });
 
 describe('/register endpoint validation (HTTP boundary)', () => {
@@ -398,6 +407,89 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
     expect(pushCall).toBeDefined();
     const body = JSON.parse(pushCall![1]!.body as string);
     expect(body.flatMap((m: { to: string[] }) => m.to)).toEqual(['good-push']);
+  });
+
+  it('does not prune a device on a transient access-check failure (issue #42)', async () => {
+    const { env, tokensDelete } = mockEnv();
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('feed_token=poll-token')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
+      }
+      if (url.includes('feed_token=good-device-token')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+      }
+      if (url.includes('feed_token=bad-device-token')) {
+        return Promise.reject(new Error('network blip'));
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    expect(tokensDelete).not.toHaveBeenCalled();
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined();
+    const body = JSON.parse(pushCall![1]!.body as string);
+    expect(body.flatMap((m: { to: string[] }) => m.to).sort()).toEqual(['bad-push', 'good-push']);
+  });
+});
+
+describe('runChannel — push-send failure does not abort remaining levels (issue #42)', () => {
+  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
+  const itemWithAuthor = (guid: string, author: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
+
+  it('still attempts every notification level, and still writes final stats, after one level\'s push-send throws', async () => {
+    const stateStore: Record<string, string | null> = {
+      'stats:members': null,
+      'poll:members': 'poll-token',
+      'topics:members': null,
+      'seen:members': JSON.stringify({ membersArea: ['old-guid'] }),
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [
+            { name: 'members:push-a', metadata: { level: 'minimal', feedToken: 'device-a' } },
+            { name: 'members:push-b', metadata: { level: 'all', feedToken: 'device-b' } },
+          ],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      AUTHOR_FILTER: 'Sean Hyman',
+      MIN_CONTENT_LENGTH: '200',
+    } as any;
+
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) {
+        pushCalls += 1;
+        if (pushCalls === 1) return Promise.reject(new Error('exp.host down'));
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      }
+      if (url.includes('members-forum')) {
+        // Main poll (feed_token=poll-token) sees no forum items; per-device access re-checks
+        // (feed_token=device-a/device-b) see an item, so neither device is treated as revoked.
+        if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+      }
+      // Members Area main feed: one new post, always notifies regardless of level.
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(worker.scheduled({ cron: MEMBERS_CRON } as any, env, {} as any)).resolves.not.toThrow();
+
+    const pushSendCalls = fetchMock.mock.calls.filter(([url]) => (url as string).includes('exp.host'));
+    expect(pushSendCalls).toHaveLength(2); // both levels attempted despite the first throwing
+
+    const finalStats = JSON.parse(stateStore['stats:members']!);
+    expect(finalStats.sent).toBe(1); // only the second (successful) level counted
   });
 });
 

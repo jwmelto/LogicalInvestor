@@ -339,7 +339,11 @@ export async function registerDevice(
   { channel, pushToken, level, feedToken }: RegisterParams,
   env: Pick<Env, 'TOKENS' | 'STATE'>,
 ): Promise<Response> {
-  if (!(await feedTokenHasAccess(channel, feedToken))) {
+  const access = await feedTokenHasAccess(channel, feedToken);
+  if (access === null) {
+    return new Response('access check failed, try again', { status: 503 });
+  }
+  if (!access) {
     return new Response('no access', { status: 403 });
   }
   await env.STATE.put(`poll:${channel}`, feedToken);
@@ -349,15 +353,17 @@ export async function registerDevice(
   return new Response('ok');
 }
 
-// True if this feedToken returns any items from the channel's primary feed.
-// Signal: authorized tokens always return items; unauthorized/stale ones return 0.
-export async function feedTokenHasAccess(channel: Channel, feedToken: string): Promise<boolean> {
+// Tri-state: true/false are definitive (item count, or a 401/403 meaning revoked access);
+// null means the check itself failed (network error, 5xx, timeout) and access is unknown —
+// callers must not treat null as "no access" or a transient blip permanently deletes registrations.
+export async function feedTokenHasAccess(channel: Channel, feedToken: string): Promise<boolean | null> {
   try {
     const res = await fetch(`${CHANNEL_FEEDS[channel][0].url}?feed_token=${feedToken}`);
-    if (!res.ok) return false;
+    if (res.status === 401 || res.status === 403) return false;
+    if (!res.ok) return null;
     const raw = parser.parse(await res.text())?.rss?.channel?.item ?? [];
     return (Array.isArray(raw) ? raw : [raw]).length > 0;
-  } catch { return false; }
+  } catch { return null; }
 }
 
 // Iterates registered users for a channel to find one whose feedToken
@@ -513,9 +519,14 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       // to them. metadata comes free with the list() call above, so this adds no extra KV reads;
       // only an HTTP fetch per device, and only when there's new content to notify about.
       const feedToken = key.metadata?.feedToken;
-      if (feedToken && !(await feedTokenHasAccess(channel, feedToken))) {
-        await env.TOKENS.delete(key.name);
-        continue;
+      if (feedToken) {
+        const access = await feedTokenHasAccess(channel, feedToken);
+        if (access === false) {
+          await env.TOKENS.delete(key.name);
+          continue;
+        }
+        // access === null: check itself failed (network blip, 5xx) — leave the registration
+        // and keep notifying; only a definitive 401/403 proves access was actually revoked.
       }
       const level: NotifLevel = key.metadata?.level ?? 'standard';
       const token = key.name.slice(channel.length + 1);
@@ -562,12 +573,16 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       sound: i === 0 ? 'default' : undefined,
     }));
 
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(messages),
-    });
-    runStats.sent += toNotify.length;
+    try {
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(messages),
+      });
+      runStats.sent += toNotify.length;
+    } catch {
+      // A failure at one level must not skip remaining levels or the stats write below.
+    }
   }
 
   if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
