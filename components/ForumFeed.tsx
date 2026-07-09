@@ -14,13 +14,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { fetchTopicFeed, RssItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
 import { getUnreadCount, markRead, markAllRead, isRead } from '../services/readStateService';
-import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
+import { getHideSnippetOnRead, storageGetObject, storageSetObject, getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
 import { getTopicsForForum, generateTopicFeedUrl, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
 import { addNotificationAuthor } from '../services/notificationService';
 import { reportMissedAlert, type ReportableItem } from '../services/reportService';
-import { getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
 import { useColorScheme } from '../hooks/use-color-scheme';
 import { Palette } from '../constants/theme';
 
@@ -43,15 +42,6 @@ interface SectionState {
   accessible: boolean;
   loading: boolean;
   error?: string;
-}
-
-async function getSectionExpandedState(feedKey: FeedKey): Promise<boolean> {
-  const state = await storageGetObject<Record<FeedKey, boolean>>(`expanded_state_${feedKey}`);
-  return state?.[feedKey] ?? false;
-}
-
-async function saveSectionExpandedState(feedKey: FeedKey, expanded: boolean): Promise<void> {
-  await storageSetObject(`expanded_state_${feedKey}`, { [feedKey]: expanded });
 }
 
 async function getTopicExpandedStates(feedKey: FeedKey): Promise<Record<string, boolean>> {
@@ -258,7 +248,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
             }
           : prev
       );
-    } catch (error) {
+    } catch {
       setSection((prev) =>
         prev
           ? {
@@ -294,7 +284,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
           topics: prev.topics.filter((t) => t.topic.id !== topicId),
         };
       });
-    } catch (error) {
+    } catch {
       // Silently fail; topic remains in view until next refresh
     }
   }
@@ -493,8 +483,6 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                       {topicSection.expanded &&
                         !topicSection.loading &&
                         topicSection.items.map((item) => {
-                          const itemIsRead = itemReadStates[item.guid];
-
                           return (
                             <TouchableOpacity
                               key={item.guid}
