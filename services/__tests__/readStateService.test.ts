@@ -11,7 +11,7 @@ import { computeFeedUnreadCounts } from '../readStateService';
 import { RssItem, FeedResult } from '../feedService';
 
 const item = (guid: string, feedKey: FeedResult['feedKey']): RssItem => ({
-  guid, title: 'Post', author: 'Author', description: '', link: '', pubDate: '2024-01-01', feedKey,
+  guid, title: 'Post', author: 'Author', description: '', link: '', pubDate: new Date('2024-01-01'), feedKey,
 });
 
 describe('computeFeedUnreadCounts', () => {

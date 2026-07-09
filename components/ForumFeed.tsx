@@ -471,7 +471,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, description: topicSection.topic.latestExcerpt })}
                         >
                           <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
-                            {topicSection.topic.latestAuthor} · {new Date(topicSection.topic.latestPubDate).toLocaleDateString('en-US', {
+                            {topicSection.topic.latestAuthor} · {new Date(topicSection.topic.lastUpdatedAt).toLocaleDateString('en-US', {
                               month: 'numeric',
                               day: 'numeric',
                               hour: '2-digit',
@@ -504,7 +504,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                             >
                               <View style={styles.itemMeta}>
                                 <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
-                                  {item.author} · {new Date(item.pubDate).toLocaleDateString('en-US', {
+                                  {item.author} · {item.pubDate.toLocaleDateString('en-US', {
                                     month: 'numeric',
                                     day: 'numeric',
                                     hour: '2-digit',
@@ -563,7 +563,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           </Text>
                         )}
                         <Text style={[styles.itemMetaText, { color: c.textMuted }]}>
-                          {item.author} · {new Date(item.pubDate).toLocaleDateString()}
+                          {item.author} · {item.pubDate.toLocaleDateString()}
                         </Text>
                       </TouchableOpacity>
                     );

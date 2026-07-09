@@ -2,20 +2,6 @@ import { type RssItem } from '@li/core';
 import { FeedKey } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 
-/**
- * Parse RFC 2822 or ISO 8601 date string to timestamp.
- * Returns the timestamp, or 0 if parsing fails.
- */
-function parsePublishDate(pubDateStr: string): number {
-  if (!pubDateStr) return 0;
-  try {
-    const timestamp = new Date(pubDateStr).getTime();
-    return isNaN(timestamp) ? 0 : timestamp;
-  } catch {
-    return 0;
-  }
-}
-
 export interface Topic {
   id: string; // Unique identifier: "{forumKey}:{topicName}"
   name: string; // Display name (e.g., "NVO", "Tesla Options")
@@ -30,7 +16,6 @@ export interface Topic {
   latestExcerpt: string; // Excerpt from the most recent post (for preview)
   latestItemId: string; // ID of the post providing the preview (to check read state)
   latestItemLink: string; // Link to the most recent post (for navigation to preview)
-  latestPubDate: string; // Publication date of the most recent post (RFC 2822 or ISO 8601 format)
 }
 
 // Bumped from 'discovered_topics': the latest* fields above went from optional to required.
@@ -88,7 +73,6 @@ export async function discoverTopicsFromFeedItems(
     if (!topicSlug) continue;
 
     const topicId = generateTopicId(forumKey, topicName);
-    const pubTimestamp = parsePublishDate(item.pubDate);
 
     // The first item encountered for a topicId sets its preview (RSS lists items newest-first,
     // so this is the most recent post); every item's author/description/guid/link/pubDate is
@@ -100,13 +84,12 @@ export async function discoverTopicsFromFeedItems(
         slug: topicSlug,
         forumKey,
         discoveredAt: now,
-        lastUpdatedAt: pubTimestamp || now,
+        lastUpdatedAt: item.pubDate.getTime(),
         itemCount: 0,
         latestAuthor: item.author,
         latestExcerpt: item.description,
         latestItemId: item.guid,
         latestItemLink: item.link,
-        latestPubDate: item.pubDate,
       });
     }
 

@@ -61,7 +61,7 @@ describe('extractRssItems (realistic feed shape)', () => {
       author: 'Jane Analyst',
       description: 'Up 3.6% now — isn’t that great?', // tags stripped, entities decoded, whitespace collapsed
       link: 'https://logicalinvestor.net/forums/topic/example-pick/page/2/#post-1001',
-      pubDate: 'Wed, 08 Jul 2026 18:26:47 +0000',
+      pubDate: new Date('Wed, 08 Jul 2026 18:26:47 +0000'),
     });
     expect(items[1]).toEqual({
       guid: 'https://logicalinvestor.net/forums/topic/other-topic/#post-1002',
@@ -69,7 +69,7 @@ describe('extractRssItems (realistic feed shape)', () => {
       author: 'Sam Trader',
       description: 'Tom & Jerry discuss the market.',
       link: 'https://logicalinvestor.net/forums/topic/other-topic/#post-1002',
-      pubDate: 'Wed, 08 Jul 2026 18:24:00 +0000',
+      pubDate: new Date('Wed, 08 Jul 2026 18:24:00 +0000'),
     });
   });
 
@@ -88,5 +88,11 @@ describe('extractRssItems (realistic feed shape)', () => {
   it('uses the guid as a plain string as this feed sends it (no isPermaLink attribute, no #text wrapping)', () => {
     const items = extractRssItems(parser.parse(SINGLE_ITEM_RSS));
     expect(typeof items[0].guid).toBe('string');
+  });
+
+  it('falls back to the current time for a missing/unparseable pubDate', () => {
+    const rss = SINGLE_ITEM_RSS.replace(/<pubDate>.*<\/pubDate>/, '');
+    const items = extractRssItems(parser.parse(rss));
+    expect(Date.now() - items[0].pubDate.getTime()).toBeLessThan(1000);
   });
 });

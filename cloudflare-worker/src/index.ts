@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, ChannelNames, formatTitle, classifySignal, extractRssItems, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel, type RssItem } from '@li/core';
+import { FeedKeys, ChannelNames, formatTitle, classifySignal, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel, type RssItem } from '@li/core';
 
 export interface Env {
   TOKENS: KVNamespace;
@@ -152,6 +152,11 @@ export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; dis
 };
 
 const TOPIC_GC_DAYS = 30;
+
+// The Worker polls every 5–60 min (POLL_INTERVAL_TRADING/LATEDAY/OVERNIGHT); content older than
+// this has already had several chances to be seen and pushed, so pushing it now is pure noise —
+// e.g. a newly-discovered topic's older replies surfacing as "new" on first sight (issue #48).
+const MAX_PUSH_AGE_MS = 2 * 60 * 60 * 1000;
 
 // Module-level parser shared across all calls within an invocation
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -517,13 +522,17 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     return;
   }
 
-  const classified = newItems.map(item => ({ item, c: classifyItem(item, authorFilter, minLength) }));
-  for (const { item, c } of classified) {
+  const classified = newItems.map(item => ({
+    item,
+    c: classifyItem(item, authorFilter, minLength),
+    fresh: isFresh(item.pubDate, MAX_PUSH_AGE_MS),
+  }));
+  for (const { item, c, fresh } of classified) {
     runStats.author[c.author]         = (runStats.author[c.author]         ?? 0) + 1;
     runStats.forum[c.forum]           = (runStats.forum[c.forum]           ?? 0) + 1;
     runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
     for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
-      if (shouldNotify(level, c)) {
+      if (fresh && shouldNotify(level, c)) {
         const feedCounts = (runStats.byLevel[level] ??= {});
         feedCounts[item.feedKey] = (feedCounts[item.feedKey] ?? 0) + 1;
       }
@@ -532,7 +541,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
 
   for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
     const toNotify = classified
-      .filter(({ c }) => shouldNotify(level, c))
+      .filter(({ c, fresh }) => fresh && shouldNotify(level, c))
       .map(({ item }) => item)
       .slice(0, 5);
     if (toNotify.length === 0) continue;

@@ -39,7 +39,7 @@ function topicReply(overrides: Partial<RssItem> = {}): RssItem {
     guid: 'post-2',
     title: 'NVO',
     link: 'https://logicalinvestor.net/forums/topic/nvo/#post-2',
-    pubDate: new Date().toUTCString(),
+    pubDate: new Date(),
     author: 'Sean Hyman',
     description: 'x'.repeat(250),
     feedKey: 'membersForum',
@@ -68,7 +68,7 @@ describe('processNewItemsForNotifications', () => {
 
   it('does not notify for stale backlog content even if subscribed', async () => {
     isTopicSubscribed.mockResolvedValue(true);
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toUTCString();
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     await processNewItemsForNotifications([topicReply({ pubDate: threeDaysAgo })]);
     expect(scheduleNotificationAsync).not.toHaveBeenCalled();
   });

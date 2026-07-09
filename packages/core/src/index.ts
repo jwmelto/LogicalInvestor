@@ -57,13 +57,14 @@ export function stripHtml(html: string): string {
 // description has HTML tags stripped and entities decoded (this app never renders description as
 // markup — post.tsx loads the real webpage for that — so there's no reason to carry raw HTML
 // through the rest of the system only to have every single consumer strip/decode it again).
+// pubDate is a real Date, guaranteed valid by extractRssItems — consumers never re-parse or guard it.
 export interface RssItem {
   guid: string;
   title: string;
   author: string;
   description: string;
   link: string;
-  pubDate: string;
+  pubDate: Date;
   feedKey: FeedKey;
 }
 
@@ -77,14 +78,17 @@ export interface RssItem {
 export function extractRssItems(parsedXml: unknown): Omit<RssItem, 'feedKey'>[] {
   const raw = (parsedXml as { rss?: { channel?: { item?: unknown } } })?.rss?.channel?.item ?? [];
   const items = Array.isArray(raw) ? raw : [raw];
-  return items.map((item: any) => ({
-    guid: item.guid?.['#text'] ?? item.guid,
-    title: stripReplyPrefix(decodeHtmlEntities(item.title)),
-    author: decodeHtmlEntities(item['dc:creator'] ?? item.author),
-    description: stripHtml(item.description),
-    link: item.link,
-    pubDate: item.pubDate,
-  }));
+  return items.map((item: any) => {
+    const pubDate = new Date(item.pubDate);
+    return {
+      guid: item.guid?.['#text'] ?? item.guid,
+      title: stripReplyPrefix(decodeHtmlEntities(item.title)),
+      author: decodeHtmlEntities(item['dc:creator'] ?? item.author),
+      description: stripHtml(item.description),
+      link: item.link,
+      pubDate: isNaN(pubDate.getTime()) ? new Date() : pubDate, // unparseable → treat as just-published
+    };
+  });
 }
 
 export interface FilterItem {
@@ -149,6 +153,10 @@ export function classifySignal(text: string, minLength: number): ActionableResul
 
 export function containsActionableSignal(text: string, minLength = 200): boolean {
   return classifySignal(text, minLength).startsWith('pass');
+}
+
+export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
+  return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
 export function matchesLevel(
