@@ -14,9 +14,7 @@ describe('decodeHtmlEntities', () => {
     expect(decodeHtmlEntities('isn&#x2019;t')).toBe('isn’t');
   });
 
-  // The gap that motivated moving off a hand-rolled 7-entry dictionary onto the `he` library:
-  // &nbsp; is not one of the 5 predefined XML entities, and a real feed sample used it as a
-  // paragraph-spacer (`<p>&nbsp;</p>`). A hand-rolled table missed it; `he` doesn't.
+  // &nbsp; isn't one of the 5 predefined XML entities; a hand-rolled table missed it, `he` doesn't.
   it('decodes non-XML HTML entities like &nbsp;', () => {
     expect(decodeHtmlEntities('a&nbsp;b')).toBe('a b');
   });
@@ -39,12 +37,8 @@ describe('stripHtml', () => {
   });
 });
 
-// This is the actual discovery that justifies extractRssItems() doing its own entity-decode pass
-// at all, rather than relying on fast-xml-parser: this feed's <title>/<description> are CDATA-
-// wrapped, and CDATA content is (per XML spec) never entity-processed by the parser, even with
-// `htmlEntities: true`. WordPress still HTML-entity-encodes the CDATA'd content, so if
-// extractRssItems didn't decode it, entities like &#8217;/&nbsp; would reach every consumer as
-// literal, undecoded text forever.
+// CDATA content is never entity-processed by the parser, even with htmlEntities:true (per XML
+// spec) — this feed's title/description are CDATA-wrapped, so extractRssItems must decode itself.
 describe('fast-xml-parser does not decode entities inside CDATA (why extractRssItems must)', () => {
   const xml = `<?xml version="1.0"?><rss><channel><item>
     <title><![CDATA[Reply To: HPQ]]></title>
