@@ -7,7 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
-import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, processNewItemsForNotifications, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
+import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
 import { getPushLevel, updatePushLevel, unregisterPushToken, type PushLevel } from '../../services/pushService';
 import { fetchAllFeeds } from '../../services/feedService';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';

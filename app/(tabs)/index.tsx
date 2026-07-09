@@ -38,7 +38,7 @@ export default function TabsIndex() {
         router.replace(TAB_PATH[target] as any);
       }
     );
-  }, []);
+  }, [router]);
 
   return null;
 }

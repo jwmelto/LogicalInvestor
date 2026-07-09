@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react';
-import { Linking } from 'react-native';
+import { Linking , Platform } from 'react-native';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import 'react-native-reanimated';
 
-// Keep the splash screen visible until we've checked auth state
-SplashScreen.preventAutoHideAsync();
-
-import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
 import { FEED_ALERTS_CHANNEL_ID } from '../services/notificationService';
+import { isAuthenticated } from '../services/authService';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
+import { FeedProvider } from '../contexts/FeedContext';
+import { registerBackgroundFetch } from '../services/backgroundFetchService';
+
+// Keep the splash screen visible until we've checked auth state
+SplashScreen.preventAutoHideAsync();
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -31,11 +35,6 @@ if (Platform.OS === 'android') {
     vibrationPattern: [0, 250, 250, 250],
   });
 }
-import { isAuthenticated } from '../services/authService';
-import { AuthProvider, useAuth } from '../contexts/AuthContext';
-import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';
-import { FeedProvider } from '../contexts/FeedContext';
-import { registerBackgroundFetch } from '../services/backgroundFetchService';
 
 function RootLayoutInner() {
   const colorScheme = useColorScheme();
@@ -57,7 +56,7 @@ function RootLayoutInner() {
       if (link) Linking.openURL(link);
     });
     return () => sub.remove();
-  }, []);
+  }, [setAuthed]);
 
 
   if (loading) return null; // splash screen is still visible during this time
