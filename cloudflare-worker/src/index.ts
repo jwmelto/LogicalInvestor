@@ -152,6 +152,13 @@ export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; dis
   ],
 };
 
+// Stock/Options Insights topics only warrant push-worthy tracking when starred by the poster;
+// Members Forum has no such convention, so every topic there is of interest.
+function topicIsOfInterest(feedKey: FeedKey, title: string): boolean {
+  const requiresStar = feedKey === FeedKeys.stockInsights || feedKey === FeedKeys.optionsInsights;
+  return !requiresStar || title.startsWith('*');
+}
+
 const TOPIC_GC_DAYS = 30;
 
 // Module-level parser shared across all calls within an invocation
@@ -413,8 +420,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
         mainItems.push({ ...rssItem, feedKey: feed.feedKey });
         if (feed.discoverTopics) {
           const topicUrl = extractTopicUrl(rssItem.link);
-          const requiresStar = feed.feedKey === FeedKeys.stockInsights || feed.feedKey === FeedKeys.optionsInsights;
-          if (topicUrl && (!requiresStar || rssItem.title.startsWith('*'))) {
+          if (topicUrl && topicIsOfInterest(feed.feedKey, rssItem.title)) {
             topics[topicUrl] = { lastSeen: now.toISOString(), title: rssItem.title, feedKey: feed.feedKey };
           }
         }
