@@ -8,10 +8,10 @@ jest.mock('../storageService', () => ({
 }));
 
 import { computeFeedUnreadCounts } from '../readStateService';
-import { FeedItem, FeedResult } from '../feedService';
+import { RssItem, FeedResult } from '../feedService';
 
-const item = (id: string, feedKey: FeedResult['feedKey']): FeedItem => ({
-  id, title: 'Post', link: '', pubDate: '2024-01-01', feedName: '', feedKey,
+const item = (guid: string, feedKey: FeedResult['feedKey']): RssItem => ({
+  guid, title: 'Post', author: 'Author', description: '', link: '', pubDate: '2024-01-01', feedKey,
 });
 
 describe('computeFeedUnreadCounts', () => {

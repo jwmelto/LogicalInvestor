@@ -30,17 +30,18 @@ jest.mock('../subscriptionService', () => ({
 }));
 
 import { processNewItemsForNotifications } from '../notificationService';
-import { FeedItem } from '../feedService';
+import { RssItem } from '../feedService';
 
-function topicReply(overrides: Partial<FeedItem> = {}): FeedItem {
+// title is pre-normalized here to match what extractRssItems actually produces (the "Reply To: "
+// prefix is stripped at parse time — see packages/core/src/index.ts).
+function topicReply(overrides: Partial<RssItem> = {}): RssItem {
   return {
-    id: 'post-2',
-    title: 'Reply To: NVO',
+    guid: 'post-2',
+    title: 'NVO',
     link: 'https://logicalinvestor.net/forums/topic/nvo/#post-2',
     pubDate: new Date().toUTCString(),
     author: 'Sean Hyman',
-    excerpt: 'x'.repeat(250),
-    feedName: 'Members Forum',
+    description: 'x'.repeat(250),
     feedKey: 'membersForum',
     ...overrides,
   };
@@ -75,7 +76,7 @@ describe('processNewItemsForNotifications', () => {
   it('does not consult subscriptions for flat feeds (Members Area has no topics)', async () => {
     stored = { notification_seen_ids: { membersArea: ['post-1'] } };
     await processNewItemsForNotifications([
-      topicReply({ id: 'post-2', feedKey: 'membersArea', title: 'Weekly Update' }),
+      topicReply({ guid: 'post-2', feedKey: 'membersArea', title: 'Weekly Update' }),
     ]);
     expect(isTopicSubscribed).not.toHaveBeenCalled();
     expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);

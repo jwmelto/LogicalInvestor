@@ -1,11 +1,11 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { stripHtml, formatTitle, matchesLevel, MAX_SEEN_IDS_PER_FEED, type FilterItem, type NotifLevel } from '@li/core';
-import { FEEDS, type FeedItem } from './feedService';
+import { formatTitle, matchesLevel, MAX_SEEN_IDS_PER_FEED, type FilterItem, type NotifLevel, type RssItem } from '@li/core';
+import { FEEDS } from './feedService';
 import { storageGetObject, storageSetObject } from './storageService';
 import { getPushLevel } from './pushService';
 import { isTopicSubscribed } from './subscriptionService';
-import { generateTopicId, extractTopicFromTitle } from './topicService';
+import { generateTopicId } from './topicService';
 
 // Android requires every notification to belong to a channel (created once in app/_layout.tsx
 // via setNotificationChannelAsync); iOS has no channel concept, so trigger.channelId is ignored
@@ -37,13 +37,13 @@ export async function saveNotificationSettings(settings: NotificationSettings): 
 }
 
 // Fires one notification for the first item passing the current filters, ignoring seen state.
-export async function fireTestNotification(items: FeedItem[], delaySecs?: number): Promise<void> {
+export async function fireTestNotification(items: RssItem[], delaySecs?: number): Promise<void> {
   const settings = await getNotificationSettings();
   const match = items.find((item) => passes(item, settings));
   if (!match) return;
-  const body = stripHtml(match.excerpt ?? '').slice(0, 150);
+  const body = match.description.slice(0, 150);
   await Notifications.scheduleNotificationAsync({
-    content: { title: `[TEST] ${formatTitle(match)}`, body: body || match.feedName, sound: true, data: { link: match.link } },
+    content: { title: `[TEST] ${formatTitle(match)}`, body: body || FEEDS[match.feedKey].name, sound: true, data: { link: match.link } },
     trigger: delaySecs
       ? { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: delaySecs, channelId: FEED_ALERTS_CHANNEL_ID }
       : (Platform.OS === 'android' ? { channelId: FEED_ALERTS_CHANNEL_ID } : null),
@@ -60,26 +60,26 @@ export async function addNotificationAuthor(author: string): Promise<void> {
 const SERVER_AUTHOR_FILTER = 'sean hyman';
 const SERVER_MIN_LENGTH = 200;
 
-function toFilterItem(item: FeedItem): FilterItem {
-  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.excerpt };
+function toFilterItem(item: RssItem): FilterItem {
+  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
 }
 
-function wouldServerPush(item: FeedItem, level: NotifLevel): boolean {
+function wouldServerPush(item: RssItem, level: NotifLevel): boolean {
   return matchesLevel(toFilterItem(item), level, SERVER_AUTHOR_FILTER, SERVER_MIN_LENGTH);
 }
 
-function passes(item: FeedItem, settings: NotificationSettings): boolean {
+function passes(item: RssItem, settings: NotificationSettings): boolean {
   if (settings.authorFilters.length > 0) {
-    const author = item.author?.toLowerCase() ?? '';
+    const author = item.author.toLowerCase();
     if (!settings.authorFilters.some((f) => author.includes(f.toLowerCase()))) return false;
   }
-  const text = stripHtml(item.excerpt ?? '');
+  const text = item.description;
   return text.length >= settings.minContentLength;
 }
 
-async function isTopicMuted(item: FeedItem): Promise<boolean> {
+async function isTopicMuted(item: RssItem): Promise<boolean> {
   if (!FEEDS[item.feedKey]?.hasSubFeeds) return false; // flat feeds (Members Area) have no topics
-  const topicId = generateTopicId(item.feedKey, extractTopicFromTitle(item.title));
+  const topicId = generateTopicId(item.feedKey, item.title); // title is already normalized
   return !(await isTopicSubscribed(topicId, item.feedKey));
 }
 
@@ -88,13 +88,13 @@ async function isTopicMuted(item: FeedItem): Promise<boolean> {
 // would notify for a whole backlog at once. Bump if 48h proves too tight for real usage patterns.
 const MAX_NOTIFICATION_AGE_MS = 48 * 60 * 60 * 1000;
 
-function isFresh(item: FeedItem): boolean {
+function isFresh(item: RssItem): boolean {
   const published = new Date(item.pubDate).getTime();
   if (isNaN(published)) return true; // unparseable date — don't let a formatting quirk suppress a real alert
   return Date.now() - published <= MAX_NOTIFICATION_AGE_MS;
 }
 
-export async function processNewItemsForNotifications(items: FeedItem[]): Promise<void> {
+export async function processNewItemsForNotifications(items: RssItem[]): Promise<void> {
   const stored = await storageGetObject<unknown>(SEEN_KEY);
   // Migrate: old format was string[], new is Record<feedKey, string[]>
   const seenMap: Partial<Record<string, string[]>> =
@@ -102,21 +102,21 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
       ? (stored as Partial<Record<string, string[]>>)
       : {};
 
-  const byFeed: Partial<Record<string, FeedItem[]>> = {};
+  const byFeed: Partial<Record<string, RssItem[]>> = {};
   for (const item of items) {
     (byFeed[item.feedKey] ??= []).push(item);
   }
 
-  const newItems: FeedItem[] = [];
-  for (const [feedKey, feedItems] of Object.entries(byFeed) as [string, FeedItem[]][]) {
+  const newItems: RssItem[] = [];
+  for (const [feedKey, feedItems] of Object.entries(byFeed) as [string, RssItem[]][]) {
     const seen = new Set(seenMap[feedKey] ?? []);
     if (seen.size === 0) {
       // First run for this feed: seed without notifying
-      seenMap[feedKey] = feedItems.map((i) => i.id).slice(-MAX_SEEN_IDS_PER_FEED);
+      seenMap[feedKey] = feedItems.map((i) => i.guid).slice(-MAX_SEEN_IDS_PER_FEED);
       continue;
     }
-    const newForFeed = feedItems.filter((i) => !seen.has(i.id));
-    feedItems.forEach((i) => seen.add(i.id));
+    const newForFeed = feedItems.filter((i) => !seen.has(i.guid));
+    feedItems.forEach((i) => seen.add(i.guid));
     seenMap[feedKey] = Array.from(seen).slice(-MAX_SEEN_IDS_PER_FEED);
     newItems.push(...newForFeed);
   }
@@ -137,11 +137,11 @@ export async function processNewItemsForNotifications(items: FeedItem[]): Promis
   const toNotify = eligible.filter((_, i) => !muted[i]).slice(0, 5);
 
   for (const item of toNotify) {
-    const body = stripHtml(item.excerpt ?? '').slice(0, 150);
+    const body = item.description.slice(0, 150);
     await Notifications.scheduleNotificationAsync({
       content: {
         title: `[LOCAL] ${formatTitle(item)}`,
-        body: body || item.feedName,
+        body: body || FEEDS[item.feedKey].name,
         sound: true,
         data: { link: item.link },
       },
