@@ -148,9 +148,16 @@ export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; dis
     { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: FeedKeys.stockInsights,   discoverTopics: true  },
   ],
   options: [
-    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: true  },
   ],
 };
+
+// Stock/Options Insights topics only warrant push-worthy tracking when starred by the poster;
+// Members Forum has no such convention, so every topic there is of interest.
+function topicIsOfInterest(feedKey: FeedKey, title: string): boolean {
+  const requiresStar = feedKey === FeedKeys.stockInsights || feedKey === FeedKeys.optionsInsights;
+  return !requiresStar || title.startsWith('*');
+}
 
 const TOPIC_GC_DAYS = 30;
 
@@ -413,7 +420,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
         mainItems.push({ ...rssItem, feedKey: feed.feedKey });
         if (feed.discoverTopics) {
           const topicUrl = extractTopicUrl(rssItem.link);
-          if (topicUrl && (feed.feedKey !== FeedKeys.stockInsights || rssItem.title.startsWith('*'))) {
+          if (topicUrl && topicIsOfInterest(feed.feedKey, rssItem.title)) {
             topics[topicUrl] = { lastSeen: now.toISOString(), title: rssItem.title, feedKey: feed.feedKey };
           }
         }

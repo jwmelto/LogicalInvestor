@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { extractRssItems, FeedKeys, type RssItem } from '@li/core';
+import { extractRssItems, type RssItem } from '@li/core';
 import { getToken } from './authService';
 import { updateTopicsFromFeedItems } from './topicService';
 
@@ -105,7 +105,7 @@ export async function fetchSingleFeed(feedKey: FeedKey): Promise<FeedResult> {
   return fetchFeed(feedKey);
 }
 
-export async function fetchTopicFeed(topicUrl: string): Promise<RssItem[]> {
+export async function fetchTopicFeed(topicUrl: string, feedKey: FeedKey): Promise<RssItem[]> {
   const token = await getToken();
   const feedUrl = `${topicUrl.replace(/\/?$/, '/')  }feed/?feed_token=${token}`;
 
@@ -114,7 +114,7 @@ export async function fetchTopicFeed(topicUrl: string): Promise<RssItem[]> {
     if (!response.ok) return [];
 
     const xml = await response.text();
-    return extractRssItems(parser.parse(xml)).map((rssItem) => ({ ...rssItem, feedKey: FeedKeys.membersForum }));
+    return extractRssItems(parser.parse(xml)).map((rssItem) => ({ ...rssItem, feedKey }));
   } catch {
     return [];
   }
