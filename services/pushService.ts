@@ -42,21 +42,24 @@ async function addRegisteredChannel(channel: Channel): Promise<void> {
 
 // Called by ForumFeed after first successful load of an accessible feed.
 // Sends feed_token so the Worker can use it to poll optional channel feeds.
-export async function registerPushChannel(feedKey: FeedKey, feedToken: string, level?: PushLevel): Promise<void> {
+// Returns whether the server confirmed registration, so callers can retry on failure.
+export async function registerPushChannel(feedKey: FeedKey, feedToken: string, level?: PushLevel): Promise<boolean> {
   try {
     const pushToken = await getExpoPushToken();
-    if (!pushToken) return;
+    if (!pushToken) return false;
     const channel = FEEDKEY_TO_CHANNEL[feedKey];
-    if (!channel) return;
+    if (!channel) return false;
     const lvl = level ?? await getPushLevel();
     await storageSet(PUSH_LEVEL_KEY, lvl);
-    await addRegisteredChannel(channel);
-    await fetch(`${WORKER_URL}/register`, {
+    const res = await fetch(`${WORKER_URL}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: pushToken, channel, level: lvl, feed_token: feedToken }),
     });
-  } catch { /* non-fatal: local notifications still work */ }
+    if (!res.ok) return false;
+    await addRegisteredChannel(channel);
+    return true;
+  } catch { return false; /* non-fatal: local notifications still work */ }
 }
 
 // Called by Settings when the user changes their notification level.
