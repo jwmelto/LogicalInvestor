@@ -3,10 +3,7 @@ import Constants from 'expo-constants';
 import { storageGet, storageSet } from './storageService';
 import { getToken } from './authService';
 
-// Bundled into the JS at build time — dev and production ship the exact same app.json, so a
-// missing value means this build is broken everywhere alike, not something to degrade around.
-// It should never reach a real device; fail immediately in every environment so it's caught in
-// testing rather than silently never registering push for anyone.
+// Mandatory value; missing is a fatal configuration error.
 const rawWorkerUrl = Constants.expoConfig?.extra?.workerUrl as string | undefined;
 if (!rawWorkerUrl) {
   throw new Error('pushService: app.json is missing extra.workerUrl');
