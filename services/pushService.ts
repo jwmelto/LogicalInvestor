@@ -3,7 +3,12 @@ import Constants from 'expo-constants';
 import { storageGet, storageSet } from './storageService';
 import { getToken } from './authService';
 
-const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
+// Mandatory value; missing is a fatal configuration error.
+const rawWorkerUrl = Constants.expoConfig?.extra?.workerUrl as string | undefined;
+if (!rawWorkerUrl) {
+  throw new Error('pushService: app.json is missing extra.workerUrl');
+}
+const WORKER_URL: string = rawWorkerUrl;
 const PUSH_LEVEL_KEY = 'push_level';
 const PUSH_CHANNELS_KEY = 'push_channels';
 

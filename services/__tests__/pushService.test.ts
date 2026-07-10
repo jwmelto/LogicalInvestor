@@ -1,4 +1,4 @@
-jest.mock('expo-constants', () => ({ expoConfig: { extra: { eas: { projectId: 'test-project' } } } }));
+jest.mock('expo-constants', () => ({ expoConfig: { extra: { eas: { projectId: 'test-project' }, workerUrl: 'https://test.worker.dev' } } }));
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
   getExpoPushTokenAsync: jest.fn().mockResolvedValue({ data: 'ExponentPushToken[test]' }),
@@ -41,5 +41,15 @@ describe('registerPushChannel', () => {
     const ok = await registerPushChannel('membersArea', 'feed-token');
     expect(ok).toBe(false);
     expect(stored['push_channels']).toBeUndefined();
+  });
+});
+
+describe('pushService module-load guard', () => {
+  it('throws when app.json extra.workerUrl is missing, in every environment', () => {
+    jest.resetModules();
+    jest.doMock('expo-constants', () => ({ expoConfig: { extra: { eas: { projectId: 'test-project' } } } }));
+    expect(() => require('../pushService')).toThrow(/workerUrl/);
+    jest.dontMock('expo-constants');
+    jest.resetModules();
   });
 });
