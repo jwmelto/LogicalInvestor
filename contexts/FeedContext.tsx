@@ -68,8 +68,11 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
         // when the user isn't subscribed — require actual items too, so we don't
         // register push for a forum the user can't read.
         if (next[k]?.accessible && (next[k]?.items.length ?? 0) > 0 && !pushRegisteredRef.current.has(k)) {
-          pushRegisteredRef.current.add(k);
-          registerPushChannel(k, feedToken);
+          // Only mark registered once the server confirms — an unconfirmed
+          // channel is retried on the next refresh instead of silently stuck.
+          if (await registerPushChannel(k, feedToken)) {
+            pushRegisteredRef.current.add(k);
+          }
         }
       }
     }
@@ -86,7 +89,12 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    if (!authed) return;
+    if (!authed) {
+      // Logged out — old channels were registered under the prior feed token,
+      // so re-login must re-register rather than skip via stale ref state.
+      pushRegisteredRef.current.clear();
+      return;
+    }
     fetchAllFeeds();
     getRefreshInterval().then((minutes) => startTimer(minutes * 60 * 1000));
 
