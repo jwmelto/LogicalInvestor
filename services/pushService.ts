@@ -3,7 +3,15 @@ import Constants from 'expo-constants';
 import { storageGet, storageSet } from './storageService';
 import { getToken } from './authService';
 
-const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
+// Bundled into the JS at build time — dev and production ship the exact same app.json, so a
+// missing value means this build is broken everywhere alike, not something to degrade around.
+// It should never reach a real device; fail immediately in every environment so it's caught in
+// testing rather than silently never registering push for anyone.
+const rawWorkerUrl = Constants.expoConfig?.extra?.workerUrl as string | undefined;
+if (!rawWorkerUrl) {
+  throw new Error('pushService: app.json is missing extra.workerUrl');
+}
+const WORKER_URL: string = rawWorkerUrl;
 const PUSH_LEVEL_KEY = 'push_level';
 const PUSH_CHANNELS_KEY = 'push_channels';
 

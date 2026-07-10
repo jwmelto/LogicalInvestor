@@ -57,7 +57,8 @@
       "router": {},
       "eas": {
         "projectId": "bdd67330-9e67-45c0-8b4b-2c726d53aac7"
-      }
+      },
+      "workerUrl": "https://logicalinvestor-push.logicalinvestor.workers.dev"
     },
     "owner": "jwmelto"
   }
