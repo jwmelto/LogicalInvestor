@@ -74,6 +74,10 @@ export interface RssItem {
   link: string;
   pubDate: Date;
   feedKey: FeedKey;
+  // Whether the raw title had no "Reply To: " prefix, i.e. this is the first post in its topic
+  // rather than a reply. Not consumed anywhere yet — exposed so a future "new topic" alert tier
+  // has the signal available; title itself is always the already-stripped, display-ready form.
+  isFirstPost: boolean;
 }
 
 // Normalizes an already-parsed RSS document (via fast-xml-parser) to an array of items —
@@ -88,13 +92,15 @@ export function extractRssItems(parsedXml: unknown): Omit<RssItem, 'feedKey'>[] 
   const items = Array.isArray(raw) ? raw : [raw];
   return items.map((item: any) => {
     const pubDate = new Date(item.pubDate);
+    const decodedTitle = decodeHtmlEntities(item.title);
     return {
       guid: item.guid?.['#text'] ?? item.guid,
-      title: stripReplyPrefix(decodeHtmlEntities(item.title)),
+      title: stripReplyPrefix(decodedTitle),
       author: decodeHtmlEntities(item['dc:creator'] ?? item.author),
       description: stripHtml(item.description),
       link: item.link,
       pubDate: isNaN(pubDate.getTime()) ? new Date() : pubDate, // unparseable → treat as just-published
+      isFirstPost: !decodedTitle.startsWith('Reply To: '),
     };
   });
 }
