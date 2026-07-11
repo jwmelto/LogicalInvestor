@@ -6,7 +6,6 @@ import { getCachedUnreadCounts, setCachedUnreadCounts, getRefreshInterval } from
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
 import { computeFeedUnreadCounts } from '../services/readStateService';
-import { processNewItemsForNotifications } from '../services/notificationService';
 import { useAuth } from './AuthContext';
 
 type UnreadCounts = Partial<Record<FeedKey, number>>;
@@ -48,11 +47,6 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const next: FeedResults = {};
     keys.forEach((k, i) => { next[k] = results[i]; });
     setFeedResults(next);
-
-    // Local notifications otherwise only fire from the OS background task, which iOS/Android
-    // schedule opportunistically and can skip for hours — this catches up on every foreground
-    // refresh so alerts aren't solely dependent on that.
-    processNewItemsForNotifications(results.flatMap((r) => (r.accessible ? r.items : [])));
 
     const computed = await computeFeedUnreadCounts(results);
     (Object.entries(computed) as [FeedKey, number][]).forEach(([k, count]) => {

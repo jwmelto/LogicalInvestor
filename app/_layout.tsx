@@ -9,7 +9,7 @@ import 'react-native-reanimated';
 import * as Notifications from 'expo-notifications';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNotificationPermissions } from '@/hooks/use-notification-permissions';
-import { FEED_ALERTS_CHANNEL_ID } from '../services/notificationService';
+import { FEED_ALERTS_CHANNEL_ID } from '../services/pushService';
 import { isAuthenticated } from '../services/authService';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ForumVisibilityProvider } from '../contexts/ForumVisibilityContext';

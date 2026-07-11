@@ -2,7 +2,15 @@ import { decode as decodeHtmlEntities } from 'he';
 
 export const MAX_SEEN_IDS_PER_FEED = 500;
 
-export type NotifLevel = 'none' | 'minimal' | 'standard' | 'all';
+// Three filter tiers, narrow to broad, each a strict superset of the previous — see
+// docs/notification-filter-design.md. There is no 'any' tier: "show me everything" is just
+// `filter: 'length', minLength: 0` — the length check always passes at 0, so it needs no
+// separate enum value.
+export type ContentFilter = 'members' | 'actionable' | 'length';
+
+export const FILTER_TIERS: ContentFilter[] = ['members', 'actionable', 'length'];
+
+const FILTER_TIER_RANK: Record<ContentFilter, number> = { members: 0, actionable: 1, length: 2 };
 
 export const FeedKeys = {
   membersArea:     'membersArea',
@@ -141,13 +149,25 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
 ];
 
-export function classifySignal(text: string, minLength: number): ActionableResult {
+function matchNegativePattern(text: string): ActionableResult | null {
   for (const [re, clause] of NEG_PATTERNS) {
     if (re.test(text)) return clause;
   }
+  return null;
+}
+
+function matchPositivePattern(text: string): ActionableResult | null {
   for (const [re, clause] of POS_PATTERNS) {
     if (re.test(text)) return clause;
   }
+  return null;
+}
+
+export function classifySignal(text: string, minLength: number): ActionableResult {
+  const neg = matchNegativePattern(text);
+  if (neg) return neg;
+  const pos = matchPositivePattern(text);
+  if (pos) return pos;
   return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
 }
 
@@ -159,20 +179,35 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-export function matchesLevel(
-  item: FilterItem,
-  level: NotifLevel,
-  authorFilter: string,
-  minLength: number,
-  _actionPatterns?: unknown,
-): boolean {
-  if (level === 'none') return false;
+// Ordinal "how loose a device's tier needs to be to see this item" — computed once per
+// item/minLength pair. Moot for Members Area in practice: matchesFilter bypasses it entirely
+// before this is ever consulted, but the branch is kept here so the function is independently
+// testable and total.
+//
+// A negative-pattern match only disqualifies the 'actionable' classification — it is not a
+// veto on visibility. Long-enough negative-pattern content still surfaces at the 'length' tier;
+// nothing here returns Infinity, since there is no tier a device can't reach.
+export function minVisibleTier(item: FilterItem, minLength: number): number {
+  if (item.feedKey === FeedKeys.membersArea) return FILTER_TIER_RANK.members;
+  const text = stripHtml(item.content ?? '');
+  const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
+  const topicPass = !requiresStar || stripReplyPrefix(item.title ?? '').startsWith('*');
+  const actionable = topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
+  if (actionable) return FILTER_TIER_RANK.actionable;
+  return text.length >= minLength ? FILTER_TIER_RANK.length : FILTER_TIER_RANK.length + 1;
+}
+
+// Empty authors list = no author restriction (there is no global default to fall back to —
+// every device's authors/minLength/filter are its own, set at registration).
+export function authorMatches(author: string | undefined, authors: string[]): boolean {
+  if (authors.length === 0) return true;
+  const a = (author ?? '').toLowerCase();
+  return authors.some((f) => a.includes(f.toLowerCase()));
+}
+
+// Device eligibility. Members Area is unconditional — no author or content check — so that a
+// device's author whitelist can never silence the one channel meant to always come through.
+export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number): boolean {
   if (item.feedKey === FeedKeys.membersArea) return true;
-  if (level === 'minimal') return false;
-  if (!item.author?.toLowerCase().includes(authorFilter.toLowerCase())) return false;
-  if (level === 'all') return true;
-  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
-    if (!stripReplyPrefix(item.title ?? '').startsWith('*')) return false;
-  }
-  return containsActionableSignal(stripHtml(item.content ?? ''), minLength);
+  return authorMatches(item.author, authors) && FILTER_TIER_RANK[filter] >= minVisibleTier(item, minLength);
 }

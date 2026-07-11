@@ -14,8 +14,6 @@ enabled = true
 invocation_logs = true
 
 [vars]
-AUTHOR_FILTER = "Sean Hyman"
-MIN_CONTENT_LENGTH = "200"
 POLL_INTERVAL_TRADING  = "5"    # minutes between polls during trading hours; must be multiple of 5
 POLL_INTERVAL_LATEDAY  = "15"   # minutes between polls during late-day window
 POLL_INTERVAL_OVERNIGHT = "60"  # minutes between polls overnight and weekends
