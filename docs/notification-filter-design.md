@@ -1,169 +1,274 @@
 # Notification filter redesign
 
-Status: design agreed, not yet implemented. Target: `release/0.10.0`.
+Status: design agreed, not yet implemented. Target branch:
+`feature/notification-filter-redesign`.
 
 ## Problem
 
 Local (on-device) notifications are the only way for a user to get alerts on
 forum activity from an author other than Sean Hyman — server push
 (`cloudflare-worker`) filters on a single global `AUTHOR_FILTER` var
-(`wrangler.toml`), applied identically to every registered device. There is
-no per-user customization today.
+(`wrangler.toml`), applied identically to every registered device.
+There is no per-user customization today.
 
 Local notifications rely on `expo-background-task`'s `BGProcessingTaskRequest`,
 which is opportunistic — iOS grants it a background slot on its own schedule,
-not on any interval the app requests. Verified via a physical device + Xcode
-LLDB session (`e -l objc -- (void)[[BGTaskScheduler sharedScheduler]
-_simulateLaunchForTaskWithIdentifier:...]`) that the task and the
+not on any interval the app requests.
+Verified via a physical device + Xcode LLDB session that the task and the
 lock-screen-notification path both work correctly in isolation — the gap is
 purely that iOS rarely grants the background slot in practice, not a bug in
 the implementation.
 
-Conclusion: don't fight `BGTaskScheduler`. Move custom author filtering to
-the server, onto the channel that's already reliable.
+Conclusion: don't fight `BGTaskScheduler`.
+Move custom author/content filtering to the server, onto the channel that's
+already reliable, and remove the local pipeline entirely — see "Local
+notifications are removed" below.
 
-## Schema change
+## Server-side alerting model
 
-`TokenMeta` (Worker `TOKENS` KV metadata, already stored per registered
-device) gains three optional fields:
+The server's actual job is narrower than the app's: the app is responsible
+for complete, browsable forum history (hierarchical Forum → Topic → Posts,
+lazy-loaded full topic threads, unread tracking) — the server's only job is
+"tell me about anything worth an alert, soon." Those are different problems
+with different correct implementations.
 
-```ts
-interface TokenMeta {
-  feedToken?: string;
-  filter?: ContentFilter;  // replaces `level`
-  authors?: string[];      // lowercased; empty/absent = fall back to global AUTHOR_FILTER
-  minLength?: number;      // absent = fall back to global MIN_CONTENT_LENGTH
-}
+Confirmed against a real authenticated fetch of the Members Forum feed: the
+top-level per-forum RSS feed (bbPress's "All Posts" feed) already aggregates
+replies from every topic in that forum, not just new-topic creation — 25/25
+sampled items were replies (`Reply To: ...`), spanning 8+ different topic
+threads, in strict reverse-chronological order by `pubDate`. So the server
+does not need topic-level tracking to see replies buried in existing topics
+— the flat forum feed already surfaces them.
+
+This means the Worker's topic-discovery/topic-sub-feed-fetching machinery
+(`topics:<channel>` KV state, per-topic sub-feed fetches, `TOPIC_GC_DAYS`
+pruning) is unnecessary for alerting, and is removed from the Worker
+entirely. It remains purely an app-side concern (`topicService.ts`), used to
+build the browsing UI and lazy-load a topic's full history — the server
+never actually needed it for alerting.
+
+**New server alerting function, per forum, per cron tick:**
+
+```
+for each forum in this channel:
+  fetch the forum's RSS feed → up to 25 items, reverse-chronological
+  walk from newest to oldest, collecting items, until the first
+    already-seen guid is reached → stop (early exit)
+  for each newly-seen item:
+    for each device registered to this channel:
+      matchesFilter(item, device.filter, device.authors, device.minLength)
 ```
 
-All new fields are optional and absent = today's exact behavior. No
-migration needed for existing registrations.
+Bounding the candidate set to a single forum-feed fetch (no topic sub-feeds)
+directly resolves three things that looked like separate problems during
+review, but were all downstream of the same over-broad design:
+
+- **CPU time.** This Worker runs on the Free plan (10ms CPU limit per
+  invocation, including `scheduled()` cron ticks — the higher paid-plan cron
+  allowances don't apply here). Parsing up to ~39 tracked topic sub-feeds in
+  one invocation (confirmed via `wrangler kv key list --remote` against the
+  live `STATE` namespace: 21 members + 10 stock + 8 options topics) is
+  expensive; parsing one main feed per forum is not.
+- **KV write budget.** Drops the unconditional `topicsKey` write from every
+  poll (see "KV cost," below — this was already close to the 1,000/day
+  free-tier cap from cron polling alone).
+- **The new-topic alert flood** — a live bug, confirmed via production
+  `daily:<channel>:<date>` history and a deploy-timeline check. There is no
+  longer a "first time discovering this topic" event to mishandle — a
+  newly-active topic's replies simply appear in the flat forum feed and go
+  through the same seen-tracking every other post does.
+
+  Root cause, for the record: topic sub-feed items were folded into the
+  same feed-level `seen` set as the main feed, but only *feed-level*
+  first-poll got the "seed quietly, don't notify" treatment. A topic
+  discovered for the first time — after its feed's `seen` set was already
+  populated from weeks of ordinary polling — got none of that protection,
+  so its entire current reply window was treated as brand new, all at
+  once. This wasn't unique to any one feed or deploy; it could happen for
+  any newly-active topic on any topic-tracked channel, which is why it
+  didn't line up with a single commit's rollout.
+
+**Complexity, deliberately accepted:** this is O(new items × registered
+devices) per forum per poll. New items are capped at 25 (usually far fewer,
+thanks to the early exit), so cost scales with device count, not content
+volume. Per-device `matchesFilter` is cheap (a handful of regex/string
+checks), so linear scaling in device count was accepted as fine at current
+and foreseeable scale — revisit if device count grows enough to matter.
+
+**App vs. server responsibility, explicit:** the app still does its own
+full reconciliation — complete topic history, unread tracking, hierarchical
+browsing — on every foreground refresh, independent of the server. The
+server's 25-item window is not a completeness guarantee and isn't meant to
+be; it only bounds what's timely enough to alert on. The app needs the deep
+dive; the server doesn't.
 
 ## Filter tiers
 
-Four tiers, narrow to broad, each a strict superset of the previous:
+Three tiers, narrow to broad, each a strict superset of the previous:
 
 ```
-members → actionable → length → any
+members → actionable → length
 ```
 
-- `members`: Members Area posts only (no topics, so no content filter applies).
+- `members`: Members Area posts only — unconditional, see below.
 - `actionable`: rare, high-signal keyword matches (buy/sell/tranche/urgency
-  phrases) — the narrowest non-members tier, because these patterns are rare.
-- `length`: any post at least `minLength` characters — broader than
-  `actionable`, since most substantive replies clear the bar.
-- `any`: everything, content-wise.
+  phrases), gated by topic requirements (see `minVisibleTier`, below).
+- `length`: any post at least `minLength` characters, whether or not it also
+  matched a keyword.
 
-Author match is a separate, always-required AND — it applies to every tier,
-including `members` (moot in practice since only Sean posts there, but not
-special-cased).
+There is no `any`/"everything" tier. "Show me everything" is expressed as
+`filter: 'length', minLength: 0` — the length check always passes at 0, so a
+fourth enum value would carry no meaning `length` doesn't already cover.
 
-Each item collapses to a single ordinal `minVisibleTier`, computed once,
-independent of any device:
+### Members Area is unconditional, not just author-exempt
+
+Since there is no global author-filter fallback (see below), author
+matching cannot apply uniformly to every tier — a device with a narrow
+`authors` whitelist (e.g. `['herman']`) would otherwise silently lose
+Members Area alerts too, exactly backwards from intent, since Members Area
+is supposed to be the one channel a user can always count on.
+
+`matchesFilter` special-cases Members Area to return `true`
+unconditionally — no author check, no content check, no tier check. The
+only way to get zero alerts from Members Area is to not be registered for
+the channel at all (existing `/unregister` path) — there is no in-schema
+"off" state.
+
+### `minVisibleTier` — tier assignment rules
+
+1. **A negative-pattern match only disqualifies a post from the
+   `actionable` classification** — it is not a veto on visibility at any
+   other tier. A long-enough negative-pattern post still surfaces at
+   `length`. There is no tier, however narrow, that a device literally
+   cannot reach.
+2. **The star/topic gate applies only to the `actionable` classification,
+   not to `length`.** Stock/Options Insights require a `*`-prefixed title
+   to count as `actionable`; Members Forum has no such requirement. An
+   unstarred Stock/Options Insights post that's simply long enough is still
+   visible at `length`.
 
 ```
-minVisibleTier(item):
-  if negative-pattern matches:            return ∞   (never notifies, any tier)
-  if feedKey === membersArea:             return 0   (members)
-  starOk = (stock/options) ? title.startsWith('*') : true
-  if !starOk:                             return 3   (any — only the loosest tier ignores the star gate)
-  if positive-pattern matches:            return 1   (actionable)
-  if length >= minLength:                 return 2   (length)
-  return 3                                            (any)
+minVisibleTier(item, minLength):
+  if feedKey === membersArea: return 0   (moot in practice — matchesFilter
+                                           bypasses Members Area before this
+                                           is ever consulted; kept here so
+                                           the function is independently
+                                           testable)
+  topicPass = (stock/options) ? title.startsWith('*') : true
+  actionable = topicPass && !negativePatternMatch && positivePatternMatch
+  if actionable: return 1   (actionable)
+  return (length >= minLength) ? 2 : 3   (length, or below this device's floor)
 ```
 
-Device eligibility: `authorMatches(item, device.authors) AND
-device.tierRank >= minVisibleTier(item)`.
+### Author matching — no global fallback, empty means unrestricted
 
-**Behavior change, deliberate:** negative patterns (`fail-personal-advice`,
-`fail-hypothetical`, `fail-historical`) become a universal veto across all
-four tiers, not just the old `standard` tier. Without this, `actionable` and
-`any` can't actually be supersets of each other where negative patterns
-apply. Accepted as correct — nobody wants alerts on personal-advice-framed
-content regardless of tier looseness.
+There is no global default anymore, for anything. `filter`, `authors`, and
+`minLength` are required on every device registration — the whole point of
+this redesign is per-device alerting, not one-size-fits-all with overrides.
+An empty `authors` list means exactly what it says: no author restriction.
 
-**Known gap, accepted:** today's `minimal` level means "Members Area only,
-suppress everything else." There's no equivalent under this design — every
-tier applies to all forums, with Members Area just exempt from
-content-filtering, not exempt from appearing. Dropped deliberately to avoid
-forum-scoping as a second axis; revisit only if actually requested.
+## `TokenMeta` schema
 
-## Worker runtime changes
+```ts
+interface TokenMeta {
+  feedToken: string;
+  filter: ContentFilter;   // 'members' | 'actionable' | 'length' — required
+  authors: string[];       // lowercased; [] = no author restriction — required
+  minLength: number;       // required; 0 = no minimum
+}
+```
 
-`runChannel`'s device bucketing changes from keying on `level` alone (3
-possible buckets) to keying on `filter|authors|minLength` signature. This
-still rides entirely on `TOKENS.list()` metadata, which already returns
-these fields for free (existing comment in `cloudflare-worker/src/index.ts`
-confirms metadata costs no extra KV read). `forum`/`actionable` computation
-per item is unchanged; only `author` match gets recomputed per distinct
-bucket signature — in-memory string comparison, negligible even at
-hundreds of buckets.
+All three (`filter`/`authors`/`minLength`) are required on every new
+registration — there is no optional-with-fallback field left in this
+schema. Pre-redesign KV entries that predate these fields (only
+`feedToken`/old `level`) are legacy data: `runChannel` skips them from
+bucketing (they get no alerts) until the device re-registers, which happens
+automatically the next time the app is foregrounded (`FeedContext.tsx`
+re-registers once per session). No migration write is needed — stale
+entries simply age out via normal app usage.
 
-## KV cost — zero marginal writes
+## Local notifications are removed, not just superseded
 
-Two KV namespaces, `TOKENS` (per-device) and `STATE` (per-channel), nothing
-else. This feature adds no new namespace and no new write:
+This is not deferred cleanup — it ships in the same change. Once server
+push covers arbitrary per-device filters, `notificationService.ts`'s local
+scheduling pipeline is permanently dead: `wouldServerPush()` would predict
+server coverage for every item local could ever fire on.
 
-| Path | Writes today | Writes after |
-|---|---|---|
-| `/register` call | 1× `STATE.put(poll:)` + 1× `TOKENS.put(metadata)` | same 2 — new fields ride the existing metadata blob |
-| `runChannel` per cron tick w/ new items | 5× `STATE.put` | same 5 |
+**No UX change other than removing local alerts themselves** — badges (tab
+badges and the OS app-icon badge) keep behaving exactly as they do today,
+including while the app is backgrounded or closed.
 
-**The free tier is already tight, independent of this feature.** Cron
-polling alone runs ~250 times/day across 3 channels at 4–5 `STATE.put`
-calls each ≈ 1,000–1,250 writes/day — at or past Cloudflare KV's free-tier
-cap of 1,000 writes/day before this feature exists. A launch-day flood of
-users editing settings simultaneously (2 writes per `/register` call) could
-push over the cap on a highly visible day. No paid-tier budget exists for
-this project currently (owner's explicit call — value has to be proven
-before asking for the $5/month commitment).
+Removed entirely:
 
-Two concrete mitigations, not yet implemented:
-1. Skip the redundant `STATE.put('poll:channel', ...)` write in
-   `registerDevice()` when the feed token is unchanged from the stored value
-   — read-before-write, halves the common-case registration write cost.
-2. Debounce client-side sync — edit multiple Settings fields in one session,
-   sync once (on leaving the screen), not once per field change.
+- `services/notificationService.ts` — the scheduling pipeline
+  (`processNewItemsForNotifications`, `wouldServerPush`, `passes`,
+  `isTopicMuted`, seen-id dedup tracking) and its test file.
+- The "enable local notifications" toggle and section in Settings — "off"
+  is just "unregistered," same as Members Area above.
 
-The actual structural fix is moving off the free KV tier, independent of
-this feature — cron traffic alone already justifies it. Not this repo's
-call to make unilaterally.
+**Not removed:** `backgroundFetchService.ts`, and the
+`expo-background-task`/`expo-task-manager` wiring backing it, stay. Its
+task callback bundles two unrelated things — firing local notifications
+(dead, removed) and computing/caching unread counts so tab and app-icon
+badges are accurate on next launch even after the app's been closed for a
+while (not dead, unrelated to alerting, keeps behaving exactly as today).
+Only the `processNewItemsForNotifications(...)` call inside that task comes
+out; the badge-caching block stays untouched.
 
-## Scaling note (pre-existing, unrelated to this feature)
+Consolidated, not orphaned: `authorFilters`/`minContentLength` (the values a
+user was tuning for the now-dead local pipeline) become the
+`authors`/`minLength` synced to the server — folded into `pushService.ts`
+directly rather than left behind in a file that no longer does anything
+else. The existing Settings UI fields (author whitelist, min-length slider)
+are reused as-is; they now drive server registration instead of local
+scheduling.
 
-`runChannel`'s device-access-recheck loop (`cloudflare-worker/src/index.ts`,
-inside the `TOKENS.list()` pass when there's new content to push) does a
-sequential `for...of` with `await feedTokenHasAccess(...)` per device — one
-WordPress HTTP round-trip at a time, not parallelized. At current device
-counts this is negligible; if it ever grows to dozens+ devices, worth
-switching to `Promise.all` per KV list page with a concurrency cap (avoid
-bursting `logicalinvestor.net` with simultaneous requests). Pre-existing,
-not introduced by this design — flagged here since it came up during the
-same conversation.
-
-## Consequence: local notifications become dead code
-
-`notificationService.ts`'s `wouldServerPush()` already skips firing a local
-notification whenever server push is predicted to cover the same item.
-Once server push covers arbitrary custom author filters (this design),
-`wouldServerPush()` becomes true for every item local would ever fire on —
-local becomes permanently self-suppressing.
-
-Follow-up candidates for removal once this ships:
-- `backgroundFetchService.ts`, `registerBackgroundFetch()`, the
-  `expo-background-task`/`expo-task-manager` wiring
-- The local-notification scheduling path in `notificationService.ts`
-- `app.json`'s `expo-background-task`/`expo-task-manager` plugin entries
-
-Not done as part of this design — do it as its own cleanup PR after the
-server-side change is live and confirmed working.
+**Known, accepted gap:** per-topic muting (`subscriptionService`, the
+"Silenced Topics" list in Settings) has never applied to server push — it
+was always a local-only concept, and remains one. This isn't a regression
+introduced here, and is explicitly out of scope for this change. Worth a
+future issue if per-topic suppression is ever wanted server-side.
 
 ## Not yet done
 
-- Worker: schema + bucketing + `matchesFilter`/`minVisibleTier` implementation
-- App: `pushService.ts` sync of `authors`/`filter`/`minLength` to `/register`
-  (mirroring the existing `updatePushLevel()` pattern), Settings UI for the
-  four tiers
-- The two KV-write mitigations above
-- The dead-code removal follow-up
-- Tests, both Worker and app side
+- Worker: `ContentFilter`/`minVisibleTier`/`authorMatches`/`matchesFilter`
+  in `@li/core` — done.
+- Worker: strip topic-discovery/sub-feed-fetching out of `runChannel`
+  entirely; per-forum-feed-only alerting with early-exit on first-seen guid.
+- Worker: `TokenMeta`/`registerDevice`/`/register` endpoint — required
+  fields, no fallback.
+- Worker: bucket registered devices by `filter|authors|minLength` signature
+  so devices sharing an identical configuration are classified once, not
+  once per device (still worth doing even without topic tracking — it's a
+  send-time and classification-time optimization, not a topic-tracking one).
+- Worker: expose `isFirstPost` (or similar) on `RssItem` at parse time — the
+  raw title's "Reply To: " prefix is currently discarded before any
+  consumer sees it (`stripReplyPrefix` runs unconditionally in
+  `extractRssItems`). Not consumed anywhere yet; this only unblocks a
+  possible future "new topic" alert tier (a genuine first post has no
+  "Reply To: " prefix on its raw title) — not building that tier now, just
+  not losing the signal a second time.
+- App: `pushService.ts` — fold `authors`/`minLength` in alongside `filter`,
+  sync all three to `/register`.
+- App: Settings UI — three-tier button row, reused author/length fields,
+  drop the local-notifications section and its "enable" toggle.
+- Delete `notificationService.ts` and its test file; trim the dead call out
+  of `backgroundFetchService.ts`'s task callback (see above — the rest of
+  that file stays).
+- Tests, both Worker and app side.
+
+## Deferred (filed separately, not part of this change)
+
+- KV write-budget headroom (cron polling interval tuning, or reducing
+  writes per poll) — see issue #32 (comment), plus a possible pre-deploy
+  budget-check test. Real production data confirms all three channels are
+  active and polling; the topic-tracking removal above independently
+  improves this (one fewer unconditional write per poll) but doesn't fully
+  resolve it.
+- Issue #56: `FeedContext.tsx` double-registers the `members` channel (once
+  for `membersArea`, once for `membersForum`) — should dedupe by resolved
+  channel, not by feed key.
+- CPU-time-limit exceptions observed on the Free plan — largely explained
+  by the now-removed topic-sub-feed parsing volume; worth a follow-up check
+  after this ships to confirm it's actually resolved before investigating
+  further.
