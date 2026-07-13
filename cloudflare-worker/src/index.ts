@@ -16,6 +16,7 @@ export interface Env {
   POLL_BOUNDARY_LATEDAY?: string;   // hhmm ET when late-day window begins, default "1400"
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
+  MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -24,9 +25,8 @@ export interface Env {
   HEARTBEAT_URL_OPTIONS?: string;
 }
 
-// filter/authors/minLength are required on every registration — there is no global default to
-// fall back to (see docs/notification-filter-design.md). feedToken is optional here only for
-// KV entries predating universal storage; recovers a stale stock/options poll token.
+// filter/authors/minLength are required on every registration. feedToken is optional here only
+// for KV entries predating universal storage; recovers a stale stock/options poll token.
 interface TokenMeta {
   feedToken?: string;
   filter?: ContentFilter;
@@ -38,7 +38,7 @@ interface RunStats {
   lastRun: string;
   lastNotified: string | null;
   itemsFetched: number;
-  newItems: number;
+  numNewItems: number;
   sent: number;
 }
 
@@ -46,15 +46,9 @@ interface DailyStats {
   date: string;
   runs: number;
   itemsFetched: number;
-  newItems: number;
+  numNewItems: number;
   sent: number;
 }
-
-// Cap on how many of a forum's most-recent posts are ever considered for alerting, regardless
-// of how many the upstream RSS feed happens to return. Alerting only needs to know what's timely
-// enough to notify about — full history/backlog is the app's job (its own reconciliation on
-// every foreground refresh), not the Worker's. See "Server-side alerting model" in the design doc.
-const MAX_ALERT_ITEMS_PER_FEED = 25;
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
 // wrangler.toml MUST list the three crons in this exact order, with each starting one minute later:
@@ -207,7 +201,7 @@ export default {
           lastNotified: stats?.lastNotified ?? null,
           lastRunStats: stats ? {
             itemsFetched: stats.itemsFetched,
-            newItems:     stats.newItems,
+            numNewItems:  stats.numNewItems,
             sent:         stats.sent,
           } : null,
           todayStats: await env.STATE.get<DailyStats>(`daily:${channel}:${getETDate(new Date())}`, 'json'),
@@ -332,11 +326,11 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
 async function recordDaily(env: Env, channel: Channel, now: Date, runStats: RunStats): Promise<void> {
   const dailyKey = `daily:${channel}:${getETDate(now)}`;
   const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
-    date: getETDate(now), runs: 0, itemsFetched: 0, newItems: 0, sent: 0,
+    date: getETDate(now), runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0,
   };
   daily.runs += 1;
   daily.itemsFetched += runStats.itemsFetched;
-  daily.newItems += runStats.newItems;
+  daily.numNewItems += runStats.numNewItems;
   daily.sent += runStats.sent;
   await env.STATE.put(dailyKey, JSON.stringify(daily));
 }
@@ -358,6 +352,11 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   // Despite the 5–60 min poll cadence above, content can still surface as newly-seen well after
   // publish — cap how old something can be and still get pushed (issue #48).
   const maxPushAgeMs = parseInt(env.MAX_PUSH_AGE_MINUTES ?? '120', 10) * 60 * 1000;
+  // Cap on how many of a forum's most-recent posts are ever considered for alerting, independent
+  // of how many the upstream RSS feed happens to return today — full history/backlog is the
+  // app's job (its own reconciliation on every foreground refresh), not the Worker's. See
+  // "Server-side alerting model" in the design doc for why a cap exists at all.
+  const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
   const statsKey = `stats:${channel}`;
   const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
   const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
@@ -371,17 +370,21 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const seenMap: Partial<Record<string, string[]>> = seenJson ? JSON.parse(seenJson) : {};
 
   // Per forum: fetch the top-level feed only (no topic sub-feeds — see design doc), cap to the
-  // most recent MAX_ALERT_ITEMS_PER_FEED, and — since these feeds are confirmed
-  // reverse-chronological — walk from newest until the first already-seen guid, then stop.
-  // Everything past that point must already be seen too, so there's no need to scan further.
+  // most recent maxAlertItemsPerFeed, and — since these feeds are confirmed reverse-chronological
+  // — walk from newest until the first already-seen guid, then stop. Everything past that point
+  // must already be seen too, so there's no need to scan further. The freshness check (issue #48)
+  // happens in the same walk rather than as a separate pass, and each feed's fresh items are
+  // reversed before collecting so alerting processes oldest-to-newest — a user who missed several
+  // posts sees them in reading order, not newest-first.
   let itemsFetched = 0;
   const newItems: RssItem[] = [];
+  const freshItems: RssItem[] = [];
   for (const feed of CHANNEL_FEEDS[channel]) {
     try {
       const res = await fetch(`${feed.url}?feed_token=${feedToken}`);
       if (!res.ok) continue;
       const items: RssItem[] = extractRssItems(parser.parse(await res.text()))
-        .slice(0, MAX_ALERT_ITEMS_PER_FEED)
+        .slice(0, maxAlertItemsPerFeed)
         .map((rssItem) => ({ ...rssItem, feedKey: feed.feedKey }));
       itemsFetched += items.length;
 
@@ -394,30 +397,34 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       }
       const seenSet = new Set(seenList);
       const newForFeed: RssItem[] = [];
+      const freshForFeed: RssItem[] = [];
       for (const item of items) {
         if (seenSet.has(item.guid)) break;
         newForFeed.push(item);
+        if (isFresh(item.pubDate, maxPushAgeMs)) freshForFeed.push(item);
       }
       newItems.push(...newForFeed);
+      freshItems.push(...freshForFeed.reverse());
       seenMap[feed.feedKey] = [...newForFeed.map((i) => i.guid), ...seenList].slice(0, MAX_SEEN_IDS_PER_FEED);
     } catch { /* skip failed feed */ }
   }
 
-  // Valid tokens always return items; 0 items across every feed means the poll token is stale.
-  // Attempt recovery from registered users' stored feedTokens.
+  // Valid tokens always return items for Members Forum/Stock/Options Insights, which require a
+  // real token to return anything; Members Area returns items regardless of token validity (only
+  // the content snippet is paywalled), so a stale token for the 'members' channel can still show
+  // itemsFetched > 0 here. That's a pre-existing gap in lapsed-subscription detection for that
+  // channel specifically, not something this change introduces — tracked in issue #58.
   if (itemsFetched === 0) {
     await findAndStorePollToken(channel, env);
     return; // recovered token (if any) will be used on the next cron cycle
   }
 
-  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched, newItems: newItems.length, sent: 0 };
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched, numNewItems: newItems.length, sent: 0 };
 
-  // Claim this run now, before the slower device-listing/notify work below. Cloudflare can
-  // dispatch a channel's cron trigger twice for the same tick (observed: duplicate pushes for
-  // the same post ~1 min apart; #24 already documents this cron infra as flaky). Writing lastRun
-  // here shrinks the window in which a concurrent second invocation could read the same stale
-  // prevStats and double-send. Not a hard guarantee (KV has no compare-and-swap), just a much
-  // smaller race window.
+  // Claim this run now, before the slower device-listing/notify work below, to shrink the window
+  // in which a concurrent duplicate invocation (Cloudflare can dispatch a cron tick twice) reads
+  // the same stale prevStats and double-sends. Not a hard guarantee (KV has no compare-and-swap),
+  // just a smaller race window.
   await env.STATE.put(statsKey, JSON.stringify(runStats));
   await env.STATE.put(seenKey, JSON.stringify(seenMap));
 
@@ -464,32 +471,37 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     return;
   }
 
-  const freshItems = newItems.filter((item) => isFresh(item.pubDate, maxPushAgeMs));
+  // Push-sends are independent per bucket, so they run concurrently rather than one at a time —
+  // this shortens wall-clock duration (fetch() wait doesn't count against the Worker's CPU-time
+  // limit either way, but a shorter invocation is still less exposed to Cloudflare's separate
+  // wall-clock duration cap). A failure in one bucket's send must not skip the others.
+  const sentCounts = await Promise.all(
+    Array.from(buckets.values()).map(async (bucket) => {
+      const toNotify = freshItems
+        .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength))
+        .slice(0, 5);
+      if (toNotify.length === 0) return 0;
 
-  for (const bucket of buckets.values()) {
-    const toNotify = freshItems
-      .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength))
-      .slice(0, 5);
-    if (toNotify.length === 0) continue;
+      const messages = toNotify.map((item, i) => ({
+        to: bucket.tokens,
+        title: `[PUSH] ${formatTitle(item)}`,
+        body: item.description.slice(0, 150) || 'New post',
+        sound: i === 0 ? 'default' : undefined,
+      }));
 
-    const messages = toNotify.map((item, i) => ({
-      to: bucket.tokens,
-      title: `[PUSH] ${formatTitle(item)}`,
-      body: item.description.slice(0, 150) || 'New post',
-      sound: i === 0 ? 'default' : undefined,
-    }));
-
-    try {
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(messages),
-      });
-      runStats.sent += toNotify.length;
-    } catch {
-      // A failure at one bucket must not skip remaining buckets or the stats write below.
-    }
-  }
+      try {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(messages),
+        });
+        return toNotify.length;
+      } catch {
+        return 0;
+      }
+    })
+  );
+  runStats.sent = sentCounts.reduce((a, b) => a + b, 0);
 
   if (runStats.sent > 0) {
     runStats.lastNotified = now.toISOString();

@@ -8,12 +8,21 @@ import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
 import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken, type ContentFilter } from '../../services/pushService';
+import { FILTER_TIERS } from '@li/core';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../../services/subscriptionService';
 import type { Topic } from '../../services/topicService';
 import { useColorScheme } from '../../hooks/use-color-scheme';
 import { Palette } from '../../constants/theme';
+
+// Single source of truth for the tier row's button label and explanatory hint — was two
+// separate ternary chains, each restating the same three-way branch.
+const FILTER_TIER_INFO: Record<ContentFilter, { label: string; hint: string }> = {
+  members:    { label: 'Members',    hint: 'Members Area posts only' },
+  actionable: { label: 'Actionable', hint: 'Members Area, plus actionable content elsewhere' },
+  length:     { label: 'Length',     hint: 'Members Area, plus anything long enough elsewhere' },
+};
 
 export default function SettingsScreen() {
   const scheme = useColorScheme();
@@ -209,7 +218,7 @@ export default function SettingsScreen() {
               <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
                 <Text style={[styles.preferenceLabelInline, { color: c.text, marginBottom: 8 }]}>Push notification tier</Text>
                 <View style={styles.levelRow}>
-                  {(['members', 'actionable', 'length'] as ContentFilter[]).map((filter) => (
+                  {FILTER_TIERS.map((filter) => (
                     <TouchableOpacity
                       key={filter}
                       style={[styles.levelButton, { borderColor: c.tint }, pushFilter === filter && { backgroundColor: c.tint }]}
@@ -217,15 +226,13 @@ export default function SettingsScreen() {
                       disabled={loading}
                     >
                       <Text style={[styles.levelButtonText, { color: pushFilter === filter ? '#fff' : c.tint }]}>
-                        {filter === 'members' ? 'Members' : filter === 'actionable' ? 'Actionable' : 'Length'}
+                        {FILTER_TIER_INFO[filter].label}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
                 <Text style={[styles.levelHint, { color: c.textFaint }]}>
-                  {pushFilter === 'members' ? 'Members Area posts only'
-                    : pushFilter === 'actionable' ? 'Members Area, plus actionable content elsewhere'
-                    : 'Members Area, plus anything long enough elsewhere'}
+                  {FILTER_TIER_INFO[pushFilter].hint}
                 </Text>
               </View>
               <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>

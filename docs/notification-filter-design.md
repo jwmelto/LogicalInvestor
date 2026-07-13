@@ -51,10 +51,12 @@ never actually needed it for alerting.
 
 ```
 for each forum in this channel:
-  fetch the forum's RSS feed → up to 25 items, reverse-chronological
+  fetch the forum's RSS feed → up to N items (configurable), reverse-chronological
   walk from newest to oldest, collecting items, until the first
     already-seen guid is reached → stop (early exit)
-  for each newly-seen item:
+  reverse the collected items back to oldest-first, so a device that missed
+    several posts is alerted in reading order, not newest-first
+  for each newly-seen item, oldest to newest:
     for each device registered to this channel:
       matchesFilter(item, device.filter, device.authors, device.minLength)
 ```
@@ -73,34 +75,29 @@ review, but were all downstream of the same over-broad design:
   poll (see "KV cost," below — this was already close to the 1,000/day
   free-tier cap from cron polling alone).
 - **The new-topic alert flood** — a live bug, confirmed via production
-  `daily:<channel>:<date>` history and a deploy-timeline check. There is no
+  `daily:<channel>:<date>` history and a deploy-timeline check: only
+  *feed-level* first-poll got the "seed quietly, don't notify" treatment
+  topic sub-feeds relied on, so a topic discovered after its feed had
+  already been polling for weeks got none of that protection, and its
+  entire current reply window fired as brand new, all at once. There is no
   longer a "first time discovering this topic" event to mishandle — a
   newly-active topic's replies simply appear in the flat forum feed and go
   through the same seen-tracking every other post does.
 
-  Root cause, for the record: topic sub-feed items were folded into the
-  same feed-level `seen` set as the main feed, but only *feed-level*
-  first-poll got the "seed quietly, don't notify" treatment. A topic
-  discovered for the first time — after its feed's `seen` set was already
-  populated from weeks of ordinary polling — got none of that protection,
-  so its entire current reply window was treated as brand new, all at
-  once. This wasn't unique to any one feed or deploy; it could happen for
-  any newly-active topic on any topic-tracked channel, which is why it
-  didn't line up with a single commit's rollout.
-
 **Complexity, deliberately accepted:** this is O(new items × registered
-devices) per forum per poll. New items are capped at 25 (usually far fewer,
-thanks to the early exit), so cost scales with device count, not content
-volume. Per-device `matchesFilter` is cheap (a handful of regex/string
-checks), so linear scaling in device count was accepted as fine at current
-and foreseeable scale — revisit if device count grows enough to matter.
+devices) per forum per poll. New items are capped per poll (configurable,
+usually far fewer thanks to the early exit), so cost scales with device
+count, not content volume. Per-device `matchesFilter` is cheap (a handful
+of regex/string checks), so linear scaling in device count was accepted as
+fine at current and foreseeable scale — revisit if device count grows
+enough to matter.
 
 **App vs. server responsibility, explicit:** the app still does its own
 full reconciliation — complete topic history, unread tracking, hierarchical
 browsing — on every foreground refresh, independent of the server. The
-server's 25-item window is not a completeness guarantee and isn't meant to
-be; it only bounds what's timely enough to alert on. The app needs the deep
-dive; the server doesn't.
+server's per-poll item cap is not a completeness guarantee and isn't meant
+to be; it only bounds what's timely enough to alert on. The app needs the
+deep dive; the server doesn't.
 
 ## Filter tiers
 
@@ -116,23 +113,20 @@ members → actionable → length
 - `length`: any post at least `minLength` characters, whether or not it also
   matched a keyword.
 
-There is no `any`/"everything" tier. "Show me everything" is expressed as
-`filter: 'length', minLength: 0` — the length check always passes at 0, so a
-fourth enum value would carry no meaning `length` doesn't already cover.
+There is no `any`/"everything" tier: `filter: 'length', minLength: 0`
+already covers it, since the length check always passes at 0.
 
 ### Members Area is unconditional, not just author-exempt
 
-Since there is no global author-filter fallback (see below), author
-matching cannot apply uniformly to every tier — a device with a narrow
-`authors` whitelist (e.g. `['herman']`) would otherwise silently lose
-Members Area alerts too, exactly backwards from intent, since Members Area
-is supposed to be the one channel a user can always count on.
+Author matching cannot apply uniformly to every tier — a device with a
+narrow `authors` whitelist (e.g. `['herman']`) would otherwise silently
+lose Members Area alerts too, exactly backwards from intent. The Members
+Area is relevant to all users for alerting.
 
-`matchesFilter` special-cases Members Area to return `true`
-unconditionally — no author check, no content check, no tier check. The
-only way to get zero alerts from Members Area is to not be registered for
-the channel at all (existing `/unregister` path) — there is no in-schema
-"off" state.
+Every registered device receives Members Area alerts regardless of its
+author whitelist or filter tier — `matchesFilter` returns `true`
+unconditionally for that feed. The only way to stop them is to unregister
+the device entirely (`/unregister`); there is no separate "off" setting.
 
 ### `minVisibleTier` — tier assignment rules
 

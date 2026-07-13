@@ -28,89 +28,65 @@ const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channe
 
 beforeEach(() => { vi.restoreAllMocks(); });
 
+// Enumerated as a table rather than one-off `it` blocks so coverage per feedKey/tier is visible
+// at a glance, and so a missing combination (e.g. "does Members Area actually pass through?")
+// is obvious from a gap in the table instead of an absent, easy-to-miss test.
+const TIER_CASES: [string, FilterItem, number][] = [
+  ['Members Area, empty content → members (0)',                                          item(FK.membersArea, { description: '' }), 0],
+  ['Members Area, negative-pattern content → still members (0), unconditional',           item(FK.membersArea, { description: 'we may consider a sell' }), 0],
+  ['Members Forum, positive signal → actionable (1)',                                     item(FK.membersForum, { description: longWithSignal }), 1],
+  ['Members Forum, long content, no signal → length (2)',                                 item(FK.membersForum, { description: long }), 2],
+  ['Members Forum, short content, no signal → below floor (3)',                           item(FK.membersForum, { description: 'short' }), 3],
+  ['Members Forum, negative pattern but long → length (2): negative only disqualifies actionable', item(FK.membersForum, { description: longNegative }), 2],
+  ['Members Forum, negative pattern and short → below floor (3)',                         item(FK.membersForum, { description: 'we may consider a sell' }), 3],
+  ['Stock Insights, unstarred, long+signal → length (2): star gate only feeds actionable', item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 2],
+  ['Stock Insights, unstarred, short → below floor (3)',                                  item(FK.stockInsights, { title: 'Discussion post', description: 'short' }), 3],
+  ['Stock Insights, starred, positive signal → actionable (1)',                           item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), 1],
+  ['Stock Insights, "Reply To: *…" → actionable (1): star survives reply-prefix normalization', item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }), 1],
+  ['Options Insights, starred, positive signal → actionable (1): mirrors Stock Insights',  item(FK.optionsInsights, { title: '*SPY Trade', description: longWithSignal }), 1],
+  ['Options Insights, unstarred, long+signal → length (2)',                               item(FK.optionsInsights, { title: 'Discussion post', description: longWithSignal }), 2],
+];
+
 describe('minVisibleTier', () => {
-  it('returns 0 (members) for Members Area regardless of content', () => {
-    expect(minVisibleTier(item(FK.membersArea, { description: '' }), MIN)).toBe(0);
-    expect(minVisibleTier(item(FK.membersArea, { description: 'we may consider a sell' }), MIN)).toBe(0);
-  });
-
-  it('returns 1 (actionable) for a positive-signal item outside Members Area', () => {
-    expect(minVisibleTier(item(FK.membersForum, { description: longWithSignal }), MIN)).toBe(1);
-  });
-
-  it('returns 2 (length) for a long item with no keyword signal', () => {
-    expect(minVisibleTier(item(FK.membersForum, { description: long }), MIN)).toBe(2);
-  });
-
-  it('returns 3 (below this device\'s floor) for a short item with no keyword signal', () => {
-    expect(minVisibleTier(item(FK.membersForum, { description: 'short' }), MIN)).toBe(3);
-  });
-
-  it('a negative-pattern match only disqualifies "actionable" — a long-enough negative post still hits "length"', () => {
-    expect(minVisibleTier(item(FK.membersForum, { description: longNegative }), MIN)).toBe(2);
-    expect(minVisibleTier(item(FK.membersForum, { description: 'we may consider a sell' }), MIN)).toBe(3); // too short for length too
-  });
-
-  it('the star/topic gate only feeds "actionable" — an unstarred stock/options post that\'s long enough still hits "length"', () => {
-    expect(minVisibleTier(item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), MIN)).toBe(2);
-    expect(minVisibleTier(item(FK.stockInsights, { title: 'Discussion post', description: 'short' }), MIN)).toBe(3);
-  });
-
-  it('returns 1 (actionable) for starred stock/options with a signal', () => {
-    expect(minVisibleTier(item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), MIN)).toBe(1);
-    expect(minVisibleTier(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }), MIN)).toBe(1);
+  it.each(TIER_CASES)('%s', (_desc, testItem, expectedTier) => {
+    expect(minVisibleTier(testItem, MIN)).toBe(expectedTier);
   });
 });
 
+const FILTER_CASES: [string, FilterItem, ContentFilter, string[], boolean][] = [
+  // Members Area: unconditional at every tier, even with a mismatched or empty author list.
+  ['Members Area passes at the narrowest tier ("members") despite a mismatched author',      item(FK.membersArea, { author: 'Other Person' }), 'members', [AUTHOR], true],
+  ['Members Area passes at "members" even with an empty author list',                        item(FK.membersArea, { author: 'Other Person' }), 'members', [], true],
+  // "members" tier: nothing outside Members Area ever qualifies, regardless of signal.
+  ['"members" tier never shows Members Forum content',                                       item(FK.membersForum, { description: longWithSignal }), 'members', [AUTHOR], false],
+  // "actionable" tier: requires a real keyword signal — length alone isn't enough.
+  ['"actionable" tier rejects long content with no keyword signal',                           item(FK.membersForum, { description: long }), 'actionable', [AUTHOR], false],
+  ['"actionable" tier accepts a positive-signal post',                                        item(FK.membersForum, { description: longWithSignal }), 'actionable', [AUTHOR], true],
+  // "length" tier: broadest — accepts anything long enough, including negative-pattern content.
+  ['"length" tier accepts long content with no keyword signal',                               item(FK.membersForum, { description: long }), 'length', [AUTHOR], true],
+  ['"length" tier accepts long negative-pattern content (negative only disqualifies actionable)', item(FK.membersForum, { description: longNegative }), 'length', [AUTHOR], true],
+  ['"length" tier rejects short content',                                                     item(FK.membersForum, { description: 'short' }), 'length', [AUTHOR], false],
+  // Star gate only feeds "actionable", not "length".
+  ['unstarred Stock Insights, long+signal: fails "actionable"',                               item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
+  ['unstarred Stock Insights, long+signal: passes "length"',                                  item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'length', [AUTHOR], true],
+  // Author matching.
+  ['author mismatch blocks "actionable" outside Members Area',                                item(FK.membersForum, { author: 'Other Person', description: longWithSignal }), 'actionable', [AUTHOR], false],
+  ['author mismatch blocks "length" outside Members Area',                                    item(FK.membersForum, { author: 'Other Person', description: longWithSignal }), 'length', [AUTHOR], false],
+  ['empty authors list means no author restriction (no global fallback)',                     item(FK.membersForum, { author: 'Anyone At All', description: longWithSignal }), 'actionable', [], true],
+  // Stock/Options Insights star + signal requirement at "actionable", mirrored across both forums.
+  ['Stock Insights: starred but no signal fails "actionable"',                                item(FK.stockInsights, { title: '*AAPL Trade', description: long }), 'actionable', [AUTHOR], false],
+  ['Stock Insights: starred with signal passes "actionable"',                                 item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
+  ['Stock Insights: "Reply To: *…" with signal passes "actionable"',                          item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
+  ['Stock Insights: unstarred with signal fails "actionable"',                                item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
+  ['Options Insights: starred but no signal fails "actionable"',                               item(FK.optionsInsights, { title: '*SPY Trade', description: long }), 'actionable', [AUTHOR], false],
+  ['Options Insights: starred with signal passes "actionable"',                                item(FK.optionsInsights, { title: '*SPY Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
+  ['Options Insights: "Reply To: *…" with signal passes "actionable"',                         item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
+  ['Options Insights: unstarred with signal fails "actionable"',                               item(FK.optionsInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
+];
+
 describe('matchesFilter', () => {
-  it('Members Area is unconditional — not gated by author or tier', () => {
-    expect(matchesFilter(item(FK.membersArea, { author: 'Other Person' }), 'members', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.membersArea, { author: 'Other Person' }), 'members', [], MIN)).toBe(true);
-  });
-
-  it('members tier only shows Members Area', () => {
-    expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'members', [AUTHOR], MIN)).toBe(false);
-  });
-
-  it('actionable tier requires a positive signal outside Members Area', () => {
-    expect(matchesFilter(item(FK.membersForum, { description: long }), 'actionable', [AUTHOR], MIN)).toBe(false); // long but no signal
-    expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'actionable', [AUTHOR], MIN)).toBe(true);
-  });
-
-  it('length tier accepts long content even without a keyword signal, or a negative-pattern match', () => {
-    expect(matchesFilter(item(FK.membersForum, { description: long }), 'length', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.membersForum, { description: longNegative }), 'length', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.membersForum, { description: 'short' }), 'length', [AUTHOR], MIN)).toBe(false);
-  });
-
-  it('an unstarred stock/options post that is long enough is visible at "length" but not "actionable"', () => {
-    const unstarredLong = item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal });
-    expect(matchesFilter(unstarredLong, 'actionable', [AUTHOR], MIN)).toBe(false);
-    expect(matchesFilter(unstarredLong, 'length', [AUTHOR], MIN)).toBe(true);
-  });
-
-  it('author mismatch blocks every tier outside Members Area', () => {
-    for (const filter of ['actionable', 'length'] as ContentFilter[]) {
-      expect(matchesFilter(item(FK.membersForum, { author: 'Other Person', description: longWithSignal }), filter, [AUTHOR], MIN)).toBe(false);
-    }
-  });
-
-  it('empty authors list means no author restriction (no global fallback)', () => {
-    expect(matchesFilter(item(FK.membersForum, { author: 'Anyone At All', description: longWithSignal }), 'actionable', [], MIN)).toBe(true);
-  });
-
-  it('stock-insights requires * prefix AND an action signal at the actionable tier — a starred topic does not excuse a "good job" reply', () => {
-    expect(matchesFilter(item(FK.stockInsights, { title: '*AAPL Trade',           description: long }),            'actionable', [AUTHOR], MIN)).toBe(false); // starred but no signal
-    expect(matchesFilter(item(FK.stockInsights, { title: '*AAPL Trade',           description: longWithSignal }),  'actionable', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }),  'actionable', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.stockInsights, { title: 'Discussion post',        description: longWithSignal }), 'actionable', [AUTHOR], MIN)).toBe(false); // no star at all
-  });
-
-  it('options-insights requires * prefix AND an action signal at the actionable tier — a starred topic does not excuse a "good job" reply', () => {
-    expect(matchesFilter(item(FK.optionsInsights, { title: '*SPY Trade',           description: long }),           'actionable', [AUTHOR], MIN)).toBe(false); // starred but no signal
-    expect(matchesFilter(item(FK.optionsInsights, { title: '*SPY Trade',           description: longWithSignal }), 'actionable', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: longWithSignal }), 'actionable', [AUTHOR], MIN)).toBe(true);
-    expect(matchesFilter(item(FK.optionsInsights, { title: 'Discussion post',      description: longWithSignal }), 'actionable', [AUTHOR], MIN)).toBe(false); // no star at all
+  it.each(FILTER_CASES)('%s', (_desc, testItem, filter, authors, expected) => {
+    expect(matchesFilter(testItem, filter, authors, MIN)).toBe(expected);
   });
 });
 
@@ -482,12 +458,15 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
   });
 });
 
-describe('runChannel — skips pre-redesign registrations missing filter/authors/minLength', () => {
+describe('runChannel — registrations predating filter/authors/minLength are skipped', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
-    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
 
-  it('does not push to a legacy registration lacking the new required fields', async () => {
+  // "Legacy" here means a TOKENS entry written before this schema existed — simulated directly
+  // via metadata containing only feedToken, since there's no migration path that produces one
+  // (see docs/notification-filter-design.md: such entries age out on next re-registration).
+  it('a malformed registration (missing filter/authors/minLength) receives no push', async () => {
     const stateStore: Record<string, string | null> = {
       'stats:options': null,
       'poll:options': 'poll-token',
@@ -518,10 +497,14 @@ describe('runChannel — skips pre-redesign registrations missing filter/authors
 
 describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
-  const rssWithItems = (guids: string[]) =>
-    `<?xml version="1.0"?><rss version="2.0"><channel>${guids.map((g) => `<item><guid>${g}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${'x'.repeat(210)}</description></item>`).join('')}</channel></rss>`;
+  // Realistic shape: a real pubDate on every item, like the actual feed always sends. guids are
+  // listed newest-first, each one minute older than the last, matching the feed's real ordering.
+  const rssWithItems = (guids: string[], descriptions?: string[]) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel>${guids.map((g, i) =>
+      `<item><guid>${g}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${descriptions?.[i] ?? 'x'.repeat(210)}</description><pubDate>${new Date(Date.now() - i * 60_000).toUTCString()}</pubDate></item>`
+    ).join('')}</channel></rss>`;
 
-  function mockEnv(seenList: string[] | undefined) {
+  function mockEnv(seenList: string[] | undefined, keys: { name: string; metadata: Record<string, unknown> }[] = []) {
     const stateStore: Record<string, string | null> = {
       'stats:options': null,
       'poll:options': 'poll-token',
@@ -530,7 +513,7 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
-      TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }), delete: vi.fn() },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn() },
     } as any;
     return { env, stateStore };
   }
@@ -542,7 +525,7 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
 
     const stats = JSON.parse(stateStore['stats:options']!);
-    expect(stats.newItems).toBe(0);
+    expect(stats.numNewItems).toBe(0);
     expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toEqual(['a', 'b', 'c']);
   });
 
@@ -555,27 +538,51 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
 
     const stats = JSON.parse(stateStore['stats:options']!);
-    expect(stats.newItems).toBe(1);
+    expect(stats.numNewItems).toBe(1);
     // newly-seen guid is prepended, ahead of the previous seen list.
     expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toEqual(['c', 'b', 'a']);
   });
 
-  it('caps how many of a feed\'s items are ever considered, even if the feed returns more', async () => {
-    const many = Array.from({ length: 30 }, (_, i) => `item-${i}`); // newest first
-    const { env, stateStore } = mockEnv(['item-29']); // the oldest of the 30 was already seen
+  it('honors a configured MAX_ALERT_ITEMS_PER_FEED cap, whatever its value', async () => {
+    // The specific number (25) the upstream feed happens to return today isn't the constraint
+    // under test — the cap itself, and that it's configurable, is. A small override (3) proves
+    // the mechanism without coupling the test to today's feed behavior.
+    const many = Array.from({ length: 10 }, (_, i) => `item-${i}`); // newest first
+    const { env, stateStore } = mockEnv(['item-9']); // the oldest of the 10 was already seen
+    env.MAX_ALERT_ITEMS_PER_FEED = '3';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(many)) }));
 
     await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
 
     const stats = JSON.parse(stateStore['stats:options']!);
-    // Only the first 25 are ever considered, so item-29 (30th) is never reached — every one of
-    // the 25 considered items is "new" relative to the seen set, since the early-exit boundary
-    // sits outside the considered window entirely.
-    expect(stats.itemsFetched).toBe(25);
-    expect(stats.newItems).toBe(25);
+    // Only the configured 3 are ever considered, so item-9 (the actual seen boundary) is never
+    // reached — every considered item counts as "new."
+    expect(stats.itemsFetched).toBe(3);
+    expect(stats.numNewItems).toBe(3);
+  });
+
+  it('alerts oldest-to-newest, not newest-first, when multiple new items exist', async () => {
+    const { env } = mockEnv(['old-guid'], [
+      { name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
+    ]);
+    // Feed returns newest-first: c, b, a — all three are new. description carries the guid so
+    // push message order is directly observable below.
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(rssWithItems(['c', 'b', 'a'], ['c', 'b', 'a'])) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    const messages = JSON.parse(pushCall![1]!.body as string);
+    expect(messages.map((m: { body: string }) => m.body)).toEqual(['a', 'b', 'c']);
   });
 });
 
+// "Bucket" = the runtime grouping in index.ts's runChannel: devices sharing an identical
+// filter|authors|minLength signature share one eligibility check and one push-send call.
 describe('runChannel — push-send failure does not abort remaining buckets (issue #42)', () => {
   const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
