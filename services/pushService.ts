@@ -4,7 +4,6 @@ import { storageGet, storageSet } from './storageService';
 import { getToken } from './authService';
 import { FEEDKEY_TO_CHANNEL, ChannelNames } from '@li/core';
 import type { FeedKey, ContentFilter, Channel } from '@li/core';
-export type { ContentFilter };
 
 // Android requires every notification to belong to a channel (created once in app/_layout.tsx
 // via setNotificationChannelAsync) — applies to push notifications same as local ones. iOS has
@@ -100,7 +99,7 @@ export async function registerPushChannel(feedKey: FeedKey, feedToken: string, o
 }
 
 // Called by Settings when the user changes the filter tier, author whitelist, or min length.
-// Persists all three and re-registers every channel the user is enrolled in.
+// Persists the new values and re-registers every channel the user is enrolled in.
 export async function updatePushSettings(settings: PushFilterSettings): Promise<void> {
   try {
     const pushToken = await getExpoPushToken();

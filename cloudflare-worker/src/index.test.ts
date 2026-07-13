@@ -31,18 +31,22 @@ beforeEach(() => { vi.restoreAllMocks(); });
 // Enumerated as a table rather than one-off `it` blocks so coverage per feedKey/tier is visible
 // at a glance, and so a missing combination (e.g. "does Members Area actually pass through?")
 // is obvious from a gap in the table instead of an absent, easy-to-miss test.
+//
+// Titles/content here are already in normalized form (no "Reply To: " prefix, no HTML) — that's
+// FilterItem's contract (see its definition in @li/core) and it's the parser's job to guarantee
+// it (covered by extractRssItems.test.ts), not minVisibleTier's, so there's no "Reply To: …"
+// case here.
 const TIER_CASES: [string, FilterItem, number][] = [
   ['Members Area, empty content → members (0)',                                          item(FK.membersArea, { description: '' }), 0],
   ['Members Area, negative-pattern content → still members (0), unconditional',           item(FK.membersArea, { description: 'we may consider a sell' }), 0],
   ['Members Forum, positive signal → actionable (1)',                                     item(FK.membersForum, { description: longWithSignal }), 1],
   ['Members Forum, long content, no signal → length (2)',                                 item(FK.membersForum, { description: long }), 2],
-  ['Members Forum, short content, no signal → below floor (3)',                           item(FK.membersForum, { description: 'short' }), 3],
+  ['Members Forum, short content, no signal → below floor (Infinity)',                    item(FK.membersForum, { description: 'short' }), Infinity],
   ['Members Forum, negative pattern but long → length (2): negative only disqualifies actionable', item(FK.membersForum, { description: longNegative }), 2],
-  ['Members Forum, negative pattern and short → below floor (3)',                         item(FK.membersForum, { description: 'we may consider a sell' }), 3],
+  ['Members Forum, negative pattern and short → below floor (Infinity)',                  item(FK.membersForum, { description: 'we may consider a sell' }), Infinity],
   ['Stock Insights, unstarred, long+signal → length (2): star gate only feeds actionable', item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 2],
-  ['Stock Insights, unstarred, short → below floor (3)',                                  item(FK.stockInsights, { title: 'Discussion post', description: 'short' }), 3],
+  ['Stock Insights, unstarred, short → below floor (Infinity)',                           item(FK.stockInsights, { title: 'Discussion post', description: 'short' }), Infinity],
   ['Stock Insights, starred, positive signal → actionable (1)',                           item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), 1],
-  ['Stock Insights, "Reply To: *…" → actionable (1): star survives reply-prefix normalization', item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }), 1],
   ['Options Insights, starred, positive signal → actionable (1): mirrors Stock Insights',  item(FK.optionsInsights, { title: '*SPY Trade', description: longWithSignal }), 1],
   ['Options Insights, unstarred, long+signal → length (2)',                               item(FK.optionsInsights, { title: 'Discussion post', description: longWithSignal }), 2],
 ];
@@ -76,11 +80,9 @@ const FILTER_CASES: [string, FilterItem, ContentFilter, string[], boolean][] = [
   // Stock/Options Insights star + signal requirement at "actionable", mirrored across both forums.
   ['Stock Insights: starred but no signal fails "actionable"',                                item(FK.stockInsights, { title: '*AAPL Trade', description: long }), 'actionable', [AUTHOR], false],
   ['Stock Insights: starred with signal passes "actionable"',                                 item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
-  ['Stock Insights: "Reply To: *…" with signal passes "actionable"',                          item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
   ['Stock Insights: unstarred with signal fails "actionable"',                                item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
   ['Options Insights: starred but no signal fails "actionable"',                               item(FK.optionsInsights, { title: '*SPY Trade', description: long }), 'actionable', [AUTHOR], false],
   ['Options Insights: starred with signal passes "actionable"',                                item(FK.optionsInsights, { title: '*SPY Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
-  ['Options Insights: "Reply To: *…" with signal passes "actionable"',                         item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
   ['Options Insights: unstarred with signal fails "actionable"',                               item(FK.optionsInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
 ];
 

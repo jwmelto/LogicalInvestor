@@ -44,7 +44,7 @@ describe('registerPushChannel', () => {
     expect(stored['push_channels']).toBeUndefined();
   });
 
-  it('sends the current filter/authors/minLength settings when no override is given', async () => {
+  it('reads filter/authors/minLength from storage when called without explicit settings', async () => {
     stored['push_filter'] = 'length';
     stored['push_authors'] = JSON.stringify(['herman']);
     stored['push_min_length'] = '50';

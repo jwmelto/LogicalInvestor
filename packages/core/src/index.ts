@@ -5,12 +5,13 @@ export const MAX_SEEN_IDS_PER_FEED = 500;
 // Three filter tiers, narrow to broad, each a strict superset of the previous — see
 // docs/notification-filter-design.md. There is no 'any' tier: "show me everything" is just
 // `filter: 'length', minLength: 0` — the length check always passes at 0, so it needs no
-// separate enum value.
-export type ContentFilter = 'members' | 'actionable' | 'length';
+// separate enum value. Defined once here; ContentFilter and the rank lookup are both derived
+// from this array so the tier names exist in exactly one place.
+export const FILTER_TIERS = ['members', 'actionable', 'length'] as const;
 
-export const FILTER_TIERS: ContentFilter[] = ['members', 'actionable', 'length'];
+export type ContentFilter = typeof FILTER_TIERS[number];
 
-const FILTER_TIER_RANK: Record<ContentFilter, number> = { members: 0, actionable: 1, length: 2 };
+const FILTER_TIER_RANK = Object.fromEntries(FILTER_TIERS.map((tier, rank) => [tier, rank])) as Record<ContentFilter, number>;
 
 export const FeedKeys = {
   membersArea:     'membersArea',
@@ -74,10 +75,7 @@ export interface RssItem {
   link: string;
   pubDate: Date;
   feedKey: FeedKey;
-  // Whether the raw title had no "Reply To: " prefix, i.e. this is the first post in its topic
-  // rather than a reply. Not consumed anywhere yet — exposed so a future "new topic" alert tier
-  // has the signal available; title itself is always the already-stripped, display-ready form.
-  isFirstPost: boolean;
+  isFirstPost: boolean; // raw title had no "Reply To: " prefix; unconsumed for now
 }
 
 // Normalizes an already-parsed RSS document (via fast-xml-parser) to an array of items —
@@ -105,6 +103,9 @@ export function extractRssItems(parsedXml: unknown): Omit<RssItem, 'feedKey'>[] 
   });
 }
 
+// title/content are expected already normalized, same as RssItem's (title's "Reply To: " prefix
+// stripped, content's HTML stripped) — a real RssItem already satisfies this, so nothing below
+// re-strips either field.
 export interface FilterItem {
   feedKey: FeedKey;
   author?: string;
@@ -185,30 +186,31 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// Ordinal "how loose a device's tier needs to be to see this item" — computed once per
-// item/minLength pair. Moot for Members Area in practice: matchesFilter bypasses it entirely
-// before this is ever consulted, but the branch is kept here so the function is independently
-// testable and total.
+// Ordinal "how loose a device's tier needs to be to see this item," given that device's own
+// minLength. Moot for Members Area: matchesFilter bypasses it before this is ever consulted;
+// the branch stays so the function is independently testable.
 //
-// A negative-pattern match only disqualifies the 'actionable' classification — it is not a
-// veto on visibility. Long-enough negative-pattern content still surfaces at the 'length' tier;
-// nothing here returns Infinity, since there is no tier a device can't reach.
+// A negative-pattern match only disqualifies 'actionable' — it doesn't veto 'length'. Infinity
+// means "not visible at any tier, at this minLength" (below the length floor with no signal) —
+// parameterized by the device's own minLength, not a fixed veto on the content.
 export function minVisibleTier(item: FilterItem, minLength: number): number {
   if (item.feedKey === FeedKeys.membersArea) return FILTER_TIER_RANK.members;
-  const text = stripHtml(item.content ?? '');
+  const text = item.content ?? '';
   const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
-  const topicPass = !requiresStar || stripReplyPrefix(item.title ?? '').startsWith('*');
+  const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
   const actionable = topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
   if (actionable) return FILTER_TIER_RANK.actionable;
-  return text.length >= minLength ? FILTER_TIER_RANK.length : FILTER_TIER_RANK.length + 1;
+  return text.length >= minLength ? FILTER_TIER_RANK.length : Infinity;
 }
 
 // Empty authors list = no author restriction (there is no global default to fall back to —
-// every device's authors/minLength/filter are its own, set at registration).
+// every device's authors/minLength/filter are its own, set at registration). `authors` is
+// expected already lowercased (the Worker lowercases at registration time); only the item's own
+// author name is lowercased here, since that's the one value this function doesn't control.
 export function authorMatches(author: string | undefined, authors: string[]): boolean {
   if (authors.length === 0) return true;
   const a = (author ?? '').toLowerCase();
-  return authors.some((f) => a.includes(f.toLowerCase()));
+  return authors.some((f) => a.includes(f));
 }
 
 // Device eligibility. Members Area is unconditional — no author or content check — so that a
