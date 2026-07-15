@@ -59,13 +59,26 @@ device (`/unregister`); there is no separate "off" setting.
 ## `minVisibleTier`
 
 ```
-minVisibleTier(item, minLength):
+minVisibleTier(item, minLength, actionableAuthors):
   if feedKey === membersArea: return 0
+  isActionableAuthor = item.author in actionableAuthors
   topicPass = (stock/options) ? title.startsWith('*') : true
-  actionable = topicPass && !negativePatternMatch && positivePatternMatch
+  actionable = isActionableAuthor && topicPass && !negativePatternMatch && positivePatternMatch
   if actionable: return 1
   return (length >= minLength) ? 2 : Infinity
 ```
+
+`actionableAuthors` is who can trigger the `actionable` tier at all — a
+pattern match from anyone else (e.g. a reply repeating or joking about
+Sean's language) isn't a real trade call. It's a parameter, not a hardcoded
+constant: the Worker reads it from `env.ACTIONABLE_AUTHORS` (comma-separated,
+default `"Sean Hyman"`, same pattern as its other tunables) and passes it
+into `matchesFilter`/`minVisibleTier`. It's shared by every device, not a
+per-device value — independent of a device's own `authors` whitelist, which
+`matchesFilter` applies separately on top of every tier: a Sean actionable
+post still needs to pass a device's whitelist like anything else, and a
+non-Sean post that a device does want to hear from can still surface at
+`length` if it's long enough — it just never reaches `actionable`.
 
 A negative-pattern match disqualifies `actionable` only — a long-enough
 negative-pattern post still surfaces at `length`. `Infinity` means "not
@@ -75,8 +88,11 @@ device, not a fixed veto on the content.
 ## Author matching
 
 `authors: string[]`, lowercased, stored per device at registration. Empty
-list = no author restriction. There is no global fallback — `filter`,
-`authors`, and `minLength` are required on every registration.
+list = no author restriction. There is no global fallback for this value —
+`filter`, `authors`, and `minLength` are required on every registration.
+(Separate from `actionableAuthors` above, which is shared Worker
+configuration gating the `actionable` tier itself, not any one device's
+preferences.)
 
 ## `TokenMeta`
 

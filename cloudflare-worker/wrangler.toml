@@ -22,6 +22,7 @@ POLL_BOUNDARY_LATEDAY = "1400"  # hhmm ET: start of late-day (reduced polling) w
 POLL_BOUNDARY_CLOSE   = "1615"  # hhmm ET: end of late-day window / start of overnight
 MAX_PUSH_AGE_MINUTES  = "120"   # content older than this won't be pushed even if newly-seen
 MAX_ALERT_ITEMS_PER_FEED = "25" # cap on how many of a feed's most-recent posts are considered per poll
+ACTIONABLE_AUTHORS = "Sean Hyman" # comma-separated; who can trigger the 'actionable' tier
 # FEED_TOKEN is a secret — set it with: wrangler secret put FEED_TOKEN
 
 # After running `wrangler kv namespace create TOKENS`, paste the id below

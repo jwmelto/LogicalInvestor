@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, minVisibleTier, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS } from './index';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
-import type { FeedKey, FilterItem, ContentFilter } from '@li/core';
+import type { FeedKey, FilterItem } from '@li/core';
 
 const FK = FeedKeys;
 
@@ -15,12 +15,10 @@ function item(feedKey: FeedKey, overrides: { author?: string; title?: string; de
 }
 
 const AUTHOR = 'sean hyman';
+const ACTIONABLE_AUTHORS = ['sean hyman'];
 const MIN = 200;
 const long = 'x'.repeat(210);
-// Long content with an action signal: satisfies both the length and semantic requirements.
 const longWithSignal = 'new pick — ' + 'x'.repeat(200);
-// Long content matching a negative pattern: negative patterns disqualify 'actionable' only,
-// they don't veto visibility, so this should still surface at the 'length' tier.
 const longNegative = 'we may consider a sell ' + 'x'.repeat(200);
 
 const RSS_WITH_ITEM = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>1</guid><title>t</title><link>l</link><description>d</description></item></channel></rss>';
@@ -28,67 +26,82 @@ const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channe
 
 beforeEach(() => { vi.restoreAllMocks(); });
 
-// Enumerated as a table rather than one-off `it` blocks so coverage per feedKey/tier is visible
-// at a glance, and so a missing combination (e.g. "does Members Area actually pass through?")
-// is obvious from a gap in the table instead of an absent, easy-to-miss test.
-//
-// Titles/content here are already in normalized form (no "Reply To: " prefix, no HTML) — that's
-// FilterItem's contract (see its definition in @li/core) and it's the parser's job to guarantee
-// it (covered by extractRssItems.test.ts), not minVisibleTier's, so there's no "Reply To: …"
-// case here.
-const TIER_CASES: [string, FilterItem, number][] = [
-  ['Members Area, empty content → members (0)',                                          item(FK.membersArea, { description: '' }), 0],
-  ['Members Area, negative-pattern content → still members (0), unconditional',           item(FK.membersArea, { description: 'we may consider a sell' }), 0],
-  ['Members Forum, positive signal → actionable (1)',                                     item(FK.membersForum, { description: longWithSignal }), 1],
-  ['Members Forum, long content, no signal → length (2)',                                 item(FK.membersForum, { description: long }), 2],
-  ['Members Forum, short content, no signal → below floor (Infinity)',                    item(FK.membersForum, { description: 'short' }), Infinity],
-  ['Members Forum, negative pattern but long → length (2): negative only disqualifies actionable', item(FK.membersForum, { description: longNegative }), 2],
-  ['Members Forum, negative pattern and short → below floor (Infinity)',                  item(FK.membersForum, { description: 'we may consider a sell' }), Infinity],
-  ['Stock Insights, unstarred, long+signal → length (2): star gate only feeds actionable', item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 2],
-  ['Stock Insights, unstarred, short → below floor (Infinity)',                           item(FK.stockInsights, { title: 'Discussion post', description: 'short' }), Infinity],
-  ['Stock Insights, starred, positive signal → actionable (1)',                           item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), 1],
-  ['Options Insights, starred, positive signal → actionable (1): mirrors Stock Insights',  item(FK.optionsInsights, { title: '*SPY Trade', description: longWithSignal }), 1],
-  ['Options Insights, unstarred, long+signal → length (2)',                               item(FK.optionsInsights, { title: 'Discussion post', description: longWithSignal }), 2],
-];
-
-describe('minVisibleTier', () => {
-  it.each(TIER_CASES)('%s', (_desc, testItem, expectedTier) => {
-    expect(minVisibleTier(testItem, MIN)).toBe(expectedTier);
-  });
-});
-
-const FILTER_CASES: [string, FilterItem, ContentFilter, string[], boolean][] = [
-  // Members Area: unconditional at every tier, even with a mismatched or empty author list.
-  ['Members Area passes at the narrowest tier ("members") despite a mismatched author',      item(FK.membersArea, { author: 'Other Person' }), 'members', [AUTHOR], true],
-  ['Members Area passes at "members" even with an empty author list',                        item(FK.membersArea, { author: 'Other Person' }), 'members', [], true],
-  // "members" tier: nothing outside Members Area ever qualifies, regardless of signal.
-  ['"members" tier never shows Members Forum content',                                       item(FK.membersForum, { description: longWithSignal }), 'members', [AUTHOR], false],
-  // "actionable" tier: requires a real keyword signal — length alone isn't enough.
-  ['"actionable" tier rejects long content with no keyword signal',                           item(FK.membersForum, { description: long }), 'actionable', [AUTHOR], false],
-  ['"actionable" tier accepts a positive-signal post',                                        item(FK.membersForum, { description: longWithSignal }), 'actionable', [AUTHOR], true],
-  // "length" tier: broadest — accepts anything long enough, including negative-pattern content.
-  ['"length" tier accepts long content with no keyword signal',                               item(FK.membersForum, { description: long }), 'length', [AUTHOR], true],
-  ['"length" tier accepts long negative-pattern content (negative only disqualifies actionable)', item(FK.membersForum, { description: longNegative }), 'length', [AUTHOR], true],
-  ['"length" tier rejects short content',                                                     item(FK.membersForum, { description: 'short' }), 'length', [AUTHOR], false],
-  // Star gate only feeds "actionable", not "length".
-  ['unstarred Stock Insights, long+signal: fails "actionable"',                               item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
-  ['unstarred Stock Insights, long+signal: passes "length"',                                  item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'length', [AUTHOR], true],
-  // Author matching.
-  ['author mismatch blocks "actionable" outside Members Area',                                item(FK.membersForum, { author: 'Other Person', description: longWithSignal }), 'actionable', [AUTHOR], false],
-  ['author mismatch blocks "length" outside Members Area',                                    item(FK.membersForum, { author: 'Other Person', description: longWithSignal }), 'length', [AUTHOR], false],
-  ['empty authors list means no author restriction (no global fallback)',                     item(FK.membersForum, { author: 'Anyone At All', description: longWithSignal }), 'actionable', [], true],
-  // Stock/Options Insights star + signal requirement at "actionable", mirrored across both forums.
-  ['Stock Insights: starred but no signal fails "actionable"',                                item(FK.stockInsights, { title: '*AAPL Trade', description: long }), 'actionable', [AUTHOR], false],
-  ['Stock Insights: starred with signal passes "actionable"',                                 item(FK.stockInsights, { title: '*AAPL Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
-  ['Stock Insights: unstarred with signal fails "actionable"',                                item(FK.stockInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
-  ['Options Insights: starred but no signal fails "actionable"',                               item(FK.optionsInsights, { title: '*SPY Trade', description: long }), 'actionable', [AUTHOR], false],
-  ['Options Insights: starred with signal passes "actionable"',                                item(FK.optionsInsights, { title: '*SPY Trade', description: longWithSignal }), 'actionable', [AUTHOR], true],
-  ['Options Insights: unstarred with signal fails "actionable"',                               item(FK.optionsInsights, { title: 'Discussion post', description: longWithSignal }), 'actionable', [AUTHOR], false],
-];
-
+// matchesFilter(item, filter, authors, minLength, actionableAuthors) is the one function a
+// device's alerting decision goes through. One describe block per tier, each covering only what
+// that tier requires.
 describe('matchesFilter', () => {
-  it.each(FILTER_CASES)('%s', (_desc, testItem, filter, authors, expected) => {
-    expect(matchesFilter(testItem, filter, authors, MIN)).toBe(expected);
+  describe('members tier', () => {
+    it.each([
+      ['no content', item(FK.membersArea, { description: '' })],
+      ['long content', item(FK.membersArea, { description: long })],
+      ['actionable-signal content', item(FK.membersArea, { description: longWithSignal })],
+      ['negative-pattern content', item(FK.membersArea, { description: longNegative })],
+    ])('a Members Area post (%s) alerts regardless of author', (_desc, testItem) => {
+      expect(matchesFilter(testItem, 'members', ['someone else'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(testItem, 'members', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
+    it('a post outside Members Area does not alert', () => {
+      expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'members', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+  });
+
+  describe('actionable tier', () => {
+    it('an actionable-signal post by an ACTIONABLE_AUTHORS author alerts', () => {
+      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
+    it('an actionable-signal post by an author outside ACTIONABLE_AUTHORS does not alert', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('a non-actionable post does not alert, regardless of author', () => {
+      expect(matchesFilter(item(FK.membersForum, { author: 'Sean Hyman', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(item(FK.membersForum, { author: 'Joe Blow', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('ACTIONABLE_AUTHORS is a live parameter: changing it changes who can alert', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', [], MIN, ['sean hyman'])).toBe(false);
+      expect(matchesFilter(post, 'actionable', [], MIN, ['joe blow'])).toBe(true);
+    });
+
+    it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
+      const starred = item(feedKey, { title: '*AAPL Trade', description: longWithSignal });
+      const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
+      expect(matchesFilter(starred, 'actionable', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(unstarred, 'actionable', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('a negative-pattern post does not alert at the actionable tier, but can still alert at the length tier', () => {
+      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longNegative });
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+  });
+
+  describe('length tier', () => {
+    it('a long-enough post by a whitelisted author alerts', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
+      expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
+    it('a long-enough post by a non-whitelisted author does not alert', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
+      expect(matchesFilter(post, 'length', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('an empty author whitelist means no author restriction', () => {
+      const post = item(FK.membersForum, { author: 'Anyone At All', description: long });
+      expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
+    it('a post shorter than minLength does not alert, even from a whitelisted author', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: 'short' });
+      expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
   });
 });
 

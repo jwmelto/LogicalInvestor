@@ -20,7 +20,7 @@ import { Palette } from '../../constants/theme';
 // separate ternary chains, each restating the same three-way branch.
 const FILTER_TIER_INFO: Record<ContentFilter, { label: string; hint: string }> = {
   members:    { label: 'Members',    hint: 'Members Area posts only' },
-  actionable: { label: 'Actionable', hint: 'Members Area, plus actionable content elsewhere' },
+  actionable: { label: 'Actionable', hint: "Members Area, plus Sean's actionable trade calls elsewhere" },
   length:     { label: 'Length',     hint: 'Members Area, plus anything long enough elsewhere' },
 };
 

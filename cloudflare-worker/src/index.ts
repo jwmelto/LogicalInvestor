@@ -17,6 +17,7 @@ export interface Env {
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
+  ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -357,6 +358,8 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   // app's job (its own reconciliation on every foreground refresh), not the Worker's. See
   // "Server-side alerting model" in the design doc for why a cap exists at all.
   const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
+  // Who can trigger the 'actionable' tier.
+  const actionableAuthors = (env.ACTIONABLE_AUTHORS ?? 'Sean Hyman').split(',').map((a) => a.trim().toLowerCase());
   const statsKey = `stats:${channel}`;
   const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
   const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
@@ -478,7 +481,7 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const sentCounts = await Promise.all(
     Array.from(buckets.values()).map(async (bucket) => {
       const toNotify = freshItems
-        .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength))
+        .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength, actionableAuthors))
         .slice(0, 5);
       if (toNotify.length === 0) return 0;
 

@@ -103,9 +103,7 @@ export function extractRssItems(parsedXml: unknown): Omit<RssItem, 'feedKey'>[] 
   });
 }
 
-// title/content are expected already normalized, same as RssItem's (title's "Reply To: " prefix
-// stripped, content's HTML stripped) — a real RssItem already satisfies this, so nothing below
-// re-strips either field.
+// title/content are asserted to be already normalized (no "Reply To: " prefix, no HTML).
 export interface FilterItem {
   feedKey: FeedKey;
   author?: string;
@@ -186,36 +184,32 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// Ordinal "how loose a device's tier needs to be to see this item," given that device's own
-// minLength. Moot for Members Area: matchesFilter bypasses it before this is ever consulted;
-// the branch stays so the function is independently testable.
+// Ordinal "how loose a device's tier needs to be to see this item." A negative-pattern match
+// only disqualifies 'actionable', not 'length'. Infinity = not visible at any tier, at this
+// minLength.
 //
-// A negative-pattern match only disqualifies 'actionable' — it doesn't veto 'length'. Infinity
-// means "not visible at any tier, at this minLength" (below the length floor with no signal) —
-// parameterized by the device's own minLength, not a fixed veto on the content.
-export function minVisibleTier(item: FilterItem, minLength: number): number {
+// actionableAuthors is asserted to be lowercase.
+export function minVisibleTier(item: FilterItem, minLength: number, actionableAuthors: string[]): number {
   if (item.feedKey === FeedKeys.membersArea) return FILTER_TIER_RANK.members;
   const text = item.content ?? '';
+  const author = (item.author ?? '').toLowerCase();
+  const isActionableAuthor = actionableAuthors.some((a) => author.includes(a));
   const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
   const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
-  const actionable = topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
+  const actionable = isActionableAuthor && topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
   if (actionable) return FILTER_TIER_RANK.actionable;
   return text.length >= minLength ? FILTER_TIER_RANK.length : Infinity;
 }
 
-// Empty authors list = no author restriction (there is no global default to fall back to —
-// every device's authors/minLength/filter are its own, set at registration). `authors` is
-// expected already lowercased (the Worker lowercases at registration time); only the item's own
-// author name is lowercased here, since that's the one value this function doesn't control.
+// Empty authors list = no author restriction. `authors` is asserted to be lowercase.
 export function authorMatches(author: string | undefined, authors: string[]): boolean {
   if (authors.length === 0) return true;
   const a = (author ?? '').toLowerCase();
   return authors.some((f) => a.includes(f));
 }
 
-// Device eligibility. Members Area is unconditional — no author or content check — so that a
-// device's author whitelist can never silence the one channel meant to always come through.
-export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number): boolean {
+// Members Area is unconditional — no author or content check.
+export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, actionableAuthors: string[]): boolean {
   if (item.feedKey === FeedKeys.membersArea) return true;
-  return authorMatches(item.author, authors) && FILTER_TIER_RANK[filter] >= minVisibleTier(item, minLength);
+  return authorMatches(item.author, authors) && FILTER_TIER_RANK[filter] >= minVisibleTier(item, minLength, actionableAuthors);
 }
