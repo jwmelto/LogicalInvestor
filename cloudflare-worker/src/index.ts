@@ -292,14 +292,9 @@ export async function registerDevice(
   return new Response('ok');
 }
 
-// Tri-state: true/false are definitive, null means the check itself failed (network error, 5xx,
-// timeout) and access is unknown — callers must not treat null as "no access" or a transient blip
-// permanently deletes registrations.
-// The real revocation signal is item count: verified against the live server, this endpoint
-// always returns HTTP 200 regardless of token validity, so the 401/403 branch below is defensive
-// only and never fires in practice. CHANNEL_FEEDS[channel][0] is chosen per-channel specifically
-// so this is always a feed that requires a valid token to return anything (see CHANNEL_FEEDS
-// comment) — item count is a reliable signal only because of that choice.
+// Tri-state: true/false are definitive (item count, or a 401/403 meaning revoked access);
+// null means the check itself failed (network error, 5xx, timeout) and access is unknown —
+// callers must not treat null as "no access" or a transient blip permanently deletes registrations.
 export async function feedTokenHasAccess(channel: Channel, feedToken: string): Promise<boolean | null> {
   try {
     const res = await fetch(`${CHANNEL_FEEDS[channel][0].url}?feed_token=${feedToken}`);
