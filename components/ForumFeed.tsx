@@ -18,7 +18,7 @@ import { getHideSnippetOnRead, storageGetObject, storageSetObject, getCachedUnre
 import { getTopicsForForum, generateTopicFeedUrl, Topic } from '../services/topicService';
 import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
-import { addNotificationAuthor } from '../services/notificationService';
+import { addPushAuthor } from '../services/pushService';
 import { reportMissedAlert, type ReportableItem } from '../services/reportService';
 import { useColorScheme } from '../hooks/use-color-scheme';
 import { Palette } from '../constants/theme';
@@ -324,7 +324,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     const name = item.author;
     Alert.alert(name, item.title, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Add author to alerts', onPress: () => addNotificationAuthor(name) },
+      { text: 'Add author to alerts', onPress: () => addPushAuthor(name) },
       { text: 'Report: missed alert', onPress: () => reportMissedAlert(item) },
     ]);
   }

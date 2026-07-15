@@ -7,9 +7,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
-import { getNotificationSettings, saveNotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, fireTestNotification, type NotificationSettings } from '../../services/notificationService';
-import { getPushLevel, updatePushLevel, unregisterPushToken, type PushLevel } from '../../services/pushService';
-import { fetchAllFeeds } from '../../services/feedService';
+import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken } from '../../services/pushService';
+import { FILTER_TIERS, type ContentFilter } from '@li/core';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { getTopics } from '../../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../../services/subscriptionService';
@@ -17,14 +16,23 @@ import type { Topic } from '../../services/topicService';
 import { useColorScheme } from '../../hooks/use-color-scheme';
 import { Palette } from '../../constants/theme';
 
+// Single source of truth for the tier row's button label and explanatory hint — was two
+// separate ternary chains, each restating the same three-way branch.
+const FILTER_TIER_INFO: Record<ContentFilter, { label: string; hint: string }> = {
+  members:    { label: 'Members',    hint: 'Members Area posts only' },
+  actionable: { label: 'Actionable', hint: "Members Area, plus Sean's actionable trade calls elsewhere" },
+  length:     { label: 'Length',     hint: 'Members Area, plus anything long enough elsewhere' },
+};
+
 export default function SettingsScreen() {
   const scheme = useColorScheme();
   const c = scheme === 'dark' ? Palette.dark : Palette.light;
   const [hideSnippet, setHideSnippet] = useState(false);
   const [refreshInterval, setRefreshIntervalState] = useState(30);
   const [loading, setLoading] = useState(true);
-  const [notifSettings, setNotifSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
-  const [pushLevel, setPushLevelState] = useState<PushLevel>('standard');
+  const [pushFilter, setPushFilterState] = useState<ContentFilter>('actionable');
+  const [pushAuthors, setPushAuthorsState] = useState<string[]>(['Sean']);
+  const [pushMinLength, setPushMinLengthState] = useState(200);
   const [newAuthor, setNewAuthor] = useState('');
   const [expandedNotifications, setExpandedNotifications] = useState(true);
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
@@ -46,11 +54,10 @@ export default function SettingsScreen() {
     const hideValue = await getHideSnippetOnRead();
     setHideSnippet(hideValue);
 
-    const notif = await getNotificationSettings();
-    setNotifSettings(notif);
-
-    const level = await getPushLevel();
-    setPushLevelState(level);
+    const [filter, authors, minLength] = await Promise.all([getPushFilter(), getPushAuthors(), getPushMinLength()]);
+    setPushFilterState(filter);
+    setPushAuthorsState(authors);
+    setPushMinLengthState(minLength);
 
     const interval = await getRefreshInterval();
     setRefreshIntervalState(interval);
@@ -63,14 +70,19 @@ export default function SettingsScreen() {
     setLoading(false);
   }
 
-  async function handlePushLevelChange(level: PushLevel) {
-    setPushLevelState(level);
-    await updatePushLevel(level);
+  async function handlePushFilterChange(filter: ContentFilter) {
+    setPushFilterState(filter);
+    await updatePushSettings({ filter, authors: pushAuthors, minLength: pushMinLength });
   }
 
-  async function handleNotifSettingChange(updated: NotificationSettings) {
-    setNotifSettings(updated);
-    await saveNotificationSettings(updated);
+  async function handlePushAuthorsChange(authors: string[]) {
+    setPushAuthorsState(authors);
+    await updatePushSettings({ filter: pushFilter, authors, minLength: pushMinLength });
+  }
+
+  async function handlePushMinLengthChange(minLength: number) {
+    setPushMinLengthState(minLength);
+    await updatePushSettings({ filter: pushFilter, authors: pushAuthors, minLength });
   }
 
   async function handleToggleHideSnippet(value: boolean) {
@@ -204,42 +216,30 @@ export default function SettingsScreen() {
           {expandedNotifications && (
             <>
               <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
-                <Text style={[styles.preferenceLabelInline, { color: c.text, marginBottom: 8 }]}>Push notification level</Text>
+                <Text style={[styles.preferenceLabelInline, { color: c.text, marginBottom: 8 }]}>Push notification tier</Text>
                 <View style={styles.levelRow}>
-                  {(['all', 'standard', 'minimal', 'none'] as PushLevel[]).map((level) => (
+                  {FILTER_TIERS.map((filter) => (
                     <TouchableOpacity
-                      key={level}
-                      style={[styles.levelButton, { borderColor: c.tint }, pushLevel === level && { backgroundColor: c.tint }]}
-                      onPress={() => handlePushLevelChange(level)}
+                      key={filter}
+                      style={[styles.levelButton, { borderColor: c.tint }, pushFilter === filter && { backgroundColor: c.tint }]}
+                      onPress={() => handlePushFilterChange(filter)}
                       disabled={loading}
                     >
-                      <Text style={[styles.levelButtonText, { color: pushLevel === level ? '#fff' : c.tint }]}>
-                        {level === 'all' ? 'All Sean' : level === 'standard' ? 'Standard' : level === 'minimal' ? 'Minimal' : 'None'}
+                      <Text style={[styles.levelButtonText, { color: pushFilter === filter ? '#fff' : c.tint }]}>
+                        {FILTER_TIER_INFO[filter].label}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
                 <Text style={[styles.levelHint, { color: c.textFaint }]}>
-                  {pushLevel === 'all' ? 'All posts from Sean Hyman'
-                    : pushLevel === 'standard' ? 'Sean only · actionable content · starred SI/OI topics'
-                    : pushLevel === 'minimal' ? 'Members Area posts only'
-                    : 'No push notifications'}
+                  {FILTER_TIER_INFO[pushFilter].hint}
                 </Text>
               </View>
-              <View style={[styles.preference, { borderTopColor: c.border, borderTopWidth: 1, marginTop: 8 }]}>
-                <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Enable local notifications</Text>
-                <Switch
-                  value={notifSettings.enabled}
-                  onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, enabled: v })}
-                  disabled={loading}
-                />
-              </View>
-              {notifSettings.enabled && (
-              <><View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
+              <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
                 <View style={styles.intervalLabelRow}>
                   <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Min content length</Text>
                   <Text style={[styles.intervalValue, { color: c.tint }]}>
-                    {notifSettings.minContentLength === 0 ? 'any' : `${notifSettings.minContentLength} chars`}
+                    {pushMinLength === 0 ? 'any' : `${pushMinLength} chars`}
                   </Text>
                 </View>
                 <Slider
@@ -247,8 +247,8 @@ export default function SettingsScreen() {
                   minimumValue={0}
                   maximumValue={500}
                   step={25}
-                  value={notifSettings.minContentLength}
-                  onValueChange={(v) => handleNotifSettingChange({ ...notifSettings, minContentLength: Math.round(v) })}
+                  value={pushMinLength}
+                  onValueChange={(v) => handlePushMinLengthChange(Math.round(v))}
                   disabled={loading}
                   minimumTrackTintColor={c.tint}
                   maximumTrackTintColor={c.border}
@@ -256,20 +256,17 @@ export default function SettingsScreen() {
               </View>
               <View style={[styles.authorFiltersContainer, { backgroundColor: c.surfaceAlt }]}>
                 <Text style={[styles.silencedTopicsLabel, { color: c.textMuted }]}>
-                  Notify for authors{notifSettings.authorFilters.length === 0 ? ' (all)' : ''}
+                  Notify for authors{pushAuthors.length === 0 ? ' (all)' : ''}
                 </Text>
-                {notifSettings.authorFilters.length === 0 && (
+                {pushAuthors.length === 0 && (
                   <Text style={[styles.emptyState, { color: c.textFaint }]}>All authors — add one to filter</Text>
                 )}
-                {notifSettings.authorFilters.map((author) => (
+                {pushAuthors.map((author) => (
                   <View key={author} style={[styles.silencedTopic, { backgroundColor: c.bg, borderColor: c.border }]}>
                     <Text style={[styles.silencedTopicName, { color: c.text }]}>{author}</Text>
                     <TouchableOpacity
                       style={[styles.resubscribeButton, { backgroundColor: c.resubscribeBg }]}
-                      onPress={() => handleNotifSettingChange({
-                        ...notifSettings,
-                        authorFilters: notifSettings.authorFilters.filter((a) => a !== author),
-                      })}
+                      onPress={() => handlePushAuthorsChange(pushAuthors.filter((a) => a !== author))}
                     >
                       <Text style={[styles.resubscribeButtonText, { color: c.resubscribeText }]}>Remove</Text>
                     </TouchableOpacity>
@@ -289,11 +286,8 @@ export default function SettingsScreen() {
                     style={[styles.addAuthorButton, { backgroundColor: c.tint }]}
                     onPress={() => {
                       const trimmed = newAuthor.trim();
-                      if (trimmed && !notifSettings.authorFilters.includes(trimmed)) {
-                        handleNotifSettingChange({
-                          ...notifSettings,
-                          authorFilters: [...notifSettings.authorFilters, trimmed],
-                        });
+                      if (trimmed && !pushAuthors.includes(trimmed)) {
+                        handlePushAuthorsChange([...pushAuthors, trimmed]);
                       }
                       setNewAuthor('');
                     }}
@@ -302,7 +296,6 @@ export default function SettingsScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
-              </>)}
             </>
           )}
         </View>
@@ -312,31 +305,6 @@ export default function SettingsScreen() {
         {renderForumSection('Members Forum', 'membersForum', membersForumSilenced)}
         {renderForumSection('Stock Insights', 'stockInsights', stockInsightsSilenced)}
         {renderForumSection('Options Insights', 'optionsInsights', optionsInsightsSilenced)}
-
-        {__DEV__ && (
-          <>
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: c.tint, marginBottom: 12 }]}
-              onPress={async () => {
-                const results = await fetchAllFeeds();
-                const items = results.flatMap((r) => (r.accessible ? r.items : []));
-                await fireTestNotification(items);
-              }}
-            >
-              <Text style={styles.buttonText}>Test Notification</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: c.tint, marginBottom: 12 }]}
-              onPress={async () => {
-                const results = await fetchAllFeeds();
-                const items = results.flatMap((r) => (r.accessible ? r.items : []));
-                await fireTestNotification(items, 5);
-              }}
-            >
-              <Text style={styles.buttonText}>Test Notification (5s delay)</Text>
-            </TouchableOpacity>
-          </>
-        )}
 
         <TouchableOpacity style={styles.button} onPress={handleLogout}>
           <Text style={styles.buttonText}>Log Out</Text>

@@ -62,6 +62,7 @@ describe('extractRssItems (realistic feed shape)', () => {
       description: 'Up 3.6% now — isn’t that great?', // tags stripped, entities decoded, whitespace collapsed
       link: 'https://logicalinvestor.net/forums/topic/example-pick/page/2/#post-1001',
       pubDate: new Date('Wed, 08 Jul 2026 18:26:47 +0000'),
+      isFirstPost: false, // raw title had the "Reply To: " prefix
     });
     expect(items[1]).toEqual({
       guid: 'https://logicalinvestor.net/forums/topic/other-topic/#post-1002',
@@ -70,6 +71,7 @@ describe('extractRssItems (realistic feed shape)', () => {
       description: 'Tom & Jerry discuss the market.',
       link: 'https://logicalinvestor.net/forums/topic/other-topic/#post-1002',
       pubDate: new Date('Wed, 08 Jul 2026 18:24:00 +0000'),
+      isFirstPost: true, // raw title had no "Reply To: " prefix
     });
   });
 

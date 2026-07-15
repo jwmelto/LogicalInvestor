@@ -2,7 +2,16 @@ import { decode as decodeHtmlEntities } from 'he';
 
 export const MAX_SEEN_IDS_PER_FEED = 500;
 
-export type NotifLevel = 'none' | 'minimal' | 'standard' | 'all';
+// Three filter tiers, narrow to broad, each a strict superset of the previous — see
+// docs/notification-filter-design.md. There is no 'any' tier: "show me everything" is just
+// `filter: 'length', minLength: 0` — the length check always passes at 0, so it needs no
+// separate enum value. Defined once here; ContentFilter and the rank lookup are both derived
+// from this array so the tier names exist in exactly one place.
+export const FILTER_TIERS = ['members', 'actionable', 'length'] as const;
+
+export type ContentFilter = typeof FILTER_TIERS[number];
+
+const FILTER_TIER_RANK = Object.fromEntries(FILTER_TIERS.map((tier, rank) => [tier, rank])) as Record<ContentFilter, number>;
 
 export const FeedKeys = {
   membersArea:     'membersArea',
@@ -66,6 +75,7 @@ export interface RssItem {
   link: string;
   pubDate: Date;
   feedKey: FeedKey;
+  isFirstPost: boolean; // raw title had no "Reply To: " prefix; unconsumed for now
 }
 
 // Normalizes an already-parsed RSS document (via fast-xml-parser) to an array of items —
@@ -80,17 +90,20 @@ export function extractRssItems(parsedXml: unknown): Omit<RssItem, 'feedKey'>[] 
   const items = Array.isArray(raw) ? raw : [raw];
   return items.map((item: any) => {
     const pubDate = new Date(item.pubDate);
+    const decodedTitle = decodeHtmlEntities(item.title);
     return {
       guid: item.guid?.['#text'] ?? item.guid,
-      title: stripReplyPrefix(decodeHtmlEntities(item.title)),
+      title: stripReplyPrefix(decodedTitle),
       author: decodeHtmlEntities(item['dc:creator'] ?? item.author),
       description: stripHtml(item.description),
       link: item.link,
       pubDate: isNaN(pubDate.getTime()) ? new Date() : pubDate, // unparseable → treat as just-published
+      isFirstPost: !decodedTitle.startsWith('Reply To: '),
     };
   });
 }
 
+// title/content are asserted to be already normalized (no "Reply To: " prefix, no HTML).
 export interface FilterItem {
   feedKey: FeedKey;
   author?: string;
@@ -141,13 +154,25 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
 ];
 
-export function classifySignal(text: string, minLength: number): ActionableResult {
+function matchNegativePattern(text: string): ActionableResult | null {
   for (const [re, clause] of NEG_PATTERNS) {
     if (re.test(text)) return clause;
   }
+  return null;
+}
+
+function matchPositivePattern(text: string): ActionableResult | null {
   for (const [re, clause] of POS_PATTERNS) {
     if (re.test(text)) return clause;
   }
+  return null;
+}
+
+export function classifySignal(text: string, minLength: number): ActionableResult {
+  const neg = matchNegativePattern(text);
+  if (neg) return neg;
+  const pos = matchPositivePattern(text);
+  if (pos) return pos;
   return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
 }
 
@@ -159,20 +184,32 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-export function matchesLevel(
-  item: FilterItem,
-  level: NotifLevel,
-  authorFilter: string,
-  minLength: number,
-  _actionPatterns?: unknown,
-): boolean {
-  if (level === 'none') return false;
+// Ordinal "how loose a device's tier needs to be to see this item." A negative-pattern match
+// only disqualifies 'actionable', not 'length'. Infinity = not visible at any tier, at this
+// minLength.
+//
+// actionableAuthors is asserted to be lowercase.
+export function minVisibleTier(item: FilterItem, minLength: number, actionableAuthors: string[]): number {
+  if (item.feedKey === FeedKeys.membersArea) return FILTER_TIER_RANK.members;
+  const text = item.content ?? '';
+  const author = (item.author ?? '').toLowerCase();
+  const isActionableAuthor = actionableAuthors.some((a) => author.includes(a));
+  const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
+  const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
+  const actionable = isActionableAuthor && topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
+  if (actionable) return FILTER_TIER_RANK.actionable;
+  return text.length >= minLength ? FILTER_TIER_RANK.length : Infinity;
+}
+
+// Empty authors list = no author restriction. `authors` is asserted to be lowercase.
+export function authorMatches(author: string | undefined, authors: string[]): boolean {
+  if (authors.length === 0) return true;
+  const a = (author ?? '').toLowerCase();
+  return authors.some((f) => a.includes(f));
+}
+
+// Members Area is unconditional — no author or content check.
+export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, actionableAuthors: string[]): boolean {
   if (item.feedKey === FeedKeys.membersArea) return true;
-  if (level === 'minimal') return false;
-  if (!item.author?.toLowerCase().includes(authorFilter.toLowerCase())) return false;
-  if (level === 'all') return true;
-  if (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights) {
-    if (!stripReplyPrefix(item.title ?? '').startsWith('*')) return false;
-  }
-  return containsActionableSignal(stripHtml(item.content ?? ''), minLength);
+  return authorMatches(item.author, authors) && FILTER_TIER_RANK[filter] >= minVisibleTier(item, minLength, actionableAuthors);
 }

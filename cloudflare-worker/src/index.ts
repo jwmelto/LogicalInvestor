@@ -1,12 +1,14 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, ChannelNames, formatTitle, classifySignal, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type FeedKey, type NotifLevel, type ActionableResult, type Channel, type RssItem } from '@li/core';
+import { FeedKeys, ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type FeedKey, type ContentFilter, type FilterItem, type Channel, type RssItem } from '@li/core';
+
+function toFilterItem(item: RssItem): FilterItem {
+  return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
+}
 
 export interface Env {
   TOKENS: KVNamespace;
   STATE: KVNamespace;
-  FEED_TOKEN: string;              // secret for GET /status (Authorization: Bearer)
-  AUTHOR_FILTER: string;           // wrangler.toml [vars], default "Sean Hyman"
-  MIN_CONTENT_LENGTH: string;      // wrangler.toml [vars], default "200"
+  FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
   POLL_INTERVAL_OVERNIGHT?: string; // minutes between polls outside market hours, default "60"
@@ -14,6 +16,8 @@ export interface Env {
   POLL_BOUNDARY_LATEDAY?: string;   // hhmm ET when late-day window begins, default "1400"
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
+  MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
+  ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -22,40 +26,20 @@ export interface Env {
   HEARTBEAT_URL_OPTIONS?: string;
 }
 
-interface TopicEntry {
-  lastSeen: string;
-  title: string;
-  feedKey: FeedKey;
-}
-
+// filter/authors/minLength are required on every registration. feedToken is optional here only
+// for KV entries predating universal storage; recovers a stale stock/options poll token.
 interface TokenMeta {
-  level?: NotifLevel;
-  feedToken?: string; // optional here only for KV entries predating universal storage; recovers a stale stock/options poll token
+  feedToken?: string;
+  filter?: ContentFilter;
+  authors?: string[];
+  minLength?: number;
 }
-
-type AuthorResult = 'pass-author' | 'fail-author';
-type ForumResult  = 'bypass'     // membersArea: skip all other filters
-                  | 'pass-star'  // stock/options with * title prefix
-                  | 'fail-no-star' // stock/options without * prefix
-                  | 'pass-forum';  // membersForum: no topic gate, proceed to actionable
-
-interface ItemClassification {
-  author:     AuthorResult;
-  forum:      ForumResult;
-  actionable: ActionableResult;
-}
-
-type ByLevel = Partial<Record<NotifLevel, Partial<Record<string, number>>>>;
 
 interface RunStats {
   lastRun: string;
   lastNotified: string | null;
   itemsFetched: number;
-  newItems: number;
-  byLevel: ByLevel;
-  author:     Partial<Record<AuthorResult, number>>;
-  forum:      Partial<Record<ForumResult, number>>;
-  actionable: Partial<Record<ActionableResult, number>>;
+  numNewItems: number;
   sent: number;
 }
 
@@ -63,52 +47,8 @@ interface DailyStats {
   date: string;
   runs: number;
   itemsFetched: number;
-  newItems: number;
-  byLevel: ByLevel;
-  author:     Partial<Record<AuthorResult, number>>;
-  forum:      Partial<Record<ForumResult, number>>;
-  actionable: Partial<Record<ActionableResult, number>>;
+  numNewItems: number;
   sent: number;
-}
-
-function mergeTally<K extends string>(dst: Partial<Record<K, number>>, src: Partial<Record<K, number>>): void {
-  for (const [k, v] of Object.entries(src) as [K, number][]) {
-    dst[k] = (dst[k] ?? 0) + v;
-  }
-}
-
-function mergeByLevel(dst: ByLevel, src: ByLevel): void {
-  for (const [level, feedCounts] of Object.entries(src) as [NotifLevel, Partial<Record<string, number>>][]) {
-    const dstFeed = (dst[level] ??= {});
-    for (const [feedKey, count] of Object.entries(feedCounts)) {
-      // count is always a real number here — ByLevel entries only ever come from increments.
-      dstFeed[feedKey] = (dstFeed[feedKey] ?? 0) + count!;
-    }
-  }
-}
-
-function classifyItem(item: RssItem, authorFilter: string, minLength: number): ItemClassification {
-  const forum: ForumResult =
-    item.feedKey === FeedKeys.membersArea ? 'bypass' :
-    (item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights)
-      ? (item.title.startsWith('*') ? 'pass-star' : 'fail-no-star') // title is already normalized
-      : 'pass-forum';
-
-  const author: AuthorResult = item.author.toLowerCase().includes(authorFilter) ? 'pass-author' : 'fail-author';
-  const actionable: ActionableResult = classifySignal(item.description, minLength);
-
-  return { author, forum, actionable };
-}
-
-function shouldNotify(level: NotifLevel, c: ItemClassification): boolean {
-  if (level === 'none') return false;
-  if (c.forum === 'bypass') return true;       // membersArea always notifies
-  if (level === 'minimal') return false;
-  if (c.author === 'fail-author') return false;
-  if (level === 'all') return true;
-  // standard: star topic gates eligibility, but every post still needs an actionable signal.
-  if (c.forum === 'fail-no-star') return false;
-  return c.actionable.startsWith('pass');
 }
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
@@ -139,27 +79,23 @@ export function heartbeatUrlFor(channel: Channel, env: Env): string | undefined 
 // return any items, making it a real check of membership status (catches an expired or
 // invalid token). Members Area's feed is readable regardless of token validity — only the
 // content snippet is paywalled — so it would never catch anything if checked instead.
-export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey; discoverTopics: boolean }[]> = {
+//
+// No `discoverTopics`/topic-sub-feed fetching here — the top-level "All Posts" feed for a forum
+// already aggregates replies from every topic in it (confirmed against a real authenticated
+// fetch), so alerting never needs to walk into individual topics. Topic discovery remains a
+// purely app-side concern (topicService.ts) for the browsing UI.
+export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey }[]> = {
   members: [
-    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',             feedKey: FeedKeys.membersForum,    discoverTopics: true  },
-    { url: 'https://logicalinvestor.net/feed/',                                        feedKey: FeedKeys.membersArea,     discoverTopics: false },
+    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/', feedKey: FeedKeys.membersForum },
+    { url: 'https://logicalinvestor.net/feed/',                            feedKey: FeedKeys.membersArea },
   ],
   stock: [
-    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',            feedKey: FeedKeys.stockInsights,   discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/', feedKey: FeedKeys.stockInsights },
   ],
   options: [
-    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',          feedKey: FeedKeys.optionsInsights, discoverTopics: true  },
+    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/', feedKey: FeedKeys.optionsInsights },
   ],
 };
-
-// Stock/Options Insights topics only warrant push-worthy tracking when starred by the poster;
-// Members Forum has no such convention, so every topic there is of interest.
-function topicIsOfInterest(feedKey: FeedKey, title: string): boolean {
-  const requiresStar = feedKey === FeedKeys.stockInsights || feedKey === FeedKeys.optionsInsights;
-  return !requiresStar || title.startsWith('*');
-}
-
-const TOPIC_GC_DAYS = 30;
 
 // Module-level parser shared across all calls within an invocation
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -229,12 +165,14 @@ export default {
   // HTTP API (called by the app's pushService.ts):
   //
   //   GET  /status       Authorization: Bearer <FEED_TOKEN>
-  //   POST /register    { token, channel, level, feed_token }
+  //   POST /register    { token, channel, filter, authors, minLength, feed_token }
   //   POST /unregister  { token, channel }
   //
   //   token      — Expo push token (device identifier for APNs/FCM delivery)
   //   channel    — 'members' | 'stock' | 'options'
-  //   level      — 'minimal' | 'standard' | 'all'
+  //   filter     — 'members' | 'actionable' | 'length' (see @li/core ContentFilter)
+  //   authors    — string[], substring whitelist; [] = no author restriction (no global fallback)
+  //   minLength  — number; 0 = no minimum
   //   feed_token — WordPress auth token, required on every /register call regardless of
   //                channel. For stock/options it also proves access — rejected with 403
   //                if missing, invalid, or the account isn't subscribed to that channel.
@@ -249,27 +187,22 @@ export default {
       }
       const result: Record<string, unknown> = {};
       for (const channel of CHANNELS) {
-        const [tokens, seenJson, topicsJson, pollToken, statsJson] = await Promise.all([
+        const [tokens, seenJson, pollToken, statsJson] = await Promise.all([
           env.TOKENS.list({ prefix: `${channel}:` }),
           env.STATE.get(`seen:${channel}`),
-          env.STATE.get(`topics:${channel}`),
           env.STATE.get(`poll:${channel}`),
           env.STATE.get(`stats:${channel}`),
         ]);
         const stats: RunStats | null = statsJson ? JSON.parse(statsJson) : null;
         result[channel] = {
           registeredTokens: tokens.keys.length,
-          seenIds:   seenJson   ? (() => { const s = JSON.parse(seenJson); return Array.isArray(s) ? s.length : Object.values(s as Record<string, string[]>).reduce((a, b) => a + b.length, 0); })() : 0,
-          topics:    topicsJson ? Object.keys(JSON.parse(topicsJson) as object).length : 0,
+          seenIds:   seenJson ? Object.values(JSON.parse(seenJson) as Record<string, string[]>).reduce((a, b) => a + b.length, 0) : 0,
           pollToken: pollToken ? 'present' : 'missing',
           lastRun:      stats?.lastRun      ?? null,
           lastNotified: stats?.lastNotified ?? null,
           lastRunStats: stats ? {
             itemsFetched: stats.itemsFetched,
-            newItems:     stats.newItems,
-            author:       stats.author,
-            forum:        stats.forum,
-            actionable:   stats.actionable,
+            numNewItems:  stats.numNewItems,
             sent:         stats.sent,
           } : null,
           todayStats: await env.STATE.get<DailyStats>(`daily:${channel}:${getETDate(new Date())}`, 'json'),
@@ -282,7 +215,7 @@ export default {
 
     if (request.method !== 'POST') return new Response('not found', { status: 404 });
 
-    const body = await request.json() as Record<string, string>;
+    const body = await request.json() as { token?: string; channel?: string; filter?: string; authors?: unknown; minLength?: unknown; feed_token?: string };
     const pushToken = body.token;
     const channel = body.channel as Channel | null;
     if (!pushToken) return new Response('missing token', { status: 400 });
@@ -293,15 +226,21 @@ export default {
     const kvKey = `${channel}:${pushToken}`;
 
     if (url.pathname === '/register') {
-      const level = body.level as NotifLevel;
-      if (!VALID_LEVELS.includes(level)) {
-        return new Response('missing or invalid level', { status: 400 });
+      const filter = body.filter as ContentFilter;
+      if (!FILTER_TIERS.includes(filter)) {
+        return new Response('missing or invalid filter', { status: 400 });
+      }
+      if (!Array.isArray(body.authors) || !body.authors.every((a) => typeof a === 'string')) {
+        return new Response('missing or invalid authors', { status: 400 });
+      }
+      if (typeof body.minLength !== 'number' || body.minLength < 0) {
+        return new Response('missing or invalid minLength', { status: 400 });
       }
       const feedToken = body.feed_token;
       if (typeof feedToken !== 'string' || feedToken === '') {
         return new Response('missing or invalid feed_token', { status: 400 });
       }
-      return registerDevice({ channel, pushToken, level, feedToken }, env);
+      return registerDevice({ channel, pushToken, filter, authors: body.authors, minLength: body.minLength, feedToken }, env);
     }
     if (url.pathname === '/unregister') {
       await env.TOKENS.delete(kvKey);
@@ -322,21 +261,21 @@ export default {
   },
 };
 
-export const VALID_LEVELS: NotifLevel[] = ['none', 'minimal', 'standard', 'all'];
-
 export interface RegisterParams {
   channel: Channel;
   pushToken: string;
-  level: NotifLevel;
+  filter: ContentFilter;
+  authors: string[];
+  minLength: number;
   feedToken: string;
 }
 
-// All inputs are assumed pre-validated (non-empty pushToken, known channel, valid level,
+// All inputs are assumed pre-validated (non-empty pushToken, known channel, valid filter,
 // non-empty feedToken) — validation lives at the HTTP boundary in fetch(). This function
 // only encodes the access/storage decision, so it can be unit tested with plain objects,
 // no Request/env plumbing.
 export async function registerDevice(
-  { channel, pushToken, level, feedToken }: RegisterParams,
+  { channel, pushToken, filter, authors, minLength, feedToken }: RegisterParams,
   env: Pick<Env, 'TOKENS' | 'STATE'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
@@ -348,7 +287,7 @@ export async function registerDevice(
   }
   await env.STATE.put(`poll:${channel}`, feedToken);
 
-  const meta: TokenMeta = { level, feedToken };
+  const meta: TokenMeta = { feedToken, filter, authors: authors.map((a) => a.toLowerCase()), minLength };
   await env.TOKENS.put(`${channel}:${pushToken}`, '1', { metadata: meta });
   return new Response('ok');
 }
@@ -385,6 +324,20 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
   return null;
 }
 
+async function recordDaily(env: Env, channel: Channel, now: Date, runStats: RunStats): Promise<void> {
+  const dailyKey = `daily:${channel}:${getETDate(now)}`;
+  const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
+    date: getETDate(now), runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0,
+  };
+  daily.runs += 1;
+  daily.itemsFetched += runStats.itemsFetched;
+  daily.numNewItems += runStats.numNewItems;
+  daily.sent += runStats.sent;
+  await env.STATE.put(dailyKey, JSON.stringify(daily));
+}
+
+interface Bucket { filter: ContentFilter; authors: string[]; minLength: number; tokens: string[] }
+
 async function runChannel(channel: Channel, env: Env): Promise<void> {
   const now = new Date();
   const intervals = {
@@ -398,9 +351,15 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     close:   hhmmToMinutes(env.POLL_BOUNDARY_CLOSE   ?? '1615'),
   };
   // Despite the 5–60 min poll cadence above, content can still surface as newly-seen well after
-  // publish (e.g. a newly-discovered topic pulling in its full reply history) — cap how old
-  // something can be and still get pushed (issue #48).
+  // publish — cap how old something can be and still get pushed (issue #48).
   const maxPushAgeMs = parseInt(env.MAX_PUSH_AGE_MINUTES ?? '120', 10) * 60 * 1000;
+  // Cap on how many of a forum's most-recent posts are ever considered for alerting, independent
+  // of how many the upstream RSS feed happens to return today — full history/backlog is the
+  // app's job (its own reconciliation on every foreground refresh), not the Worker's. See
+  // "Server-side alerting model" in the design doc for why a cap exists at all.
+  const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
+  // Who can trigger the 'actionable' tier.
+  const actionableAuthors = (env.ACTIONABLE_AUTHORS ?? 'Sean Hyman').split(',').map((a) => a.trim().toLowerCase());
   const statsKey = `stats:${channel}`;
   const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
   const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
@@ -409,106 +368,75 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const feedToken = await env.STATE.get(`poll:${channel}`);
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
-  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched: 0, newItems: 0, byLevel: {}, author: {}, forum: {}, actionable: {}, sent: 0 };
-  const feeds = CHANNEL_FEEDS[channel];
-
-  const topicsKey = `topics:${channel}`;
-  const topicsJson = await env.STATE.get(topicsKey);
-  const topics: Record<string, TopicEntry> = topicsJson ? JSON.parse(topicsJson) : {};
-
-  const mainItems: RssItem[] = [];
-  for (const feed of feeds) {
-    try {
-      const res = await fetch(`${feed.url}?feed_token=${feedToken}`);
-      if (!res.ok) continue;
-      const rssItems = extractRssItems(parser.parse(await res.text()));
-      for (const rssItem of rssItems) {
-        mainItems.push({ ...rssItem, feedKey: feed.feedKey });
-        if (feed.discoverTopics) {
-          const topicUrl = extractTopicUrl(rssItem.link);
-          if (topicUrl && topicIsOfInterest(feed.feedKey, rssItem.title)) {
-            topics[topicUrl] = { lastSeen: now.toISOString(), title: rssItem.title, feedKey: feed.feedKey };
-          }
-        }
-      }
-    } catch { /* skip failed feed */ }
-  }
-
-  // Valid tokens always return items; 0 items means the poll token is stale.
-  // Attempt recovery from registered users' stored feedTokens.
-  if (mainItems.length === 0) {
-    await findAndStorePollToken(channel, env);
-    return; // recovered token (if any) will be used on the next cron cycle
-  }
-
-  // Claim this run now, before the slower topic-fetch/dedup/notify work below. Cloudflare can
-  // dispatch a channel's cron trigger twice for the same tick (observed: duplicate pushes for
-  // the same post ~1 min apart; #24 already documents this cron infra as flaky). Writing lastRun
-  // here — instead of only at the exit points further down — shrinks the window in which a
-  // concurrent second invocation could read the same stale prevStats and double-send. Not a hard
-  // guarantee (KV has no compare-and-swap), just a much smaller race window.
-  await env.STATE.put(statsKey, JSON.stringify(runStats));
-
-  // Prune stale topics
-  const cutoff = new Date(now.getTime() - TOPIC_GC_DAYS * 86400 * 1000);
-  for (const [url, entry] of Object.entries(topics)) {
-    if (new Date(entry.lastSeen) < cutoff) delete topics[url];
-  }
-
-  // Fetch all topic sub-feeds in parallel
-  const topicUrls = Object.keys(topics);
-  const topicResults = await Promise.all(
-    topicUrls.map(async (topicUrl) => {
-      try {
-        const res = await fetch(`${topicUrl}feed/?feed_token=${feedToken}`);
-        if (!res.ok) return [];
-        return extractRssItems(parser.parse(await res.text())).map(
-          (rssItem): RssItem => ({ ...rssItem, feedKey: topics[topicUrl].feedKey })
-        );
-      } catch { return []; }
-    })
-  );
-
-  await env.STATE.put(topicsKey, JSON.stringify(topics));
-
-  const allItems = dedup([...mainItems, ...topicResults.flat()]);
-
   const seenKey = `seen:${channel}`;
   const seenJson = await env.STATE.get(seenKey);
   const seenMap: Partial<Record<string, string[]>> = seenJson ? JSON.parse(seenJson) : {};
 
-  const byFeed: Partial<Record<string, RssItem[]>> = {};
-  for (const item of allItems) {
-    (byFeed[item.feedKey] ??= []).push(item);
-  }
-
+  // Per forum: fetch the top-level feed only (no topic sub-feeds — see design doc), cap to the
+  // most recent maxAlertItemsPerFeed, and — since these feeds are confirmed reverse-chronological
+  // — walk from newest until the first already-seen guid, then stop. Everything past that point
+  // must already be seen too, so there's no need to scan further. The freshness check (issue #48)
+  // happens in the same walk rather than as a separate pass, and each feed's fresh items are
+  // reversed before collecting so alerting processes oldest-to-newest — a user who missed several
+  // posts sees them in reading order, not newest-first.
+  let itemsFetched = 0;
   const newItems: RssItem[] = [];
-  for (const [feedKey, feedItems] of Object.entries(byFeed) as [string, RssItem[]][]) {
-    const seen = new Set(seenMap[feedKey] ?? []);
-    if (seen.size === 0) {
-      seenMap[feedKey] = feedItems.map((i) => i.guid).slice(-MAX_SEEN_IDS_PER_FEED);
-      continue;
-    }
-    const newForFeed = feedItems.filter((i) => !seen.has(i.guid));
-    feedItems.forEach((i) => seen.add(i.guid));
-    seenMap[feedKey] = Array.from(seen).slice(-MAX_SEEN_IDS_PER_FEED);
-    newItems.push(...newForFeed);
+  const freshItems: RssItem[] = [];
+  for (const feed of CHANNEL_FEEDS[channel]) {
+    try {
+      const res = await fetch(`${feed.url}?feed_token=${feedToken}`);
+      if (!res.ok) continue;
+      const items: RssItem[] = extractRssItems(parser.parse(await res.text()))
+        .slice(0, maxAlertItemsPerFeed)
+        .map((rssItem) => ({ ...rssItem, feedKey: feed.feedKey }));
+      itemsFetched += items.length;
+
+      const seenList = seenMap[feed.feedKey];
+      if (seenList === undefined) {
+        // First ever poll for this feed: seed known guids without notifying (avoids a
+        // flood on day one, same reasoning as the app's own first-run seeding).
+        seenMap[feed.feedKey] = items.map((i) => i.guid).slice(0, MAX_SEEN_IDS_PER_FEED);
+        continue;
+      }
+      const seenSet = new Set(seenList);
+      const newForFeed: RssItem[] = [];
+      const freshForFeed: RssItem[] = [];
+      for (const item of items) {
+        if (seenSet.has(item.guid)) break;
+        newForFeed.push(item);
+        if (isFresh(item.pubDate, maxPushAgeMs)) freshForFeed.push(item);
+      }
+      newItems.push(...newForFeed);
+      freshItems.push(...freshForFeed.reverse());
+      seenMap[feed.feedKey] = [...newForFeed.map((i) => i.guid), ...seenList].slice(0, MAX_SEEN_IDS_PER_FEED);
+    } catch { /* skip failed feed */ }
   }
 
+  // Valid tokens always return items for Members Forum/Stock/Options Insights, which require a
+  // real token to return anything; Members Area returns items regardless of token validity (only
+  // the content snippet is paywalled), so a stale token for the 'members' channel can still show
+  // itemsFetched > 0 here. That's a pre-existing gap in lapsed-subscription detection for that
+  // channel specifically, not something this change introduces — tracked in issue #58.
+  if (itemsFetched === 0) {
+    await findAndStorePollToken(channel, env);
+    return; // recovered token (if any) will be used on the next cron cycle
+  }
+
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched, numNewItems: newItems.length, sent: 0 };
+
+  // Claim this run now, before the slower device-listing/notify work below, to shrink the window
+  // in which a concurrent duplicate invocation (Cloudflare can dispatch a cron tick twice) reads
+  // the same stale prevStats and double-sends. Not a hard guarantee (KV has no compare-and-swap),
+  // just a smaller race window.
+  await env.STATE.put(statsKey, JSON.stringify(runStats));
   await env.STATE.put(seenKey, JSON.stringify(seenMap));
 
-  runStats.itemsFetched = allItems.length;
-  runStats.newItems = newItems.length;
-
   if (newItems.length === 0) {
-    await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+    await recordDaily(env, channel, now, runStats);
     return;
   }
 
-  const authorFilter = (env.AUTHOR_FILTER ?? 'Sean Hyman').toLowerCase();
-  const minLength = parseInt(env.MIN_CONTENT_LENGTH ?? '200', 10);
-
-  const tokensByLevel: Partial<Record<NotifLevel, string[]>> = {};
+  const buckets = new Map<string, Bucket>();
   let cursor: string | undefined;
   do {
     const page = await env.TOKENS.list<TokenMeta>({ prefix: `${channel}:`, cursor });
@@ -518,9 +446,9 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
       // and prune dead registrations before they get another channel's worth of content pushed
       // to them. metadata comes free with the list() call above, so this adds no extra KV reads;
       // only an HTTP fetch per device, and only when there's new content to notify about.
-      const feedToken = key.metadata?.feedToken;
-      if (feedToken) {
-        const access = await feedTokenHasAccess(channel, feedToken);
+      const deviceFeedToken = key.metadata?.feedToken;
+      if (deviceFeedToken) {
+        const access = await feedTokenHasAccess(channel, deviceFeedToken);
         if (access === false) {
           await env.TOKENS.delete(key.name);
           continue;
@@ -528,95 +456,61 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
         // access === null: check itself failed (network blip, 5xx) — leave the registration
         // and keep notifying; only a definitive 401/403 proves access was actually revoked.
       }
-      const level: NotifLevel = key.metadata?.level ?? 'standard';
+      const { filter, authors, minLength } = key.metadata ?? {};
+      if (!filter || authors === undefined || minLength === undefined) continue; // pre-redesign entry — skip until it re-registers
       const token = key.name.slice(channel.length + 1);
-      (tokensByLevel[level] ??= []).push(token);
+      // Devices sharing filter+authors+minLength get one shared eligibility check per item below
+      // instead of one per device — negligible cost even at hundreds of distinct buckets.
+      const sig = `${filter}|${authors.join(',')}|${minLength}`;
+      const bucket = buckets.get(sig) ?? { filter, authors, minLength, tokens: [] };
+      bucket.tokens.push(token);
+      buckets.set(sig, bucket);
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
 
-  if (Object.keys(tokensByLevel).length === 0) {
-    await env.STATE.put(`stats:${channel}`, JSON.stringify(runStats));
+  if (buckets.size === 0) {
+    await recordDaily(env, channel, now, runStats);
     return;
   }
 
-  const classified = newItems.map(item => ({
-    item,
-    c: classifyItem(item, authorFilter, minLength),
-    fresh: isFresh(item.pubDate, maxPushAgeMs),
-  }));
-  for (const { item, c, fresh } of classified) {
-    runStats.author[c.author]         = (runStats.author[c.author]         ?? 0) + 1;
-    runStats.forum[c.forum]           = (runStats.forum[c.forum]           ?? 0) + 1;
-    runStats.actionable[c.actionable] = (runStats.actionable[c.actionable] ?? 0) + 1;
-    for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
-      if (fresh && shouldNotify(level, c)) {
-        const feedCounts = (runStats.byLevel[level] ??= {});
-        feedCounts[item.feedKey] = (feedCounts[item.feedKey] ?? 0) + 1;
+  // Push-sends are independent per bucket, so they run concurrently rather than one at a time —
+  // this shortens wall-clock duration (fetch() wait doesn't count against the Worker's CPU-time
+  // limit either way, but a shorter invocation is still less exposed to Cloudflare's separate
+  // wall-clock duration cap). A failure in one bucket's send must not skip the others.
+  const sentCounts = await Promise.all(
+    Array.from(buckets.values()).map(async (bucket) => {
+      const toNotify = freshItems
+        .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength, actionableAuthors))
+        .slice(0, 5);
+      if (toNotify.length === 0) return 0;
+
+      const messages = toNotify.map((item, i) => ({
+        to: bucket.tokens,
+        title: `[PUSH] ${formatTitle(item)}`,
+        body: item.description.slice(0, 150) || 'New post',
+        sound: i === 0 ? 'default' : undefined,
+      }));
+
+      try {
+        await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(messages),
+        });
+        return toNotify.length;
+      } catch {
+        return 0;
       }
-    }
+    })
+  );
+  runStats.sent = sentCounts.reduce((a, b) => a + b, 0);
+
+  if (runStats.sent > 0) {
+    runStats.lastNotified = now.toISOString();
+    await env.STATE.put(statsKey, JSON.stringify(runStats));
   }
-
-  for (const [level, levelTokens] of Object.entries(tokensByLevel) as [NotifLevel, string[]][]) {
-    const toNotify = classified
-      .filter(({ c, fresh }) => fresh && shouldNotify(level, c))
-      .map(({ item }) => item)
-      .slice(0, 5);
-    if (toNotify.length === 0) continue;
-
-    const messages = toNotify.map((item, i) => ({
-      to: levelTokens,
-      // [PUSH] tag lets a device visually confirm which channel actually delivered an
-      // alert — pairs with the app's [LOCAL] tag in notificationService.ts.
-      title: `[PUSH] ${formatTitle(item)}`,
-      body: item.description.slice(0, 150) || 'New post',
-      sound: i === 0 ? 'default' : undefined,
-    }));
-
-    try {
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(messages),
-      });
-      runStats.sent += toNotify.length;
-    } catch {
-      // A failure at one level must not skip remaining levels or the stats write below.
-    }
-  }
-
-  if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
-  await env.STATE.put(statsKey, JSON.stringify(runStats));
-
-  const dailyKey = `daily:${channel}:${getETDate(now)}`;
-  const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
-    date: getETDate(now), runs: 0, itemsFetched: 0, newItems: 0, byLevel: {}, author: {}, forum: {}, actionable: {}, sent: 0,
-  };
-  daily.runs += 1;
-  daily.itemsFetched += runStats.itemsFetched;
-  daily.newItems += runStats.newItems;
-  daily.sent += runStats.sent;
-  mergeByLevel(daily.byLevel, runStats.byLevel);
-  mergeTally(daily.author, runStats.author);
-  mergeTally(daily.forum, runStats.forum);
-  mergeTally(daily.actionable, runStats.actionable);
-  await env.STATE.put(dailyKey, JSON.stringify(daily));
+  await recordDaily(env, channel, now, runStats);
 }
 
-
-export { matchesLevel, stripReplyPrefix } from '@li/core';
-
-export function extractTopicUrl(link: string): string | null {
-  const match = link.match(/(https:\/\/logicalinvestor\.net\/forums\/topic\/[^/#]+\/)/);
-  return match ? match[1] : null;
-}
-
-function dedup(items: RssItem[]): RssItem[] {
-  const seen = new Set<string>();
-  return items.filter(i => {
-    if (seen.has(i.guid)) return false;
-    seen.add(i.guid);
-    return true;
-  });
-}
-
+export { matchesFilter, minVisibleTier, stripReplyPrefix } from '@li/core';
