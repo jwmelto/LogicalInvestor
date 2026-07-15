@@ -183,6 +183,9 @@ export function shouldPollNow(now: Date, lastRun: Date | null, interval: number)
   return (!lastRun) || (now.getTime() - lastRun.getTime() >= interval * 60_000);
 }
 
+// 'en-CA' short-date format happens to be YYYY-MM-DD, the one common English-locale option
+// that's already sortable/unambiguous as a string (en-US gives M/D/YYYY, en-GB gives
+// D/M/YYYY). Avoids manually assembling the string from separate {year, month, day} parts.
 function getETDate(now: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
 }
