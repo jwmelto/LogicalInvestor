@@ -18,12 +18,21 @@ export interface Env {
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
+  TOKENS_TTL_DAYS?: string;         // days a TOKENS registration survives without renewal, default "30"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
   HEARTBEAT_URL_MEMBERS?: string;
   HEARTBEAT_URL_STOCK?: string;
   HEARTBEAT_URL_OPTIONS?: string;
+}
+
+// The app re-registers every push channel unconditionally on every cold launch (FeedContext), so
+// a registration that stops renewing means the device is gone (uninstalled, or never called
+// /unregister). This TTL just needs slack beyond normal usage gaps — weeks, not days — see #60.
+export const DEFAULT_TOKENS_TTL_DAYS = 30;
+function tokensTtlSeconds(env: Pick<Env, 'TOKENS_TTL_DAYS'>): number {
+  return parseInt(env.TOKENS_TTL_DAYS ?? String(DEFAULT_TOKENS_TTL_DAYS), 10) * 60 * 60 * 24;
 }
 
 // filter/authors/minLength are required on every registration. feedToken is optional here only
@@ -319,7 +328,7 @@ export interface RegisterParams {
 // no Request/env plumbing.
 export async function registerDevice(
   { channel, pushToken, filter, authors, minLength, feedToken }: RegisterParams,
-  env: Pick<Env, 'TOKENS' | 'STATE'>,
+  env: Pick<Env, 'TOKENS' | 'STATE' | 'TOKENS_TTL_DAYS'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
   if (access === null) {
@@ -331,7 +340,7 @@ export async function registerDevice(
   await env.STATE.put(`poll:${channel}`, feedToken);
 
   const meta: TokenMeta = { feedToken, filter, authors: authors.map((a) => a.toLowerCase()), minLength };
-  await env.TOKENS.put(`${channel}:${pushToken}`, '1', { metadata: meta });
+  await env.TOKENS.put(`${channel}:${pushToken}`, '1', { metadata: meta, expirationTtl: tokensTtlSeconds(env) });
   return new Response('ok');
 }
 

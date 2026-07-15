@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS, advanceDaily } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS, advanceDaily, DEFAULT_TOKENS_TTL_DAYS } from './index';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
 
 const FK = FeedKeys;
+const DEFAULT_TOKENS_TTL_SECONDS = DEFAULT_TOKENS_TTL_DAYS * 60 * 60 * 24;
 
 function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
@@ -278,10 +279,11 @@ describe('findAndStorePollToken', () => {
 });
 
 describe('registerDevice (logic, plain-object inputs)', () => {
-  function mockEnv() {
+  function mockEnv(tokensTtlDays?: string) {
     return {
       TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
       STATE: { put: vi.fn().mockResolvedValue(undefined) },
+      TOKENS_TTL_DAYS: tokensTtlDays,
     } as any;
   }
 
@@ -299,7 +301,15 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+  });
+
+  it('honors TOKENS_TTL_DAYS when set, overriding the default', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = mockEnv('7');
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
+    expect(res.status).toBe(200);
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: 7 * 60 * 60 * 24 });
   });
 
   it('lowercases authors before storing', async () => {
@@ -307,7 +317,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['Sean Hyman'], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
@@ -318,7 +328,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
@@ -395,7 +405,7 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200 } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('rejects an empty-string feed_token', async () => {
