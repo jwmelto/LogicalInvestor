@@ -1,5 +1,19 @@
 # Release History
 
+## 0.10.0 — July 2026
+
+- Notification filters redesigned: choose one of three alert tiers per device — Members Area, Actionable trade calls only, or everything past a length threshold — replacing the old single global author/length filter. Server-side push now applies the exact same rules as in-app filtering
+- Fixed: muted topics could still trigger a notification
+- Fixed: reopening the app after a long gap could fire a burst of notifications for an entire backlog at once, instead of just what's new
+- Fixed: HTML entities like apostrophes could render broken ("isn t" instead of "isn't") in post previews and notifications
+- Fixed: reply titles could leak a literal "Reply To: " prefix into the UI
+- Fixed: a newly-discovered forum topic's full reply history could trigger a flood of notifications for old posts at once
+- Fixed: a temporary network hiccup during the server's periodic access check could permanently revoke a paying subscriber's push notifications
+- Fixed: stale unread badges when losing feed access, missing topic discovery in Options Insights, and mislabeled topic-feed items
+- Fixed: push notifications could get stuck after logging out and back in, or after a failed registration call
+
+---
+
 ## 0.9.5 — July 2026
 
 - Local notifications now also fire on foreground refresh, not just the background task — background tasks are scheduled opportunistically by iOS/Android and can be skipped for hours
