@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesLevel, extractTopicUrl, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS } from './index';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
-import type { FeedKey, FilterItem, NotifLevel } from '@li/core';
+import type { FeedKey, FilterItem } from '@li/core';
 
 const FK = FeedKeys;
 
@@ -15,79 +15,93 @@ function item(feedKey: FeedKey, overrides: { author?: string; title?: string; de
 }
 
 const AUTHOR = 'sean hyman';
+const ACTIONABLE_AUTHORS = ['sean hyman'];
 const MIN = 200;
 const long = 'x'.repeat(210);
-// Long content with an action signal: satisfies both the length and semantic requirements.
 const longWithSignal = 'new pick — ' + 'x'.repeat(200);
+const longNegative = 'we may consider a sell ' + 'x'.repeat(200);
 
 const RSS_WITH_ITEM = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>1</guid><title>t</title><link>l</link><description>d</description></item></channel></rss>';
 const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>';
 
 beforeEach(() => { vi.restoreAllMocks(); });
 
-describe('matchesLevel', () => {
-  it('none blocks everything including members-area', () => {
-    for (const fk of [FK.membersArea, FK.membersForum, FK.stockInsights, FK.optionsInsights] as FeedKey[]) {
-      expect(matchesLevel(item(fk, { description: long }), 'none', AUTHOR, MIN)).toBe(false);
-    }
+// matchesFilter(item, filter, authors, minLength, actionableAuthors) is the one function a
+// device's alerting decision goes through. One describe block per tier, each covering only what
+// that tier requires.
+describe('matchesFilter', () => {
+  describe('members tier', () => {
+    it.each([
+      ['no content', item(FK.membersArea, { description: '' })],
+      ['long content', item(FK.membersArea, { description: long })],
+      ['actionable-signal content', item(FK.membersArea, { description: longWithSignal })],
+      ['negative-pattern content', item(FK.membersArea, { description: longNegative })],
+    ])('a Members Area post (%s) alerts regardless of author', (_desc, testItem) => {
+      expect(matchesFilter(testItem, 'members', ['someone else'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(testItem, 'members', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
+    it('a post outside Members Area does not alert', () => {
+      expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'members', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
   });
 
-  it('members-area always passes for minimal/standard/all', () => {
-    for (const level of ['minimal', 'standard', 'all'] as NotifLevel[]) {
-      expect(matchesLevel(item(FK.membersArea, { author: 'anyone', description: '' }), level, AUTHOR, MIN)).toBe(true);
-    }
+  describe('actionable tier', () => {
+    it('an actionable-signal post by an ACTIONABLE_AUTHORS author alerts', () => {
+      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
+    it('an actionable-signal post by an author outside ACTIONABLE_AUTHORS does not alert', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('a non-actionable post does not alert, regardless of author', () => {
+      expect(matchesFilter(item(FK.membersForum, { author: 'Sean Hyman', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(item(FK.membersForum, { author: 'Joe Blow', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('ACTIONABLE_AUTHORS is a live parameter: changing it changes who can alert', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', [], MIN, ['sean hyman'])).toBe(false);
+      expect(matchesFilter(post, 'actionable', [], MIN, ['joe blow'])).toBe(true);
+    });
+
+    it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
+      const starred = item(feedKey, { title: '*AAPL Trade', description: longWithSignal });
+      const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
+      expect(matchesFilter(starred, 'actionable', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(unstarred, 'actionable', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
+
+    it('a negative-pattern post does not alert at the actionable tier, but can still alert at the length tier', () => {
+      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longNegative });
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
   });
 
-  it('minimal blocks everything except members-area', () => {
-    for (const fk of [FK.membersForum, FK.stockInsights, FK.optionsInsights] as FeedKey[]) {
-      expect(matchesLevel(item(fk, { description: long }), 'minimal', AUTHOR, MIN)).toBe(false);
-    }
-  });
+  describe('length tier', () => {
+    it('a long-enough post by a whitelisted author alerts', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
+      expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
 
-  it('author filter blocks non-matching authors at standard and all', () => {
-    for (const level of ['standard', 'all'] as NotifLevel[]) {
-      expect(matchesLevel(item(FK.membersForum, { author: 'Other Person', description: long }), level, AUTHOR, MIN)).toBe(false);
-    }
-  });
+    it('a long-enough post by a non-whitelisted author does not alert', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
+      expect(matchesFilter(post, 'length', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
 
-  it('all level passes when author matches regardless of content length', () => {
-    expect(matchesLevel(item(FK.membersForum, { description: 'short' }), 'all', AUTHOR, MIN)).toBe(true);
-  });
+    it('an empty author whitelist means no author restriction', () => {
+      const post = item(FK.membersForum, { author: 'Anyone At All', description: long });
+      expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
 
-  it('standard: stock-insights requires * prefix AND an action signal — a starred topic does not excuse a "good job" reply', () => {
-    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: long }),            'standard', AUTHOR, MIN)).toBe(false); // starred but no signal
-    expect(matchesLevel(item(FK.stockInsights, { title: '*AAPL Trade',           description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.stockInsights, { title: 'Reply To: *AAPL Trade', description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.stockInsights, { title: 'Discussion post',        description: longWithSignal }), 'standard', AUTHOR, MIN)).toBe(false); // no star at all
-  });
-
-  it('standard: members-forum requires action signal only (length irrelevant)', () => {
-    expect(matchesLevel(item(FK.membersForum, { description: '<p>no signal</p>' }),                  'standard', AUTHOR, MIN)).toBe(false); // no signal
-    expect(matchesLevel(item(FK.membersForum, { description: '<p>new pick IMMEDIATELY</p>' }),       'standard', AUTHOR, MIN)).toBe(true);  // short but has signal
-    expect(matchesLevel(item(FK.membersForum, { description: '<p>' + long + '</p>' }),               'standard', AUTHOR, MIN)).toBe(false); // long, no signal
-    expect(matchesLevel(item(FK.membersForum, { description: '<p>' + longWithSignal + '</p>' }),     'standard', AUTHOR, MIN)).toBe(true);  // long + signal
-  });
-
-  it('standard: options-insights requires * prefix AND an action signal — a starred topic does not excuse a "good job" reply', () => {
-    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: long }),           'standard', AUTHOR, MIN)).toBe(false); // starred but no signal
-    expect(matchesLevel(item(FK.optionsInsights, { title: '*SPY Trade',            description: longWithSignal }), 'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.optionsInsights, { title: 'Reply To: *SPY Trade', description: longWithSignal }),  'standard', AUTHOR, MIN)).toBe(true);
-    expect(matchesLevel(item(FK.optionsInsights, { title: 'Discussion post',       description: longWithSignal }), 'standard', AUTHOR, MIN)).toBe(false); // no star at all
-  });
-});
-
-describe('extractTopicUrl', () => {
-  it('extracts topic base URL from a post link', () => {
-    expect(extractTopicUrl('https://logicalinvestor.net/forums/topic/nvo/#post-12345'))
-      .toBe('https://logicalinvestor.net/forums/topic/nvo/');
-  });
-  it('extracts from a paginated link', () => {
-    expect(extractTopicUrl('https://logicalinvestor.net/forums/topic/ewz-update/page/2/'))
-      .toBe('https://logicalinvestor.net/forums/topic/ewz-update/');
-  });
-  it('returns null for non-topic links', () => {
-    expect(extractTopicUrl('https://logicalinvestor.net/2024/01/some-post/')).toBeNull();
-    expect(extractTopicUrl('https://logicalinvestor.net/forums/forum/members-forum/')).toBeNull();
+    it('a post shorter than minLength does not alert, even from a whitelisted author', () => {
+      const post = item(FK.membersForum, { author: 'Joe Blow', description: 'short' });
+      expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+    });
   });
 });
 
@@ -252,7 +266,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
   it('rejects an optional-channel registration whose feed_token has no access', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'unauthorized' }, env);
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'unauthorized' }, env);
     expect(res.status).toBe(403);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -260,27 +274,35 @@ describe('registerDevice (logic, plain-object inputs)', () => {
   it('accepts an optional-channel registration whose feed_token has access, and stores it as the poll token', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { level: 'standard', feedToken: 'valid' } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 } });
+  });
+
+  it('lowercases authors before storing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = mockEnv();
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['Sean Hyman'], minLength: 0, feedToken: 'valid' }, env);
+    expect(res.status).toBe(200);
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 } });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
     vi.stubGlobal('fetch', fetchMock);
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'members', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard', feedToken: 'valid' } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 } });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'members', pushToken: 'push1', level: 'standard', feedToken: 'expired' }, env);
+    const res = await registerDevice({ channel: 'members', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'expired' }, env);
     expect(res.status).toBe(403);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -288,7 +310,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
   it('returns 503 (not 403) when the access check itself fails, and does not store anything (issue #42)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', level: 'standard', feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(503);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
     expect(env.STATE.put).not.toHaveBeenCalled();
@@ -303,27 +325,45 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     } as any;
   }
 
-  function registerRequest(body: Record<string, string>) {
+  function registerRequest(body: Record<string, unknown>) {
     return new Request('https://worker.test/register', { method: 'POST', body: JSON.stringify(body) });
   }
 
   it('rejects a missing token', async () => {
-    const res = await worker.fetch(registerRequest({ channel: 'members', level: 'standard' }), mockEnv());
+    const res = await worker.fetch(registerRequest({ channel: 'members', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
     expect(res.status).toBe(400);
   });
 
   it('rejects a missing or unknown channel', async () => {
-    const res = await worker.fetch(registerRequest({ token: 'push1', level: 'standard' }), mockEnv());
+    const res = await worker.fetch(registerRequest({ token: 'push1', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
     expect(res.status).toBe(400);
-    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'bogus', level: 'standard' }), mockEnv());
+    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'bogus', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
     expect(res2.status).toBe(400);
   });
 
-  it('rejects a missing or invalid level rather than silently defaulting it', async () => {
+  it('rejects a missing or invalid filter rather than silently defaulting it', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members' }), env);
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', authors: [], minLength: 200 }), env);
     expect(res.status).toBe(400);
-    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'bogus' }), env);
+    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'bogus', authors: [], minLength: 200 }), env);
+    expect(res2.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing or invalid authors', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', minLength: 200 }), env);
+    expect(res.status).toBe(400);
+    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: 'sean', minLength: 200 }), env);
+    expect(res2.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing or invalid minLength', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [] }), env);
+    expect(res.status).toBe(400);
+    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: -1 }), env);
     expect(res2.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -331,21 +371,21 @@ describe('/register endpoint validation (HTTP boundary)', () => {
   it('valid members registration reaches registerDevice and succeeds', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard', feed_token: 'anything' }), env);
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { level: 'standard', feedToken: 'anything' } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200 } });
   });
 
   it('rejects an empty-string feed_token', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'options', level: 'standard', feed_token: '' }), env);
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'options', filter: 'actionable', authors: [], minLength: 200, feed_token: '' }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
 
   it('rejects a missing feed_token for the members channel', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', level: 'standard' }), env);
+    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200 }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -360,7 +400,6 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
     const stateStore: Record<string, string | null> = {
       'stats:options': null,
       'poll:options': 'poll-token',
-      'topics:options': null,
       'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
@@ -370,15 +409,13 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
       TOKENS: {
         list: vi.fn().mockResolvedValue({
           keys: [
-            { name: 'options:good-push', metadata: { level: 'all', feedToken: 'good-device-token' } },
-            { name: 'options:bad-push',  metadata: { level: 'all', feedToken: 'bad-device-token' } },
+            { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
+            { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
           ],
           list_complete: true,
         }),
         delete: tokensDelete,
       },
-      AUTHOR_FILTER: 'Sean Hyman',
-      MIN_CONTENT_LENGTH: '200',
     } as any;
     return { env, statePut, tokensDelete };
   }
@@ -436,16 +473,140 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
   });
 });
 
-describe('runChannel — push-send failure does not abort remaining levels (issue #42)', () => {
+describe('runChannel — registrations predating filter/authors/minLength are skipped', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const itemWithAuthor = (guid: string, author: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
+
+  // "Legacy" here means a TOKENS entry written before this schema existed — simulated directly
+  // via metadata containing only feedToken, since there's no migration path that produces one
+  // (see docs/notification-filter-design.md: such entries age out on next re-registration).
+  it('a malformed registration (missing filter/authors/minLength) receives no push', async () => {
+    const stateStore: Record<string, string | null> = {
+      'stats:options': null,
+      'poll:options': 'poll-token',
+      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'options:legacy-push', metadata: { feedToken: 'legacy-token' } }], // no filter/authors/minLength
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+    } as any;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('exp.host'))).toBe(false);
+  });
+});
+
+describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  // Realistic shape: a real pubDate on every item, like the actual feed always sends. guids are
+  // listed newest-first, each one minute older than the last, matching the feed's real ordering.
+  const rssWithItems = (guids: string[], descriptions?: string[]) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel>${guids.map((g, i) =>
+      `<item><guid>${g}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${descriptions?.[i] ?? 'x'.repeat(210)}</description><pubDate>${new Date(Date.now() - i * 60_000).toUTCString()}</pubDate></item>`
+    ).join('')}</channel></rss>`;
+
+  function mockEnv(seenList: string[] | undefined, keys: { name: string; metadata: Record<string, unknown> }[] = []) {
+    const stateStore: Record<string, string | null> = {
+      'stats:options': null,
+      'poll:options': 'poll-token',
+      'seen:options': seenList === undefined ? null : JSON.stringify({ optionsInsights: seenList }),
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn() },
+    } as any;
+    return { env, stateStore };
+  }
+
+  it('first-ever poll for a feed seeds seen guids without treating anything as new', async () => {
+    const { env, stateStore } = mockEnv(undefined);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(['a', 'b', 'c'])) }));
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const stats = JSON.parse(stateStore['stats:options']!);
+    expect(stats.numNewItems).toBe(0);
+    expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toEqual(['a', 'b', 'c']);
+  });
+
+  it('stops walking as soon as it reaches an already-seen guid, newest-first', async () => {
+    // Feed returns newest-first: c, b, a. 'b' was already seen, so only 'c' is new — 'a' is
+    // never even inspected, matching the reverse-chronological early-exit assumption.
+    const { env, stateStore } = mockEnv(['b', 'a']);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(['c', 'b', 'a'])) }));
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const stats = JSON.parse(stateStore['stats:options']!);
+    expect(stats.numNewItems).toBe(1);
+    // newly-seen guid is prepended, ahead of the previous seen list.
+    expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toEqual(['c', 'b', 'a']);
+  });
+
+  it('honors a configured MAX_ALERT_ITEMS_PER_FEED cap, whatever its value', async () => {
+    // The specific number (25) the upstream feed happens to return today isn't the constraint
+    // under test — the cap itself, and that it's configurable, is. A small override (3) proves
+    // the mechanism without coupling the test to today's feed behavior.
+    const many = Array.from({ length: 10 }, (_, i) => `item-${i}`); // newest first
+    const { env, stateStore } = mockEnv(['item-9']); // the oldest of the 10 was already seen
+    env.MAX_ALERT_ITEMS_PER_FEED = '3';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(many)) }));
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const stats = JSON.parse(stateStore['stats:options']!);
+    // Only the configured 3 are ever considered, so item-9 (the actual seen boundary) is never
+    // reached — every considered item counts as "new."
+    expect(stats.itemsFetched).toBe(3);
+    expect(stats.numNewItems).toBe(3);
+  });
+
+  it('alerts oldest-to-newest, not newest-first, when multiple new items exist', async () => {
+    const { env } = mockEnv(['old-guid'], [
+      { name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
+    ]);
+    // Feed returns newest-first: c, b, a — all three are new. description carries the guid so
+    // push message order is directly observable below.
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(rssWithItems(['c', 'b', 'a'], ['c', 'b', 'a'])) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    const messages = JSON.parse(pushCall![1]!.body as string);
+    expect(messages.map((m: { body: string }) => m.body)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+// "Bucket" = the runtime grouping in index.ts's runChannel: devices sharing an identical
+// filter|authors|minLength signature share one eligibility check and one push-send call.
+describe('runChannel — push-send failure does not abort remaining buckets (issue #42)', () => {
   const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
-  it('still attempts every notification level, and still writes final stats, after one level\'s push-send throws', async () => {
+  it('still attempts every notification bucket, and still writes final stats, after one bucket\'s push-send throws', async () => {
     const stateStore: Record<string, string | null> = {
       'stats:members': null,
       'poll:members': 'poll-token',
-      'topics:members': null,
       'seen:members': JSON.stringify({ membersArea: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
@@ -454,15 +615,13 @@ describe('runChannel — push-send failure does not abort remaining levels (issu
       TOKENS: {
         list: vi.fn().mockResolvedValue({
           keys: [
-            { name: 'members:push-a', metadata: { level: 'minimal', feedToken: 'device-a' } },
-            { name: 'members:push-b', metadata: { level: 'all', feedToken: 'device-b' } },
+            { name: 'members:push-a', metadata: { filter: 'members', authors: [], minLength: 0, feedToken: 'device-a' } },
+            { name: 'members:push-b', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-b' } },
           ],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
-      AUTHOR_FILTER: 'Sean Hyman',
-      MIN_CONTENT_LENGTH: '200',
     } as any;
 
     let pushCalls = 0;
@@ -478,7 +637,7 @@ describe('runChannel — push-send failure does not abort remaining levels (issu
         if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
         return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
       }
-      // Members Area main feed: one new post, always notifies regardless of level.
+      // Members Area main feed: one new post — unconditional, notifies both buckets.
       return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -486,10 +645,10 @@ describe('runChannel — push-send failure does not abort remaining levels (issu
     await expect(worker.scheduled({ cron: MEMBERS_CRON } as any, env, {} as any)).resolves.not.toThrow();
 
     const pushSendCalls = fetchMock.mock.calls.filter(([url]) => (url as string).includes('exp.host'));
-    expect(pushSendCalls).toHaveLength(2); // both levels attempted despite the first throwing
+    expect(pushSendCalls).toHaveLength(2); // both buckets attempted despite the first throwing
 
     const finalStats = JSON.parse(stateStore['stats:members']!);
-    expect(finalStats.sent).toBe(1); // only the second (successful) level counted
+    expect(finalStats.sent).toBe(1); // only the second (successful) bucket counted
   });
 });
 
@@ -501,7 +660,6 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
     const stateStore: Record<string, string | null> = {
       'stats:options': null,
       'poll:options': 'poll-token',
-      'topics:options': null,
       'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const callOrder: string[] = [];
@@ -514,13 +672,11 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:push1', metadata: { level: 'all', feedToken: 'device-token' } }],
+          keys: [{ name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } }],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
-      AUTHOR_FILTER: 'Sean Hyman',
-      MIN_CONTENT_LENGTH: '200',
     } as any;
 
     const fetchMock = vi.fn((url: string) => {
@@ -551,7 +707,6 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
     const stateStore: Record<string, string | null> = {
       'stats:options': null,
       'poll:options': 'poll-token',
-      'topics:options': null,
       'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
@@ -559,13 +714,11 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:push1', metadata: { level: 'all', feedToken: 'device-token' } }],
+          keys: [{ name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } }],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
-      AUTHOR_FILTER: 'Sean Hyman',
-      MIN_CONTENT_LENGTH: '200',
       MAX_PUSH_AGE_MINUTES: '120',
     } as any;
     const fetchMock = vi.fn((url: string) => {

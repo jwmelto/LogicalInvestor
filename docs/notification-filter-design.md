@@ -1,169 +1,138 @@
 # Notification filter redesign
 
-Status: design agreed, not yet implemented. Target: `release/0.10.0`.
+Per-device notification filtering for the `cloudflare-worker` push backend,
+replacing the single global `AUTHOR_FILTER` var applied identically to every
+device. Implemented on `feature/notification-filter-redesign`.
 
-## Problem
+## Server-side alerting
 
-Local (on-device) notifications are the only way for a user to get alerts on
-forum activity from an author other than Sean Hyman — server push
-(`cloudflare-worker`) filters on a single global `AUTHOR_FILTER` var
-(`wrangler.toml`), applied identically to every registered device. There is
-no per-user customization today.
+Per forum, per cron tick:
 
-Local notifications rely on `expo-background-task`'s `BGProcessingTaskRequest`,
-which is opportunistic — iOS grants it a background slot on its own schedule,
-not on any interval the app requests. Verified via a physical device + Xcode
-LLDB session (`e -l objc -- (void)[[BGTaskScheduler sharedScheduler]
-_simulateLaunchForTaskWithIdentifier:...]`) that the task and the
-lock-screen-notification path both work correctly in isolation — the gap is
-purely that iOS rarely grants the background slot in practice, not a bug in
-the implementation.
-
-Conclusion: don't fight `BGTaskScheduler`. Move custom author filtering to
-the server, onto the channel that's already reliable.
-
-## Schema change
-
-`TokenMeta` (Worker `TOKENS` KV metadata, already stored per registered
-device) gains three optional fields:
-
-```ts
-interface TokenMeta {
-  feedToken?: string;
-  filter?: ContentFilter;  // replaces `level`
-  authors?: string[];      // lowercased; empty/absent = fall back to global AUTHOR_FILTER
-  minLength?: number;      // absent = fall back to global MIN_CONTENT_LENGTH
-}
+```
+fetch the forum's RSS feed → up to N items (configurable), reverse-chronological
+walk newest-to-oldest, collecting unseen items, until the first already-seen guid
+reverse the collected items to oldest-first
+for each item, for each device registered to this channel:
+  matchesFilter(item, device.filter, device.authors, device.minLength)
 ```
 
-All new fields are optional and absent = today's exact behavior. No
-migration needed for existing registrations.
+The forum's top-level feed (bbPress's "All Posts" feed) already contains
+every reply in that forum, not just new-topic creation — confirmed against a
+real authenticated fetch (25/25 sampled items were replies, spanning 8+
+topics, strictly reverse-chronological by `pubDate`). So alerting reads only
+the flat per-forum feed; topic discovery and per-topic sub-feeds
+(`topicService.ts`) are an app-only concern for the browsing UI.
+
+Complexity: O(items × registered devices) per forum per poll. Items are
+capped per poll (`MAX_ALERT_ITEMS_PER_FEED`, configurable); `matchesFilter`
+is a handful of regex/string checks, so linear scaling in device count is
+fine at current and foreseeable scale.
+
+The app does its own full reconciliation (complete topic history, unread
+tracking, hierarchical browsing) on every foreground refresh, independent of
+the server. The server's per-poll item cap bounds what's timely enough to
+alert on — it is not a completeness guarantee.
 
 ## Filter tiers
 
-Four tiers, narrow to broad, each a strict superset of the previous:
+Three tiers, narrow to broad, each a strict superset of the previous:
 
 ```
-members → actionable → length → any
+members → actionable → length
 ```
 
-- `members`: Members Area posts only (no topics, so no content filter applies).
-- `actionable`: rare, high-signal keyword matches (buy/sell/tranche/urgency
-  phrases) — the narrowest non-members tier, because these patterns are rare.
-- `length`: any post at least `minLength` characters — broader than
-  `actionable`, since most substantive replies clear the bar.
-- `any`: everything, content-wise.
+- `members`: Members Area posts — unconditional (see below).
+- `actionable`: keyword pattern match (buy/sell/tranche/urgency phrases);
+  Stock/Options Insights additionally require a `*`-prefixed title.
+- `length`: at least `minLength` characters, matched or not.
 
-Author match is a separate, always-required AND — it applies to every tier,
-including `members` (moot in practice since only Sean posts there, but not
-special-cased).
+`filter: 'length', minLength: 0` covers "everything" — no separate `any`
+value exists.
 
-Each item collapses to a single ordinal `minVisibleTier`, computed once,
-independent of any device:
+## Members Area is unconditional
+
+`matchesFilter` returns `true` for Members Area regardless of a device's
+author list or tier — a narrow `authors` whitelist (e.g. `['herman']`) never
+silences it. The only way to stop Members Area alerts is to unregister the
+device (`/unregister`); there is no separate "off" setting.
+
+## `minVisibleTier`
 
 ```
-minVisibleTier(item):
-  if negative-pattern matches:            return ∞   (never notifies, any tier)
-  if feedKey === membersArea:             return 0   (members)
-  starOk = (stock/options) ? title.startsWith('*') : true
-  if !starOk:                             return 3   (any — only the loosest tier ignores the star gate)
-  if positive-pattern matches:            return 1   (actionable)
-  if length >= minLength:                 return 2   (length)
-  return 3                                            (any)
+minVisibleTier(item, minLength, actionableAuthors):
+  if feedKey === membersArea: return 0
+  isActionableAuthor = item.author in actionableAuthors
+  topicPass = (stock/options) ? title.startsWith('*') : true
+  actionable = isActionableAuthor && topicPass && !negativePatternMatch && positivePatternMatch
+  if actionable: return 1
+  return (length >= minLength) ? 2 : Infinity
 ```
 
-Device eligibility: `authorMatches(item, device.authors) AND
-device.tierRank >= minVisibleTier(item)`.
+`actionableAuthors` is who can trigger the `actionable` tier at all — a
+pattern match from anyone else (e.g. a reply repeating or joking about
+Sean's language) isn't a real trade call. It's a parameter, not a hardcoded
+constant: the Worker reads it from `env.ACTIONABLE_AUTHORS` (comma-separated,
+default `"Sean Hyman"`, same pattern as its other tunables) and passes it
+into `matchesFilter`/`minVisibleTier`. It's shared by every device, not a
+per-device value — independent of a device's own `authors` whitelist, which
+`matchesFilter` applies separately on top of every tier: a Sean actionable
+post still needs to pass a device's whitelist like anything else, and a
+non-Sean post that a device does want to hear from can still surface at
+`length` if it's long enough — it just never reaches `actionable`.
 
-**Behavior change, deliberate:** negative patterns (`fail-personal-advice`,
-`fail-hypothetical`, `fail-historical`) become a universal veto across all
-four tiers, not just the old `standard` tier. Without this, `actionable` and
-`any` can't actually be supersets of each other where negative patterns
-apply. Accepted as correct — nobody wants alerts on personal-advice-framed
-content regardless of tier looseness.
+A negative-pattern match disqualifies `actionable` only — a long-enough
+negative-pattern post still surfaces at `length`. `Infinity` means "not
+visible at any tier, at this device's minLength"; it's parameterized per
+device, not a fixed veto on the content.
 
-**Known gap, accepted:** today's `minimal` level means "Members Area only,
-suppress everything else." There's no equivalent under this design — every
-tier applies to all forums, with Members Area just exempt from
-content-filtering, not exempt from appearing. Dropped deliberately to avoid
-forum-scoping as a second axis; revisit only if actually requested.
+## Author matching
 
-## Worker runtime changes
+`authors: string[]`, lowercased, stored per device at registration. Empty
+list = no author restriction. There is no global fallback for this value —
+`filter`, `authors`, and `minLength` are required on every registration.
+(Separate from `actionableAuthors` above, which is shared Worker
+configuration gating the `actionable` tier itself, not any one device's
+preferences.)
 
-`runChannel`'s device bucketing changes from keying on `level` alone (3
-possible buckets) to keying on `filter|authors|minLength` signature. This
-still rides entirely on `TOKENS.list()` metadata, which already returns
-these fields for free (existing comment in `cloudflare-worker/src/index.ts`
-confirms metadata costs no extra KV read). `forum`/`actionable` computation
-per item is unchanged; only `author` match gets recomputed per distinct
-bucket signature — in-memory string comparison, negligible even at
-hundreds of buckets.
+## `TokenMeta`
 
-## KV cost — zero marginal writes
+```ts
+interface TokenMeta {
+  feedToken: string;
+  filter: ContentFilter;   // 'members' | 'actionable' | 'length'
+  authors: string[];       // lowercased; [] = no author restriction
+  minLength: number;       // 0 = no minimum
+}
+```
 
-Two KV namespaces, `TOKENS` (per-device) and `STATE` (per-channel), nothing
-else. This feature adds no new namespace and no new write:
+All three are required on every new registration. Any KV entry missing them
+is excluded from bucketing (gets no alerts) until the device re-registers,
+which happens automatically the next time the app is foregrounded
+(`FeedContext.tsx` re-registers once per session). No migration is needed —
+stale entries age out via normal app usage.
 
-| Path | Writes today | Writes after |
-|---|---|---|
-| `/register` call | 1× `STATE.put(poll:)` + 1× `TOKENS.put(metadata)` | same 2 — new fields ride the existing metadata blob |
-| `runChannel` per cron tick w/ new items | 5× `STATE.put` | same 5 |
+## Local notifications
 
-**The free tier is already tight, independent of this feature.** Cron
-polling alone runs ~250 times/day across 3 channels at 4–5 `STATE.put`
-calls each ≈ 1,000–1,250 writes/day — at or past Cloudflare KV's free-tier
-cap of 1,000 writes/day before this feature exists. A launch-day flood of
-users editing settings simultaneously (2 writes per `/register` call) could
-push over the cap on a highly visible day. No paid-tier budget exists for
-this project currently (owner's explicit call — value has to be proven
-before asking for the $5/month commitment).
+`services/notificationService.ts` (the scheduling pipeline and its test)
+is deleted. `backgroundFetchService.ts` keeps its unread-count/badge-caching
+logic — only the dead notification call inside its task callback is
+removed; tab and app-icon badges behave exactly as before, including while
+the app is backgrounded or closed.
 
-Two concrete mitigations, not yet implemented:
-1. Skip the redundant `STATE.put('poll:channel', ...)` write in
-   `registerDevice()` when the feed token is unchanged from the stored value
-   — read-before-write, halves the common-case registration write cost.
-2. Debounce client-side sync — edit multiple Settings fields in one session,
-   sync once (on leaving the screen), not once per field change.
+`authorFilters`/`minContentLength` (the local-pipeline settings) are now
+`authors`/`minLength` in `pushService.ts`, synced to `/register`. The
+existing Settings UI fields (author whitelist, min-length slider) drive
+server registration directly.
 
-The actual structural fix is moving off the free KV tier, independent of
-this feature — cron traffic alone already justifies it. Not this repo's
-call to make unilaterally.
+Per-topic muting (`subscriptionService`, the "Silenced Topics" list) has
+never applied to server push — it's a local-only concept and remains one.
 
-## Scaling note (pre-existing, unrelated to this feature)
+## Filed separately
 
-`runChannel`'s device-access-recheck loop (`cloudflare-worker/src/index.ts`,
-inside the `TOKENS.list()` pass when there's new content to push) does a
-sequential `for...of` with `await feedTokenHasAccess(...)` per device — one
-WordPress HTTP round-trip at a time, not parallelized. At current device
-counts this is negligible; if it ever grows to dozens+ devices, worth
-switching to `Promise.all` per KV list page with a concurrency cap (avoid
-bursting `logicalinvestor.net` with simultaneous requests). Pre-existing,
-not introduced by this design — flagged here since it came up during the
-same conversation.
-
-## Consequence: local notifications become dead code
-
-`notificationService.ts`'s `wouldServerPush()` already skips firing a local
-notification whenever server push is predicted to cover the same item.
-Once server push covers arbitrary custom author filters (this design),
-`wouldServerPush()` becomes true for every item local would ever fire on —
-local becomes permanently self-suppressing.
-
-Follow-up candidates for removal once this ships:
-- `backgroundFetchService.ts`, `registerBackgroundFetch()`, the
-  `expo-background-task`/`expo-task-manager` wiring
-- The local-notification scheduling path in `notificationService.ts`
-- `app.json`'s `expo-background-task`/`expo-task-manager` plugin entries
-
-Not done as part of this design — do it as its own cleanup PR after the
-server-side change is live and confirmed working.
-
-## Not yet done
-
-- Worker: schema + bucketing + `matchesFilter`/`minVisibleTier` implementation
-- App: `pushService.ts` sync of `authors`/`filter`/`minLength` to `/register`
-  (mirroring the existing `updatePushLevel()` pattern), Settings UI for the
-  four tiers
-- The two KV-write mitigations above
-- The dead-code removal follow-up
-- Tests, both Worker and app side
+- Issue #32: KV write-budget headroom (cron polling interval tuning, or
+  reducing writes per poll).
+- Issue #56: `FeedContext.tsx` double-registers the `members` channel (once
+  for `membersArea`, once for `membersForum`) — should dedupe by resolved
+  channel, not by feed key.
+- Issue #58: Members Area returning items regardless of token validity can
+  mask a stale token for the `members` channel specifically.

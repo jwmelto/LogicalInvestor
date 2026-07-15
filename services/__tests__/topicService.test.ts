@@ -87,6 +87,7 @@ describe('topicService', () => {
       author: 'Test Author',
       description: 'Test excerpt',
       feedKey: feedKey as any,
+      isFirstPost: true,
     });
 
     // item.title is passed in already normalized here (extractRssItems strips "Reply To: "
@@ -183,6 +184,7 @@ describe('topicService', () => {
           author: 'Test Author',
           description: 'Test excerpt',
           feedKey: FK.membersForum as any,
+          isFirstPost: true,
         },
       ];
 
