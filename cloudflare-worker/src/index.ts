@@ -41,6 +41,11 @@ interface RunStats {
   itemsFetched: number;
   numNewItems: number;
   sent: number;
+  // event.scheduledTime of the last tick this channel claimed — see the duplicate-dispatch
+  // guard in runChannel(). Distinct from lastRun (wall-clock): scheduledTime identifies the
+  // logical cron tick and stays identical across Cloudflare's at-least-once duplicate
+  // deliveries of it, whereas wall-clock time differs between them.
+  lastScheduledTime?: number;
 }
 
 interface DailyStats {
@@ -49,6 +54,38 @@ interface DailyStats {
   itemsFetched: number;
   numNewItems: number;
   sent: number;
+}
+
+// Everything a channel's poll cycle reads/writes, under one KV key (`run:<channel>`). One key
+// keeps this to at most 2 writes per active poll — Workers KV's free tier caps writes at
+// 1,000/day account-wide, and this channel's poll cadence runs close enough to that ceiling
+// for write count per invocation to matter (issue #32). `poll:<channel>` (the feed token to
+// poll with) stays a separate key — it's written rarely (register/recovery), not per poll.
+interface ChannelState {
+  stats: RunStats;
+  seen: Partial<Record<FeedKey, string[]>>;
+  daily: DailyStats;
+}
+
+function emptyDaily(date: string): DailyStats {
+  return { date, runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0 };
+}
+
+function emptyRunStats(): RunStats {
+  return { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 };
+}
+
+// Pure so it's directly testable. Resets the rolling counters when `todayET` doesn't match the
+// stored date, rather than requiring a separate day-boundary check at the call site.
+export function advanceDaily(daily: DailyStats | undefined, todayET: string, runStats: RunStats): DailyStats {
+  const base = daily && daily.date === todayET ? daily : emptyDaily(todayET);
+  return {
+    date: todayET,
+    runs: base.runs + 1,
+    itemsFetched: base.itemsFetched + runStats.itemsFetched,
+    numNewItems: base.numNewItems + runStats.numNewItems,
+    sent: base.sent + runStats.sent,
+  };
 }
 
 // Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
@@ -146,6 +183,9 @@ export function shouldPollNow(now: Date, lastRun: Date | null, interval: number)
   return (!lastRun) || (now.getTime() - lastRun.getTime() >= interval * 60_000);
 }
 
+// 'en-CA' short-date format happens to be YYYY-MM-DD, the one common English-locale option
+// that's already sortable/unambiguous as a string (en-US gives M/D/YYYY, en-GB gives
+// D/M/YYYY). Avoids manually assembling the string from separate {year, month, day} parts.
 function getETDate(now: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
 }
@@ -186,17 +226,18 @@ export default {
         return new Response('unauthorized', { status: 401 });
       }
       const result: Record<string, unknown> = {};
+      const todayET = getETDate(new Date());
       for (const channel of CHANNELS) {
-        const [tokens, seenJson, pollToken, statsJson] = await Promise.all([
+        const [tokens, runJson, pollToken] = await Promise.all([
           env.TOKENS.list({ prefix: `${channel}:` }),
-          env.STATE.get(`seen:${channel}`),
+          env.STATE.get(`run:${channel}`),
           env.STATE.get(`poll:${channel}`),
-          env.STATE.get(`stats:${channel}`),
         ]);
-        const stats: RunStats | null = statsJson ? JSON.parse(statsJson) : null;
+        const state: ChannelState | null = runJson ? JSON.parse(runJson) : null;
+        const stats = state?.stats ?? null;
         result[channel] = {
           registeredTokens: tokens.keys.length,
-          seenIds:   seenJson ? Object.values(JSON.parse(seenJson) as Record<string, string[]>).reduce((a, b) => a + b.length, 0) : 0,
+          seenIds:   state?.seen ? Object.values(state.seen).reduce((a, b) => a + (b?.length ?? 0), 0) : 0,
           pollToken: pollToken ? 'present' : 'missing',
           lastRun:      stats?.lastRun      ?? null,
           lastNotified: stats?.lastNotified ?? null,
@@ -205,7 +246,9 @@ export default {
             numNewItems:  stats.numNewItems,
             sent:         stats.sent,
           } : null,
-          todayStats: await env.STATE.get<DailyStats>(`daily:${channel}:${getETDate(new Date())}`, 'json'),
+          // Only surface daily as "today's" if a poll has actually run today — an unrolled-over
+          // stale date (no poll yet today) must not be mislabeled as today's stats.
+          todayStats: state?.daily && state.daily.date === todayET ? state.daily : null,
         };
       }
       return new Response(JSON.stringify(result, null, 2), {
@@ -257,7 +300,7 @@ export default {
     if (heartbeatUrl) {
       ctx.waitUntil(fetch(heartbeatUrl).catch(() => {}));
     }
-    await runChannel(channel, env);
+    await runChannel(channel, env, event);
   },
 };
 
@@ -329,21 +372,18 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
   return null;
 }
 
-async function recordDaily(env: Env, channel: Channel, now: Date, runStats: RunStats): Promise<void> {
-  const dailyKey = `daily:${channel}:${getETDate(now)}`;
-  const daily: DailyStats = await env.STATE.get<DailyStats>(dailyKey, 'json') ?? {
-    date: getETDate(now), runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0,
-  };
-  daily.runs += 1;
-  daily.itemsFetched += runStats.itemsFetched;
-  daily.numNewItems += runStats.numNewItems;
-  daily.sent += runStats.sent;
-  await env.STATE.put(dailyKey, JSON.stringify(daily));
-}
-
 interface Bucket { filter: ContentFilter; authors: string[]; minLength: number; tokens: string[] }
 
-async function runChannel(channel: Channel, env: Env): Promise<void> {
+// Re-reads `daily` fresh from KV right before a write that follows slow work (bucket-building,
+// push-sending). A duplicate cron dispatch for the same channel can complete its own write in
+// that window; basing the next advanceDaily() call on a stale in-memory snapshot instead of a
+// fresh read would silently lose that invocation's contribution to the daily counters.
+async function freshDailyBase(env: Pick<Env, 'STATE'>, runKey: string, fallback: DailyStats | undefined): Promise<DailyStats | undefined> {
+  const raw = await env.STATE.get(runKey);
+  return raw ? (JSON.parse(raw) as ChannelState).daily : fallback;
+}
+
+async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Promise<void> {
   const now = new Date();
   const intervals = {
     trading:  parseInt(env.POLL_INTERVAL_TRADING  ?? '5',  10),
@@ -365,17 +405,36 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
   // Who can trigger the 'actionable' tier.
   const actionableAuthors = (env.ACTIONABLE_AUTHORS ?? 'Sean Hyman').split(',').map((a) => a.trim().toLowerCase());
-  const statsKey = `stats:${channel}`;
-  const prevStats = await env.STATE.get<RunStats>(statsKey, 'json');
-  const lastRun = prevStats?.lastRun ? new Date(prevStats.lastRun) : null;
+  const runKey = `run:${channel}`; // see ChannelState
+  const runRaw = await env.STATE.get(runKey);
+  const state: ChannelState | null = runRaw ? JSON.parse(runRaw) : null;
+  const lastRun = state?.stats.lastRun ? new Date(state.stats.lastRun) : null;
   if (!shouldPollNow(now, lastRun, getIntervalMinutes(now, intervals, boundaries))) return;
+
+  // Cron Triggers are at-least-once delivery — Cloudflare's own docs: "rare duplicate
+  // executions possible." event.scheduledTime identifies the logical tick and stays identical
+  // across duplicate deliveries of it (unlike wall-clock `now`, which differs between them). If
+  // a prior invocation already claimed this exact tick, this is a duplicate: stop before
+  // touching the network or KV again, and tell Cloudflare not to retry it either.
+  if (state?.stats.lastScheduledTime === event.scheduledTime) {
+    event.noRetry();
+    return;
+  }
 
   const feedToken = await env.STATE.get(`poll:${channel}`);
   if (!feedToken) return; // no subscriber has registered for this channel yet
 
-  const seenKey = `seen:${channel}`;
-  const seenJson = await env.STATE.get(seenKey);
-  const seenMap: Partial<Record<string, string[]>> = seenJson ? JSON.parse(seenJson) : {};
+  // Claim this tick now, before any network fetch — the earliest point possible, narrowing the
+  // duplicate-dispatch race to "two reads landing before either write," the minimum achievable
+  // without KV compare-and-swap (KV has none, so this is a mitigation, not a hard guarantee).
+  // seen/daily are carried forward unchanged; the closing write below finalizes them once the
+  // (possibly slow) fetch/notify work completes.
+  const claimedStats: RunStats = { ...(state?.stats ?? emptyRunStats()), lastRun: now.toISOString(), lastScheduledTime: event.scheduledTime };
+  await env.STATE.put(runKey, JSON.stringify({
+    stats: claimedStats, seen: state?.seen ?? {}, daily: state?.daily ?? emptyDaily(getETDate(now)),
+  } satisfies ChannelState));
+
+  const seenMap: Partial<Record<string, string[]>> = state?.seen ?? {};
 
   // Per forum: fetch the top-level feed only (no topic sub-feeds — see design doc), cap to the
   // most recent maxAlertItemsPerFeed, and — since these feeds are confirmed reverse-chronological
@@ -427,17 +486,14 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     return; // recovered token (if any) will be used on the next cron cycle
   }
 
-  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched, numNewItems: newItems.length, sent: 0 };
-
-  // Claim this run now, before the slower device-listing/notify work below, to shrink the window
-  // in which a concurrent duplicate invocation (Cloudflare can dispatch a cron tick twice) reads
-  // the same stale prevStats and double-sends. Not a hard guarantee (KV has no compare-and-swap),
-  // just a smaller race window.
-  await env.STATE.put(statsKey, JSON.stringify(runStats));
-  await env.STATE.put(seenKey, JSON.stringify(seenMap));
+  const runStats: RunStats = { lastRun: now.toISOString(), lastNotified: null, itemsFetched, numNewItems: newItems.length, sent: 0, lastScheduledTime: event.scheduledTime };
+  const todayET = getETDate(now);
 
   if (newItems.length === 0) {
-    await recordDaily(env, channel, now, runStats);
+    // The fetch loop above already ran (network I/O — "slow work"), so daily's base is re-read
+    // fresh here rather than trusting the pre-fetch snapshot, same reasoning as the branches below.
+    const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
+    await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
     return;
   }
 
@@ -475,7 +531,8 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
   } while (cursor);
 
   if (buckets.size === 0) {
-    await recordDaily(env, channel, now, runStats);
+    const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
+    await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
     return;
   }
 
@@ -510,12 +567,10 @@ async function runChannel(channel: Channel, env: Env): Promise<void> {
     })
   );
   runStats.sent = sentCounts.reduce((a, b) => a + b, 0);
+  if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
 
-  if (runStats.sent > 0) {
-    runStats.lastNotified = now.toISOString();
-    await env.STATE.put(statsKey, JSON.stringify(runStats));
-  }
-  await recordDaily(env, channel, now, runStats);
+  const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
+  await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
 }
 
 export { matchesFilter, minVisibleTier, stripReplyPrefix } from '@li/core';

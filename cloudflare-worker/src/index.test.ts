@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS, advanceDaily } from './index';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
 
@@ -23,6 +23,28 @@ const longNegative = 'we may consider a sell ' + 'x'.repeat(200);
 
 const RSS_WITH_ITEM = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>1</guid><title>t</title><link>l</link><description>d</description></item></channel></rss>';
 const RSS_EMPTY     = '<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>';
+
+// Matches production's getETDate() exactly, for fixtures that need advanceDaily() to accumulate
+// onto "today" rather than reset (which happens whenever the fixture's date doesn't match).
+const TODAY_ET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+
+// Builds a scheduled() event mock. Each call gets a unique scheduledTime by default, so
+// sequential calls in a test are never mistaken for duplicate dispatches of the same tick —
+// tests exercising the duplicate-dispatch guard itself pass an explicit scheduledTime instead.
+let scheduledTimeSeq = 0;
+function scheduledEvent(cron: string, scheduledTime = ++scheduledTimeSeq): any {
+  return { cron, scheduledTime, noRetry: vi.fn() };
+}
+
+// Builds a `run:<channel>` KV value (the merged stats+seen+daily blob) for test fixtures that
+// need pre-existing seen state. `lastRun: ''` means "never polled" (shouldPollNow always fires).
+function runState(seen: Record<string, string[]>): string {
+  return JSON.stringify({
+    stats: { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 },
+    seen,
+    daily: { date: '1970-01-01', runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0 },
+  });
+}
 
 beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -398,9 +420,8 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
 
   function mockEnv() {
     const stateStore: Record<string, string | null> = {
-      'stats:options': null,
+      'run:options': runState({ optionsInsights: ['old-guid'] }),
       'poll:options': 'poll-token',
-      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const tokensDelete = vi.fn().mockResolvedValue(undefined);
@@ -436,7 +457,7 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(tokensDelete).toHaveBeenCalledWith('options:bad-push');
 
@@ -462,7 +483,7 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(tokensDelete).not.toHaveBeenCalled();
 
@@ -483,9 +504,8 @@ describe('runChannel — registrations predating filter/authors/minLength are sk
   // (see docs/notification-filter-design.md: such entries age out on next re-registration).
   it('a malformed registration (missing filter/authors/minLength) receives no push', async () => {
     const stateStore: Record<string, string | null> = {
-      'stats:options': null,
+      'run:options': runState({ optionsInsights: ['old-guid'] }),
       'poll:options': 'poll-token',
-      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const env = {
@@ -504,7 +524,7 @@ describe('runChannel — registrations predating filter/authors/minLength are sk
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('exp.host'))).toBe(false);
   });
@@ -521,9 +541,8 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
 
   function mockEnv(seenList: string[] | undefined, keys: { name: string; metadata: Record<string, unknown> }[] = []) {
     const stateStore: Record<string, string | null> = {
-      'stats:options': null,
+      'run:options': seenList === undefined ? null : runState({ optionsInsights: seenList }),
       'poll:options': 'poll-token',
-      'seen:options': seenList === undefined ? null : JSON.stringify({ optionsInsights: seenList }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const env = {
@@ -537,11 +556,11 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     const { env, stateStore } = mockEnv(undefined);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(['a', 'b', 'c'])) }));
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    const stats = JSON.parse(stateStore['stats:options']!);
-    expect(stats.numNewItems).toBe(0);
-    expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toEqual(['a', 'b', 'c']);
+    const state = JSON.parse(stateStore['run:options']!);
+    expect(state.stats.numNewItems).toBe(0);
+    expect(state.seen.optionsInsights).toEqual(['a', 'b', 'c']);
   });
 
   it('stops walking as soon as it reaches an already-seen guid, newest-first', async () => {
@@ -550,12 +569,12 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     const { env, stateStore } = mockEnv(['b', 'a']);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(['c', 'b', 'a'])) }));
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    const stats = JSON.parse(stateStore['stats:options']!);
-    expect(stats.numNewItems).toBe(1);
+    const state = JSON.parse(stateStore['run:options']!);
+    expect(state.stats.numNewItems).toBe(1);
     // newly-seen guid is prepended, ahead of the previous seen list.
-    expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toEqual(['c', 'b', 'a']);
+    expect(state.seen.optionsInsights).toEqual(['c', 'b', 'a']);
   });
 
   it('honors a configured MAX_ALERT_ITEMS_PER_FEED cap, whatever its value', async () => {
@@ -567,13 +586,13 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     env.MAX_ALERT_ITEMS_PER_FEED = '3';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(many)) }));
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    const stats = JSON.parse(stateStore['stats:options']!);
+    const state = JSON.parse(stateStore['run:options']!);
     // Only the configured 3 are ever considered, so item-9 (the actual seen boundary) is never
     // reached — every considered item counts as "new."
-    expect(stats.itemsFetched).toBe(3);
-    expect(stats.numNewItems).toBe(3);
+    expect(state.stats.itemsFetched).toBe(3);
+    expect(state.stats.numNewItems).toBe(3);
   });
 
   it('alerts oldest-to-newest, not newest-first, when multiple new items exist', async () => {
@@ -588,7 +607,7 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
     const messages = JSON.parse(pushCall![1]!.body as string);
@@ -605,9 +624,8 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
 
   it('still attempts every notification bucket, and still writes final stats, after one bucket\'s push-send throws', async () => {
     const stateStore: Record<string, string | null> = {
-      'stats:members': null,
+      'run:members': runState({ membersArea: ['old-guid'] }),
       'poll:members': 'poll-token',
-      'seen:members': JSON.stringify({ membersArea: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const env = {
@@ -642,13 +660,13 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(worker.scheduled({ cron: MEMBERS_CRON } as any, env, {} as any)).resolves.not.toThrow();
+    await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
 
     const pushSendCalls = fetchMock.mock.calls.filter(([url]) => (url as string).includes('exp.host'));
     expect(pushSendCalls).toHaveLength(2); // both buckets attempted despite the first throwing
 
-    const finalStats = JSON.parse(stateStore['stats:members']!);
-    expect(finalStats.sent).toBe(1); // only the second (successful) bucket counted
+    const finalState = JSON.parse(stateStore['run:members']!);
+    expect(finalState.stats.sent).toBe(1); // only the second (successful) bucket counted
   });
 });
 
@@ -658,14 +676,13 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
 
   it('writes an updated stats:<channel> before sending any push', async () => {
     const stateStore: Record<string, string | null> = {
-      'stats:options': null,
+      'run:options': runState({ optionsInsights: ['old-guid'] }),
       'poll:options': 'poll-token',
-      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const callOrder: string[] = [];
     const statePut = vi.fn((key: string, value: string) => {
       stateStore[key] = value;
-      if (key === 'stats:options' && JSON.parse(value).lastRun) callOrder.push('stats-claimed');
+      if (key === 'run:options' && JSON.parse(value).stats.lastRun) callOrder.push('stats-claimed');
       return Promise.resolve();
     });
     const env = {
@@ -689,12 +706,121 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    // stats:options gets claimed early (before the slow notify work) and written again at the
+    // run:options gets claimed early (before the slow notify work) and written again at the
     // end with final counts — both are expected. What matters is the *first* claim lands before
     // the push send, narrowing the window a concurrent dispatch could race through.
     expect(callOrder.indexOf('stats-claimed')).toBeLessThan(callOrder.indexOf('push-sent'));
+  });
+});
+
+describe('runChannel — daily counters survive a concurrent duplicate-dispatch write', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const NEW_ITEM_RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>new-guid</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
+
+  it('bases the final daily write on a fresh read, not the stale pre-slow-work snapshot (issue #32 follow-up)', async () => {
+    const stateStore: Record<string, string | null> = {
+      'run:options': JSON.stringify({
+        stats: { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 },
+        seen: { optionsInsights: ['old-guid'] },
+        daily: { date: TODAY_ET, runs: 5, itemsFetched: 10, numNewItems: 2, sent: 1 },
+      }),
+      'poll:options': 'poll-token',
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        // No registered devices, so buckets stay empty — but building that (empty) bucket set is
+        // still the "slow work" between the early claim and the final write. A concurrent
+        // duplicate cron dispatch finishing its own write lands right here in a real race.
+        list: vi.fn().mockImplementation(() => {
+          stateStore['run:options'] = JSON.stringify({
+            stats: { lastRun: new Date().toISOString(), lastNotified: null, itemsFetched: 1, numNewItems: 1, sent: 0 },
+            seen: { optionsInsights: ['old-guid', 'concurrent-guid'] },
+            daily: { date: TODAY_ET, runs: 6, itemsFetched: 11, numNewItems: 3, sent: 1 },
+          });
+          return Promise.resolve({ keys: [], list_complete: true });
+        }),
+        delete: vi.fn(),
+      },
+    } as any;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(NEW_ITEM_RSS) }));
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    const finalState = JSON.parse(stateStore['run:options']!);
+    // Built on the concurrent invocation's runs:6 (fresh read) → 7. A stale base (runs:5,
+    // captured before the slow work) would have produced 6, silently losing the concurrent
+    // invocation's contribution.
+    expect(finalState.daily.runs).toBe(7);
+  });
+});
+
+describe('runChannel — duplicate cron dispatch is skipped (Cloudflare at-least-once delivery)', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const DUPLICATE_TICK = 1751000000000;
+  // Just past getIntervalMinutes()'s longest bucket (overnight, 60min default) — enough for
+  // shouldPollNow() to pass regardless of which interval window the test happens to run in.
+  // What's under test here is the duplicate-scheduledTime guard specifically, not the throttle,
+  // so this only needs to clear that gate, not model a realistic poll cadence.
+  const PAST_LONGEST_INTERVAL_MS = 65 * 60 * 1000;
+
+  it('a second dispatch of an already-claimed scheduledTime does no fetch, no write, and calls noRetry()', async () => {
+    const stateStore: Record<string, string | null> = {
+      'run:options': JSON.stringify({
+        stats: {
+          lastRun: new Date(Date.now() - PAST_LONGEST_INTERVAL_MS).toISOString(),
+          lastNotified: null, itemsFetched: 3, numNewItems: 1, sent: 1,
+          lastScheduledTime: DUPLICATE_TICK,
+        },
+        seen: { optionsInsights: ['old-guid'] },
+        daily: { date: TODAY_ET, runs: 1, itemsFetched: 3, numNewItems: 1, sent: 1 },
+      }),
+      'poll:options': 'poll-token',
+    };
+    const statePut = vi.fn();
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: { list: vi.fn(), delete: vi.fn() },
+    } as any;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const event = scheduledEvent(OPTIONS_CRON, DUPLICATE_TICK);
+
+    await worker.scheduled(event, env, {} as any);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(statePut).not.toHaveBeenCalled();
+    expect(event.noRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dispatch with a new scheduledTime proceeds normally, even with the same lastRun history', async () => {
+    const stateStore: Record<string, string | null> = {
+      'run:options': JSON.stringify({
+        stats: {
+          lastRun: new Date(Date.now() - PAST_LONGEST_INTERVAL_MS).toISOString(),
+          lastNotified: null, itemsFetched: 3, numNewItems: 1, sent: 1,
+          lastScheduledTime: DUPLICATE_TICK,
+        },
+        seen: { optionsInsights: ['old-guid'] },
+        daily: { date: TODAY_ET, runs: 1, itemsFetched: 3, numNewItems: 1, sent: 1 },
+      }),
+      'poll:options': 'poll-token',
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }), delete: vi.fn() },
+    } as any;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const event = scheduledEvent(OPTIONS_CRON, DUPLICATE_TICK + 300_000); // a genuinely later tick
+
+    await worker.scheduled(event, env, {} as any);
+
+    expect(event.noRetry).not.toHaveBeenCalled();
+    expect(statePut).toHaveBeenCalled();
   });
 });
 
@@ -705,9 +831,8 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
 
   function mockEnv(mainFeedRss: string) {
     const stateStore: Record<string, string | null> = {
-      'stats:options': null,
+      'run:options': runState({ optionsInsights: ['old-guid'] }),
       'poll:options': 'poll-token',
-      'seen:options': JSON.stringify({ optionsInsights: ['old-guid'] }),
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const env = {
@@ -733,17 +858,17 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
     const staleDate = new Date(Date.now() - 3 * 60 * 60 * 1000).toUTCString();
     const { env, stateStore, fetchMock } = mockEnv(itemWithPubDate('stale-guid', staleDate));
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('exp.host'))).toBe(false);
-    expect(JSON.parse(stateStore['seen:options']!).optionsInsights).toContain('stale-guid');
+    expect(JSON.parse(stateStore['run:options']!).seen.optionsInsights).toContain('stale-guid');
   });
 
   it('pushes an item within the 2h window', async () => {
     const freshDate = new Date(Date.now() - 30 * 60 * 1000).toUTCString();
     const { env, fetchMock } = mockEnv(itemWithPubDate('fresh-guid', freshDate));
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
     expect(pushCall).toBeDefined();
@@ -754,7 +879,7 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
     const { env, fetchMock } = mockEnv(itemWithPubDate('old-but-allowed-guid', fourHoursAgo));
     env.MAX_PUSH_AGE_MINUTES = '300';
 
-    await worker.scheduled({ cron: OPTIONS_CRON } as any, env, {} as any);
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
     expect(pushCall).toBeDefined();
@@ -782,7 +907,7 @@ describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
   ])('pings each channel\'s own HEARTBEAT_URL via ctx.waitUntil (%s)', async (cron, channel, url) => {
     const waitUntil = vi.fn();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
-    await worker.scheduled({ cron } as any, mockEnv({ [channel]: url }), { waitUntil } as any);
+    await worker.scheduled(scheduledEvent(cron), mockEnv({ [channel]: url }), { waitUntil } as any);
     expect(waitUntil).toHaveBeenCalledTimes(1);
     await waitUntil.mock.calls[0][0];
     expect(fetch).toHaveBeenCalledWith(url);
@@ -790,8 +915,31 @@ describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
 
   it('does not ping a channel whose own HEARTBEAT_URL is unset, even if others are set', async () => {
     const waitUntil = vi.fn();
-    await worker.scheduled({ cron: STOCK_CRON } as any, mockEnv({ members: 'https://hc-ping.com/members' }), { waitUntil } as any);
+    await worker.scheduled(scheduledEvent(STOCK_CRON), mockEnv({ members: 'https://hc-ping.com/members' }), { waitUntil } as any);
     expect(waitUntil).not.toHaveBeenCalled();
+  });
+});
+
+describe('advanceDaily', () => {
+  const stats = (overrides: Partial<{ itemsFetched: number; numNewItems: number; sent: number }> = {}) => ({
+    lastRun: '2026-01-01T00:00:00.000Z', lastNotified: null,
+    itemsFetched: 5, numNewItems: 2, sent: 1, ...overrides,
+  });
+
+  it('starts a fresh record when there is no prior state', () => {
+    expect(advanceDaily(undefined, '2026-01-01', stats())).toEqual({ date: '2026-01-01', runs: 1, itemsFetched: 5, numNewItems: 2, sent: 1 });
+  });
+
+  it('accumulates onto the same ET date', () => {
+    const first = advanceDaily(undefined, '2026-01-01', stats());
+    const second = advanceDaily(first, '2026-01-01', stats({ itemsFetched: 3, numNewItems: 0, sent: 0 }));
+    expect(second).toEqual({ date: '2026-01-01', runs: 2, itemsFetched: 8, numNewItems: 2, sent: 1 });
+  });
+
+  it('resets counters when the ET date rolls over', () => {
+    const yesterday = advanceDaily(undefined, '2026-01-01', stats());
+    const today = advanceDaily(yesterday, '2026-01-02', stats({ itemsFetched: 1, numNewItems: 1, sent: 0 }));
+    expect(today).toEqual({ date: '2026-01-02', runs: 1, itemsFetched: 1, numNewItems: 1, sent: 0 });
   });
 });
 
