@@ -235,67 +235,71 @@ export default function SettingsScreen() {
                   {FILTER_TIER_INFO[pushFilter].hint}
                 </Text>
               </View>
-              <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
-                <View style={styles.intervalLabelRow}>
-                  <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Min content length</Text>
-                  <Text style={[styles.intervalValue, { color: c.tint }]}>
-                    {pushMinLength === 0 ? 'any' : `${pushMinLength} chars`}
-                  </Text>
-                </View>
-                <Slider
-                  style={styles.slider}
-                  minimumValue={0}
-                  maximumValue={500}
-                  step={25}
-                  value={pushMinLength}
-                  onValueChange={(v) => handlePushMinLengthChange(Math.round(v))}
-                  disabled={loading}
-                  minimumTrackTintColor={c.tint}
-                  maximumTrackTintColor={c.border}
-                />
-              </View>
-              <View style={[styles.authorFiltersContainer, { backgroundColor: c.surfaceAlt }]}>
-                <Text style={[styles.silencedTopicsLabel, { color: c.textMuted }]}>
-                  Notify for authors{pushAuthors.length === 0 ? ' (all)' : ''}
-                </Text>
-                {pushAuthors.length === 0 && (
-                  <Text style={[styles.emptyState, { color: c.textFaint }]}>All authors — add one to filter</Text>
-                )}
-                {pushAuthors.map((author) => (
-                  <View key={author} style={[styles.silencedTopic, { backgroundColor: c.bg, borderColor: c.border }]}>
-                    <Text style={[styles.silencedTopicName, { color: c.text }]}>{author}</Text>
-                    <TouchableOpacity
-                      style={[styles.resubscribeButton, { backgroundColor: c.resubscribeBg }]}
-                      onPress={() => handlePushAuthorsChange(pushAuthors.filter((a) => a !== author))}
-                    >
-                      <Text style={[styles.resubscribeButtonText, { color: c.resubscribeText }]}>Remove</Text>
-                    </TouchableOpacity>
+              {pushFilter === 'length' && (
+                <>
+                  <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
+                    <View style={styles.intervalLabelRow}>
+                      <Text style={[styles.preferenceLabelInline, { color: c.text }]}>Min content length</Text>
+                      <Text style={[styles.intervalValue, { color: c.tint }]}>
+                        {pushMinLength === 0 ? 'any' : `${pushMinLength} chars`}
+                      </Text>
+                    </View>
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={500}
+                      step={25}
+                      value={pushMinLength}
+                      onValueChange={(v) => handlePushMinLengthChange(Math.round(v))}
+                      disabled={loading}
+                      minimumTrackTintColor={c.tint}
+                      maximumTrackTintColor={c.border}
+                    />
                   </View>
-                ))}
-                <View style={styles.addAuthorRow}>
-                  <TextInput
-                    style={[styles.addAuthorInput, { color: c.text, borderColor: c.border, backgroundColor: c.bg }]}
-                    value={newAuthor}
-                    onChangeText={setNewAuthor}
-                    placeholder="Add author name…"
-                    placeholderTextColor={c.textFaint}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                  <TouchableOpacity
-                    style={[styles.addAuthorButton, { backgroundColor: c.tint }]}
-                    onPress={() => {
-                      const trimmed = newAuthor.trim();
-                      if (trimmed && !pushAuthors.includes(trimmed)) {
-                        handlePushAuthorsChange([...pushAuthors, trimmed]);
-                      }
-                      setNewAuthor('');
-                    }}
-                  >
-                    <Text style={styles.addAuthorButtonText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+                  <View style={[styles.authorFiltersContainer, { backgroundColor: c.surfaceAlt }]}>
+                    <Text style={[styles.silencedTopicsLabel, { color: c.textMuted }]}>
+                      Notify for authors{pushAuthors.length === 0 ? ' (all)' : ''}
+                    </Text>
+                    {pushAuthors.length === 0 && (
+                      <Text style={[styles.emptyState, { color: c.textFaint }]}>All authors — add one to filter</Text>
+                    )}
+                    {pushAuthors.map((author) => (
+                      <View key={author} style={[styles.silencedTopic, { backgroundColor: c.bg, borderColor: c.border }]}>
+                        <Text style={[styles.silencedTopicName, { color: c.text }]}>{author}</Text>
+                        <TouchableOpacity
+                          style={[styles.resubscribeButton, { backgroundColor: c.resubscribeBg }]}
+                          onPress={() => handlePushAuthorsChange(pushAuthors.filter((a) => a !== author))}
+                        >
+                          <Text style={[styles.resubscribeButtonText, { color: c.resubscribeText }]}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    <View style={styles.addAuthorRow}>
+                      <TextInput
+                        style={[styles.addAuthorInput, { color: c.text, borderColor: c.border, backgroundColor: c.bg }]}
+                        value={newAuthor}
+                        onChangeText={setNewAuthor}
+                        placeholder="Add author name…"
+                        placeholderTextColor={c.textFaint}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                      />
+                      <TouchableOpacity
+                        style={[styles.addAuthorButton, { backgroundColor: c.tint }]}
+                        onPress={() => {
+                          const trimmed = newAuthor.trim();
+                          if (trimmed && !pushAuthors.includes(trimmed)) {
+                            handlePushAuthorsChange([...pushAuthors, trimmed]);
+                          }
+                          setNewAuthor('');
+                        }}
+                      >
+                        <Text style={styles.addAuthorButtonText}>Add</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </>
+              )}
             </>
           )}
         </View>
