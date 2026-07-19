@@ -18,12 +18,13 @@ export interface Topic {
   latestItemLink: string; // Link to the most recent post (for navigation to preview)
 }
 
-// Bumped from 'discovered_topics': the latest* fields above went from optional to required.
-// Rather than carry migration code for old persisted shapes, this key change simply orphans any
-// old data — topics get rediscovered fresh from the next feed poll. Per-topic subscription
-// preferences (topic_id_subscriptions, keyed by the stable "{forumKey}:{topicName}" id) are a
-// separate storage key and are unaffected.
-const TOPICS_STORAGE_KEY = 'discovered_topics_v2';
+// Bumped from 'discovered_topics_v2' to 'discovered_topics_v3': topic ids are now built from the
+// post's stable slug rather than its (editable, reusable) title — see generateTopicId. As with the
+// prior bump, there's no migration code; old data is simply orphaned and topics are rediscovered
+// fresh from the next feed poll. Unlike the prior bump, this one does affect
+// topic_id_subscriptions (keyed by the same id): old title-based subscription entries go
+// unreferenced too, so users re-subscribe/re-silence once after this update.
+const TOPICS_STORAGE_KEY = 'discovered_topics_v3';
 
 /**
  * Extract topic slug from a post link.
@@ -42,10 +43,14 @@ export function extractTopicSlugFromLink(link: string): string | null {
 }
 
 /**
- * Generate a unique topic ID from forum key and topic name.
+ * Generate a unique topic ID from forum key and topic slug.
+ *
+ * Slug-based, not title-based: a topic's title can be edited by a moderator, or reused by an
+ * unrelated new topic, either of which would break identity if it were the key. Slug is (mostly)
+ * immutable, extracted straight from the post's URL.
  */
-export function generateTopicId(forumKey: FeedKey, topicName: string): string {
-  return `${forumKey}:${topicName}`;
+export function generateTopicId(forumKey: FeedKey, slug: string): string {
+  return `${forumKey}:${slug}`;
 }
 
 /**
@@ -72,7 +77,7 @@ export async function discoverTopicsFromFeedItems(
     // Skip if we couldn't extract the slug
     if (!topicSlug) continue;
 
-    const topicId = generateTopicId(forumKey, topicName);
+    const topicId = generateTopicId(forumKey, topicSlug);
 
     // The first item encountered for a topicId sets its preview (RSS lists items newest-first,
     // so this is the most recent post); every item's author/description/guid/link/pubDate is
@@ -188,10 +193,11 @@ export async function clearTopics(): Promise<void> {
 }
 
 /**
- * Generate a topic feed URL from a topic slug.
+ * Generate a topic's (bare, non-feed) URL from its slug.
  *
- * Pattern: https://logicalinvestor.net/forums/topic/{slug}/feed/
+ * Pattern: https://logicalinvestor.net/forums/topic/{slug}/ — callers needing the RSS feed pass
+ * this straight to fetchTopicFeed(), which appends /feed/ itself.
  */
-export function generateTopicFeedUrl(slug: string): string {
-  return `https://logicalinvestor.net/forums/topic/${slug}/feed/`;
+export function generateTopicUrl(slug: string): string {
+  return `https://logicalinvestor.net/forums/topic/${slug}/`;
 }

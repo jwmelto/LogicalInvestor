@@ -2,19 +2,24 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
-import { getCachedUnreadCounts, setCachedUnreadCounts, getRefreshInterval } from '../services/storageService';
+import { cleanupObsoleteStorage, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
-import { computeFeedUnreadCounts } from '../services/readStateService';
+import { getAllScopes, viewScope, markFlatFeedSeen, hasUnread, detectForumUnread } from '../services/readStateService';
+import { getTopicsForForum } from '../services/topicService';
+import { getAllTopicSubscriptions } from '../services/subscriptionService';
 import { useAuth } from './AuthContext';
 
-type UnreadCounts = Partial<Record<FeedKey, number>>;
+type UnreadFlags = Partial<Record<FeedKey, boolean>>;
+type TopicUnreadFlags = Partial<Record<FeedKey, Record<string, boolean>>>;
 export type FeedResults = Partial<Record<FeedKey, FeedResult>>;
 
 interface FeedContextType {
   feedResults: FeedResults;
-  counts: UnreadCounts;
-  setFeedUnreadCount: (feedKey: FeedKey, count: number) => void;
+  unread: UnreadFlags;
+  topicUnread: TopicUnreadFlags;
+  setFeedUnreadCount: (feedKey: FeedKey, hasUnreadFlag: boolean) => void;
+  refreshScopeUnread: (feedKey: FeedKey, scopeId: string) => Promise<void>;
   triggerRefresh: () => void;
 }
 
@@ -27,19 +32,60 @@ const FOREGROUND_REFRESH_DELAY_MS = 1500;
 export function FeedProvider({ children }: { children: React.ReactNode }) {
   const { authed } = useAuth();
   const [feedResults, setFeedResults] = useState<FeedResults>({});
-  const [counts, setCounts] = useState<UnreadCounts>({});
+  const [unread, setUnread] = useState<UnreadFlags>({});
+  const [topicUnread, setTopicUnread] = useState<TopicUnreadFlags>({});
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const foregroundDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastRefreshAtRef = useRef<number>(Date.now());
   const pushRegisteredRef = useRef<Set<FeedKey>>(new Set());
 
-  // Seed badges from storage immediately so all tabs show counts before they load
-  useEffect(() => {
-    getCachedUnreadCounts().then((stored) => {
-      setCounts((prev) => ({ ...(stored as UnreadCounts), ...prev }));
+  const setFeedUnreadCount = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
+    setUnread((prev) => {
+      const updated = { ...prev, [feedKey]: hasUnreadFlag };
+      const hasAnyUnread = Object.values(updated).some(Boolean);
+      Notifications.setBadgeCountAsync(hasAnyUnread ? 1 : 0).catch(() => {});
+      return updated;
     });
   }, []);
+
+  // Cold-start seed: entirely local, no network, so badges are correct before the first fetch
+  // even lands. One cleanup sweep, one getAllScopes() read, one getAllTopicSubscriptions() read
+  // for the whole app — never per-topic storage reads.
+  useEffect(() => {
+    (async () => {
+      await cleanupObsoleteStorage();
+      const scopes = await getAllScopes();
+      setFeedUnreadCount('membersArea', viewScope(scopes['membersArea'] ?? {}).hasUnread);
+
+      const subs = await getAllTopicSubscriptions();
+      const isSubscribed = (topicId: string) => subs[topicId] ?? true;
+
+      for (const k of Object.keys(FEEDS) as FeedKey[]) {
+        if (!FEEDS[k].hasSubFeeds) continue;
+        const topics = await getTopicsForForum(k);
+        const forumMap: Record<string, boolean> = {};
+        for (const topic of topics) {
+          if (!isSubscribed(topic.id)) continue;
+          forumMap[topic.id] = viewScope(scopes[topic.id] ?? {}).hasUnread;
+        }
+        setTopicUnread((prev) => ({ ...prev, [k]: forumMap }));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep each topic-based forum's own badge in sync with its topics' aggregate state, whenever
+  // that state changes for any reason (cold-start seed above, a fetch's detection pass below, or
+  // a single topic's post-read-marking refresh via refreshScopeUnread).
+  useEffect(() => {
+    (Object.keys(FEEDS) as FeedKey[]).forEach((k) => {
+      if (!FEEDS[k].hasSubFeeds) return;
+      const forumMap = topicUnread[k];
+      if (!forumMap) return;
+      setFeedUnreadCount(k, Object.values(forumMap).some(Boolean));
+    });
+  }, [topicUnread, setFeedUnreadCount]);
 
   async function fetchAllFeeds() {
     const keys = Object.keys(FEEDS) as FeedKey[];
@@ -48,12 +94,22 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     keys.forEach((k, i) => { next[k] = results[i]; });
     setFeedResults(next);
 
-    const computed = await computeFeedUnreadCounts(results);
-    (Object.entries(computed) as [FeedKey, number][]).forEach(([k, count]) => {
-      setFeedUnreadCount(k, count);
-    });
-    const cached = await getCachedUnreadCounts();
-    await setCachedUnreadCounts({ ...cached, ...computed });
+    // Each feed's detection runs independently and concurrently — a slow forum's bounded
+    // deep-dive fallback shouldn't delay another forum's (or the flat feed's) badge update.
+    await Promise.all(keys.map(async (k) => {
+      const result = next[k]!;
+      if (!result.accessible) { setFeedUnreadCount(k, false); return; }
+
+      if (!FEEDS[k].hasSubFeeds) {
+        await markFlatFeedSeen(k, result.items);
+        setFeedUnreadCount(k, await hasUnread(k));
+        return;
+      }
+
+      const updates = await detectForumUnread(k, result.items);
+      if (Object.keys(updates).length === 0) return;
+      setTopicUnread((prev) => ({ ...prev, [k]: { ...(prev[k] ?? {}), ...updates } }));
+    }));
 
     const feedToken = await getToken();
     if (feedToken) {
@@ -134,14 +190,20 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     };
   }, [authed]);
 
-  const setFeedUnreadCount = useCallback((feedKey: FeedKey, count: number) => {
-    setCounts((prev) => {
-      const updated = { ...prev, [feedKey]: count };
-      const hasAnyUnread = Object.values(updated).some((n) => (n ?? 0) > 0);
-      Notifications.setBadgeCountAsync(hasAnyUnread ? 1 : 0).catch(() => {});
-      return updated;
-    });
-  }, []);
+  // Called after ForumFeed marks something read: re-derives hasUnread for that one scope from
+  // storage (cheap local lookup) rather than assuming a new value, and updates the relevant
+  // slice of state. The topicUnread effect above then re-derives the forum's own aggregate flag.
+  const refreshScopeUnread = useCallback(async (feedKey: FeedKey, scopeId: string) => {
+    const result = await hasUnread(scopeId);
+    if (scopeId === feedKey) {
+      setFeedUnreadCount(feedKey, result);
+      return;
+    }
+    setTopicUnread((prev) => ({
+      ...prev,
+      [feedKey]: { ...(prev[feedKey] ?? {}), [scopeId]: result },
+    }));
+  }, [setFeedUnreadCount]);
 
   // Called by pull-to-refresh: re-fetches all feeds and resets the timer
   const triggerRefresh = useCallback(() => {
@@ -151,7 +213,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <FeedContext.Provider value={{ feedResults, counts, setFeedUnreadCount, triggerRefresh }}>
+    <FeedContext.Provider value={{ feedResults, unread, topicUnread, setFeedUnreadCount, refreshScopeUnread, triggerRefresh }}>
       {children}
     </FeedContext.Provider>
   );

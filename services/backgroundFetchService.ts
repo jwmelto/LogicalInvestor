@@ -1,9 +1,8 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { fetchAllFeeds } from './feedService';
+import { fetchAllFeeds, FEEDS } from './feedService';
 import { isAuthenticated } from './authService';
-import { computeFeedUnreadCounts } from './readStateService';
-import { getCachedUnreadCounts, setCachedUnreadCounts } from './storageService';
+import { markFlatFeedSeen, detectForumUnread } from './readStateService';
 
 export const BACKGROUND_FETCH_TASK = 'background-feed-refresh';
 
@@ -15,10 +14,19 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 
     const results = await fetchAllFeeds();
 
-    // Compute unread counts and persist so all tabs have correct badges on next foreground
-    const existing = await getCachedUnreadCounts();
-    const computed = await computeFeedUnreadCounts(results);
-    await setCachedUnreadCounts({ ...existing, ...computed });
+    // Best-effort supplement only — this task is not load-bearing (expo-background-task's
+    // 15-minute minimum is non-deterministic on iOS). Writes straight to the scope_guids store
+    // that detectForumUnread/markFlatFeedSeen already own; the next foreground open's cold-start
+    // seed (FeedContext.tsx) reads it directly, so there's no separate badge snapshot to compute
+    // or cache here.
+    await Promise.all(results.map(async (result) => {
+      if (!result.accessible) return;
+      if (FEEDS[result.feedKey].hasSubFeeds) {
+        await detectForumUnread(result.feedKey, result.items);
+      } else {
+        await markFlatFeedSeen(result.feedKey, result.items);
+      }
+    }));
 
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {

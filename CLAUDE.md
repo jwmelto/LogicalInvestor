@@ -228,13 +228,19 @@ Full iCloud sync requires a physical device; Simulator uses AsyncStorage fallbac
 
 **iCloud strategy**: iCloud KVS is the right cross-platform approach for this app. No backend is a core principle, and iCloud KVS provides free cross-device sync on iOS with a transparent AsyncStorage fallback on Android. The library's TypeScript types lag behind its API in one place (`getObject` is not typed as generic); work around with a cast at the callsite rather than changing the approach.
 
-#### `readStateService.ts` - Read/Unread Tracking
+#### `readStateService.ts` - Unified Read/Unread Tracking
 
-Tracks which posts have been viewed. Stores read post IDs as an array in storage.
+Single store, `scope_guids` (`Record<scopeId, Record<guid, boolean>>`), answers both "is this guid known" (key present) and "is this guid read" (boolean value) for every feed and every topic. `scopeId` is either a `FeedKey` (the flat Members Area feed) or a topic id (`"{forumKey}:{slug}"`, see `topicService.ts`) — the two namespaces never collide, since a topic id always contains `:` and a feed key never does. There is no separate "unread count" anywhere — every consumer only ever needs `hasUnread: boolean`.
 
-**Important**: Always use `markAllRead(ids[])` when marking multiple items at once. Individual `markRead()` calls run concurrent read-modify-write cycles on the same storage key and will race/overwrite each other.
+**Mutation is always multi-scope and batched**: `markScopesSeen(updates)` inserts newly-seen guids as unread (never resurrecting an already-read guid that resurfaces in a refetch); `markGuidsRead(updates)` flips guids to read. Both take `Record<scopeId, guid[]>` so "mark this whole forum read" (spanning several topics) is one read-modify-write, not one per topic — concurrent individual writes to the same storage key race and overwrite each other. `markRead(scopeId, guid)`/`markAllRead(scopeId, guids)` are single-scope convenience wrappers over `markGuidsRead`, fine for one-off calls but never to be called in a loop over many items — batch-load `getAllScopes()` once and use `viewScope()` instead (see `detectForumUnread`'s implementation for the pattern; calling the single-scope wrappers per item was a real, since-fixed inefficiency).
 
-**Key Functions**: `isRead()`, `markRead()`, `markAllRead()`, `getUnreadCount()`
+**`viewScope(guids)`**: a pure, synchronous, read-only view (`{ hasUnread, isRead(guid) }`) over an already-loaded scope. No I/O, no stored mutable state — two independently-loaded views of the same scope each mutating and saving on their own would race, so all mutation goes through the batch functions above.
+
+**`detectForumUnread(forumKey, topLevelItems)`**: the per-topic detection algorithm. Relies on a completeness proof rather than a schedule — the bbPress RSS feed reliably returns items newest-first. Walking newest→oldest, skipping silenced topics entirely: if the newest considered item is already known, nothing changed; if a known item is hit before the window is exhausted, everything before it is provably the complete set of new posts (attributed via `extractTopicSlugFromLink`, never by title); if the whole window is exhausted with nothing known, a bounded deep-dive of the 10 most-recently-active *subscribed* topics runs instead of every topic. Returns `hasUnread` for every topic touched this pass; an untouched topic provably didn't change.
+
+**`markFlatFeedSeen(feedKey, items)`**: the flat-feed equivalent — no boundary-walk needed, since there's no per-item fetch cost to save, so every fetch just records its whole window as seen.
+
+**Key Functions**: `hasUnread()`, `isRead()`, `markRead()`, `markAllRead()`, `markScopesSeen()`, `markGuidsRead()`, `markFlatFeedSeen()`, `detectForumUnread()`, `viewScope()`, `getAllScopes()`
 
 #### `subscriptionService.ts` - Topic Subscriptions
 
@@ -244,15 +250,19 @@ Per-topic boolean subscriptions, default `true` for unseen topics. Unsubscribed 
 
 Discovers forum topics from RSS feed items, persists them across sessions. Topics are sorted by `lastUpdatedAt` so active discussions float to the top.
 
-**Key Functions**: `updateTopicsFromFeedItems()`, `getTopicsForForum()`, `generateTopicFeedUrl()`, `extractTopicFromTitle()`
+**Identity is slug-based, not title-based**: `generateTopicId(forumKey, slug)` builds a topic's id from its (mostly immutable) URL slug, not its title — a moderator editing a title, or an unrelated new topic reusing an old one, would otherwise break identity. `discoverTopicsFromFeedItems` groups by slug; `name` (display) still comes from whichever item's title first created the record.
+
+**Key Functions**: `updateTopicsFromFeedItems()`, `getTopicsForForum()`, `generateTopicId()`, `generateTopicUrl()`, `extractTopicSlugFromLink()`
 
 #### `backgroundFetchService.ts` - Background Refresh
 
-Registers an `expo-background-task` task that fetches all feeds while the app is closed. After fetching, calls `processNewItemsForNotifications()` to fire local notifications, then computes per-feed unread counts and writes them to `cached_unread_counts` in storage, so tab badges are accurate on next app launch without a network call.
+Registers an `expo-background-task` task that fetches all feeds while the app is closed, then writes straight into the same `scope_guids` store `readStateService.ts` owns (`markFlatFeedSeen` for the flat feed, `detectForumUnread` per topic-based forum) — there's no separate cached badge snapshot; the next foreground open's cold-start seed (`FeedContext.tsx`) reads `scope_guids` directly. This task is a best-effort supplement only, not load-bearing — `expo-background-task`'s 15-minute minimum is non-deterministic on iOS, and the primary detection trigger is `FeedContext.tsx`'s foreground refresh cycle.
 
 **Note**: Background tasks only run on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
 
 #### `notificationService.ts` - Local Notifications
+
+> **Stale section** — this file was deleted in commit `56abc3d`; local notification generation no longer exists client-side. All "which posts to alert on" logic now lives server-side in the Cloudflare Worker (the "Filter sync with Cloudflare Worker" and Worker-behavior details below describe the Worker side and may still be accurate, but everything above them describing app-side `notificationService.ts` behavior is not). Needs a follow-up doc pass — not corrected here.
 
 Filters incoming feed items and schedules local notifications via `expo-notifications`.
 
@@ -295,11 +305,11 @@ The Worker already pretty-prints the JSON response, so no `jq` needed. `FEED_TOK
 
 **Location**: `contexts/` directory
 
-#### `UnreadCountContext.tsx` - Unread Badge State + Refresh Timer
+#### `FeedContext.tsx` - Unread Badge State + Refresh Timer
 
-Central store for per-feed unread counts that drives tab bar badges. Also owns the foreground refresh timer.
+Central store for per-feed `hasUnread` booleans (`unread`) and per-topic booleans (`topicUnread`) that drive tab bar badges. Also owns the foreground refresh timer and orchestrates unread detection.
 
-**Badges**: Each `ForumFeed` publishes its unread count here after loading. The tab layout reads counts and sets `tabBarBadge`. On app launch, counts are seeded from `cached_unread_counts` in storage so all badges appear immediately.
+**Badges**: On mount, a cold-start seed effect computes every badge — flat feed and every subscribed topic in every forum — directly from the local `scope_guids` store (`readStateService.ts`), with zero network calls, before the first fetch even lands. After each fetch, the flat feed calls `markFlatFeedSeen` + `hasUnread`; each topic-based forum calls `detectForumUnread` and merges the result into `topicUnread`. A forum's own badge is always the OR across its topics' flags, kept in sync by a dedicated effect. `refreshScopeUnread(feedKey, scopeId)` lets `ForumFeed` re-derive a single scope's badge immediately after marking something read, rather than waiting for the next fetch cycle.
 
 **Foreground refresh timer**:
 - Fires every N minutes (configured via `getRefreshInterval()`, default 30 min)
@@ -332,8 +342,8 @@ Persists which optional forum tabs (Stock Insights, Options Insights) are enable
 The core UI component. Handles flat feeds (Members Area) and topic-based feeds (forum tabs).
 - Header row shows forum title + "Mark all read" button when unread items exist
 - Flat feeds: individual `[new]` badges are tappable to mark that post read without opening it
-- Topic feeds: hierarchical display (Topic → posts), tappable `[new]` badge per topic, topic preview snippet (latest post) shown only when `unreadCount > 0`
-- Pull-to-refresh triggers `notifyManualRefresh()` on the context to reset the timer
+- Topic feeds: hierarchical display (Topic → posts), tappable `[new]` badge per topic, topic preview snippet (latest post) shown only when that topic `hasUnread`
+- Pull-to-refresh triggers `triggerRefresh()` on the context to reset the timer
 
 ### Theming
 
@@ -366,7 +376,7 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Tappable `[new]` badges on individual flat-feed posts
 - ✅ Tab bar red-dot badges (all tabs); seeded from storage on launch so unvisited tabs show correct state
 - ✅ Foreground refresh timer (configurable interval, pauses when backgrounded, resumes correctly on return)
-- ✅ Background fetch (physical device only) — keeps feed data fresh and updates cached badge counts
+- ✅ Background fetch (physical device only) — keeps the shared `scope_guids` read-state store fresh as a best-effort supplement to the foreground detection cycle
 - ✅ Pull-to-refresh resets the foreground timer
 - ✅ Post detail viewer with WebView
 - ✅ Dark/light mode support
@@ -390,7 +400,6 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - WebView correctly navigates to post anchor (e.g. `#post-287927`) automatically
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
 - Background fetch does not run in simulator — requires physical device
-- `section.unreadCount` on topic-based feeds reflects the top-level 25-item feed window, not the strict sum of per-topic unread counts; this is a known approximation
 
 ## QA Checklist
 
@@ -449,7 +458,7 @@ Run on a physical device before each TestFlight submission.
 - **Error States**: FeedService checks HTTP 401/403 defensively, but the live server never returns them — the real "no access" signal is zero items in the response (see Feed Aggregation → Error Handling above). Non-200 responses return `error`.
 - **Async Storage**: All storage operations are async; no synchronous access patterns
 - **Batch writes**: When marking multiple items read, always use `markAllRead()` — concurrent `markRead()` calls race on the same storage key
-- **Read State**: Tracked via `readStateService`, unread counts updated real-time when posts are viewed
+- **Read State**: Tracked via `readStateService`'s unified `scope_guids` store; `hasUnread` is boolean everywhere (no counts) and updates in real time as posts are viewed
 - **Feed Organization**: Uses `FeedKey` type to ensure type-safe feed references throughout app
 - **WebView Auth**: Post URLs include token via `URL.searchParams.set('feed_token', token)`
 - **State updaters**: Do not perform async side effects (e.g. storage writes) inside React `setState` updater functions — run them before the state update and await completion
@@ -474,12 +483,12 @@ Run on a physical device before each TestFlight submission.
 │   └── ForumFeed.tsx        ← Core feed UI (flat + topic modes)
 ├── contexts/
 │   ├── ForumVisibilityContext.tsx ← Which optional tabs are shown
-│   └── UnreadCountContext.tsx     ← Tab badge counts + foreground refresh timer
+│   └── FeedContext.tsx            ← Tab badge state + foreground refresh timer
 ├── services/
 │   ├── authService.ts       ← Login, token storage, isAuthenticated()
 │   ├── backgroundFetchService.ts ← expo-background-task registration
 │   ├── feedService.ts       ← RSS fetching/parsing, FEEDS config
-│   ├── readStateService.ts  ← Read/unread tracking (use markAllRead for batches)
+│   ├── readStateService.ts  ← Unified scope_guids read/unread store (use markAllRead/markGuidsRead for batches)
 │   ├── storageService.ts    ← iCloud/AsyncStorage abstraction
 │   ├── subscriptionService.ts ← Topic subscription state
 │   └── topicService.ts      ← Topic discovery, persistence, sorting

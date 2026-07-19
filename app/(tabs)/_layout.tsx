@@ -13,11 +13,10 @@ import { FeedKey, FEEDS } from '@/services/feedService';
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { visibility: forumVisibility } = useForumVisibility();
-  const { counts } = useFeed();
+  const { unread } = useFeed();
 
-  function badge(feedKey: keyof typeof counts) {
-    const n = counts[feedKey];
-    return n && n > 0 ? '' : undefined;
+  function badge(feedKey: keyof typeof unread) {
+    return unread[feedKey] ? '' : undefined;
   }
 
   const ROUTE_TO_FEED_KEY = Object.fromEntries(
