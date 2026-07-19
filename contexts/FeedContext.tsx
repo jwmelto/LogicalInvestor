@@ -18,7 +18,6 @@ interface FeedContextType {
   feedResults: FeedResults;
   unread: UnreadFlags;
   topicUnread: TopicUnreadFlags;
-  setFeedUnreadCount: (feedKey: FeedKey, hasUnreadFlag: boolean) => void;
   refreshScopeUnread: (feedKey: FeedKey, scopeId: string) => Promise<void>;
   triggerRefresh: () => void;
 }
@@ -26,7 +25,7 @@ interface FeedContextType {
 const FeedContext = createContext<FeedContextType | undefined>(undefined);
 
 // Short delay on foreground return before refreshing, to let any in-flight
-// markRead storage writes complete before we re-fetch and recompute counts.
+// markRead storage writes complete before we re-fetch and recompute badges.
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
 export function FeedProvider({ children }: { children: React.ReactNode }) {
@@ -40,7 +39,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const lastRefreshAtRef = useRef<number>(Date.now());
   const pushRegisteredRef = useRef<Set<FeedKey>>(new Set());
 
-  const setFeedUnreadCount = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
+  const setFeedUnread = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
     setUnread((prev) => {
       const updated = { ...prev, [feedKey]: hasUnreadFlag };
       const hasAnyUnread = Object.values(updated).some(Boolean);
@@ -56,7 +55,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await cleanupObsoleteStorage();
       const scopes = await getAllScopes();
-      setFeedUnreadCount(FeedKeys.membersArea, viewScope(scopes[FeedKeys.membersArea] ?? {}).hasUnread);
+      setFeedUnread(FeedKeys.membersArea, viewScope(scopes[FeedKeys.membersArea] ?? {}).hasUnread);
 
       const subs = await getAllTopicSubscriptions();
 
@@ -77,9 +76,9 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       if (!FEEDS[k].hasSubFeeds) return;
       const forumMap = topicUnread[k];
       if (!forumMap) return;
-      setFeedUnreadCount(k, Object.values(forumMap).some(Boolean));
+      setFeedUnread(k, Object.values(forumMap).some(Boolean));
     });
-  }, [topicUnread, setFeedUnreadCount]);
+  }, [topicUnread, setFeedUnread]);
 
   async function fetchAllFeeds() {
     const keys = Object.keys(FEEDS) as FeedKey[];
@@ -92,11 +91,11 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     // deep-dive fallback shouldn't delay another forum's (or the flat feed's) badge update.
     await Promise.all(keys.map(async (k) => {
       const result = next[k]!;
-      if (!result.accessible) { setFeedUnreadCount(k, false); return; }
+      if (!result.accessible) { setFeedUnread(k, false); return; }
 
       if (!FEEDS[k].hasSubFeeds) {
         await markFlatFeedSeen(k, result.items);
-        setFeedUnreadCount(k, await hasUnread(k));
+        setFeedUnread(k, await hasUnread(k));
         return;
       }
 
@@ -190,14 +189,14 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const refreshScopeUnread = useCallback(async (feedKey: FeedKey, scopeId: string) => {
     const result = await hasUnread(scopeId);
     if (scopeId === feedKey) {
-      setFeedUnreadCount(feedKey, result);
+      setFeedUnread(feedKey, result);
       return;
     }
     setTopicUnread((prev) => ({
       ...prev,
       [feedKey]: { ...(prev[feedKey] ?? {}), [scopeId]: result },
     }));
-  }, [setFeedUnreadCount]);
+  }, [setFeedUnread]);
 
   // Called by pull-to-refresh: re-fetches all feeds and resets the timer
   const triggerRefresh = useCallback(() => {
@@ -207,7 +206,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <FeedContext.Provider value={{ feedResults, unread, topicUnread, setFeedUnreadCount, refreshScopeUnread, triggerRefresh }}>
+    <FeedContext.Provider value={{ feedResults, unread, topicUnread, refreshScopeUnread, triggerRefresh }}>
       {children}
     </FeedContext.Provider>
   );
