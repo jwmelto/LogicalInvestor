@@ -95,6 +95,25 @@ export async function markFlatFeedSeen(feedKey: FeedKey, items: RssItem[]): Prom
   await markScopesSeen({ [feedKey]: items.map((i) => i.guid) });
 }
 
+// Per-topic hasUnread for every subscribed topic in a forum, derived purely from already-loaded
+// data — no I/O, no topic-registry read. A topic id is always "{forumKey}:{slug}" (see
+// generateTopicId), so which topics belong to this forum is already answerable from scopes' own
+// keys; silenced topics are excluded entirely, matching detectForumUnread's own treatment of them.
+export function topicUnreadForForum(
+  forumKey: FeedKey,
+  scopes: Record<string, Record<string, boolean>>,
+  subs: Record<string, boolean>
+): Record<string, boolean> {
+  const prefix = `${forumKey}:`;
+  const result: Record<string, boolean> = {};
+  for (const scopeId of Object.keys(scopes)) {
+    if (!scopeId.startsWith(prefix)) continue;
+    if (!(subs[scopeId] ?? true)) continue; // silenced — excluded, not just falsey
+    result[scopeId] = viewScope(scopes[scopeId]).hasUnread;
+  }
+  return result;
+}
+
 // ponytail: plain constant; promote to a stored setting (mirroring getRefreshInterval()) only if
 // it ever needs to be user-tunable — nothing so far suggests it does.
 const DEEP_DIVE_TOPIC_LIMIT = 10;

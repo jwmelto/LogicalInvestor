@@ -6,8 +6,7 @@ import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedSer
 import { cleanupObsoleteStorage, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
-import { getAllScopes, viewScope, markFlatFeedSeen, hasUnread, detectForumUnread } from '../services/readStateService';
-import { getTopicsForForum } from '../services/topicService';
+import { getAllScopes, viewScope, markFlatFeedSeen, hasUnread, detectForumUnread, topicUnreadForForum } from '../services/readStateService';
 import { getAllTopicSubscriptions } from '../services/subscriptionService';
 import { useAuth } from './AuthContext';
 
@@ -60,16 +59,10 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       setFeedUnreadCount(FeedKeys.membersArea, viewScope(scopes[FeedKeys.membersArea] ?? {}).hasUnread);
 
       const subs = await getAllTopicSubscriptions();
-      const isSubscribed = (topicId: string) => subs[topicId] ?? true;
 
       for (const k of Object.keys(FEEDS) as FeedKey[]) {
         if (!FEEDS[k].hasSubFeeds) continue;
-        const topics = await getTopicsForForum(k);
-        const forumMap: Record<string, boolean> = {};
-        for (const topic of topics) {
-          if (!isSubscribed(topic.id)) continue;
-          forumMap[topic.id] = viewScope(scopes[topic.id] ?? {}).hasUnread;
-        }
+        const forumMap = topicUnreadForForum(k, scopes, subs);
         setTopicUnread((prev) => ({ ...prev, [k]: forumMap }));
       }
     })();

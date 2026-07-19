@@ -32,6 +32,7 @@ import {
   markFlatFeedSeen,
   detectForumUnread,
   getAllScopes,
+  topicUnreadForForum,
 } from '../readStateService';
 import { FeedKeys } from '@li/core';
 import { fetchTopicFeed, RssItem } from '../feedService';
@@ -172,6 +173,42 @@ describe('markFlatFeedSeen', () => {
     await markFlatFeedSeen(FK.membersArea, [item('g1'), item('g2')]);
     const scopes = await getAllScopes();
     expect(scopes[FK.membersArea]).toEqual({ g1: false, g2: false });
+  });
+});
+
+describe('topicUnreadForForum', () => {
+  it('includes only topics whose id is prefixed with this forum key', () => {
+    const scopes = {
+      'membersForum:nvo': { g1: false },
+      'stockInsights:tsla': { g2: false },
+    };
+    expect(topicUnreadForForum(FK.membersForum, scopes, {})).toEqual({
+      'membersForum:nvo': true,
+    });
+  });
+
+  it('excludes a silenced topic entirely, not just as false', () => {
+    const scopes = { 'membersForum:nvo': { g1: false } };
+    const subs = { 'membersForum:nvo': false };
+    expect(topicUnreadForForum(FK.membersForum, scopes, subs)).toEqual({});
+  });
+
+  it('defaults an unlisted topic to subscribed (included), not silenced', () => {
+    const scopes = { 'membersForum:nvo': { g1: false } };
+    expect(topicUnreadForForum(FK.membersForum, scopes, {})).toEqual({
+      'membersForum:nvo': true,
+    });
+  });
+
+  it('reports false for a topic whose known guids are all read', () => {
+    const scopes = { 'membersForum:nvo': { g1: true } };
+    expect(topicUnreadForForum(FK.membersForum, scopes, {})).toEqual({
+      'membersForum:nvo': false,
+    });
+  });
+
+  it('returns an empty map for a forum with no scope entries at all', () => {
+    expect(topicUnreadForForum(FK.membersForum, {}, {})).toEqual({});
   });
 });
 

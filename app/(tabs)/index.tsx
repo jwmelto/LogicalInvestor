@@ -3,8 +3,7 @@ import { useRouter } from 'expo-router';
 import { FeedKeys } from '@li/core';
 import { getLastOpenedTab, getForumVisibility } from '../../services/storageService';
 import { FeedKey, FEEDS } from '../../services/feedService';
-import { getAllScopes, viewScope } from '../../services/readStateService';
-import { getTopicsForForum } from '../../services/topicService';
+import { getAllScopes, viewScope, topicUnreadForForum } from '../../services/readStateService';
 import { getAllTopicSubscriptions } from '../../services/subscriptionService';
 
 // Preference order — Members Area last since users rarely want it first
@@ -34,14 +33,12 @@ export default function TabsIndex() {
         return true;
       });
 
-      const forumHasUnread = async (k: FeedKey): Promise<boolean> => {
+      const forumHasUnread = (k: FeedKey): boolean => {
         if (!FEEDS[k].hasSubFeeds) return viewScope(scopes[k] ?? {}).hasUnread;
-        const topics = await getTopicsForForum(k);
-        return topics.some((t) => (subs[t.id] ?? true) && viewScope(scopes[t.id] ?? {}).hasUnread);
+        return Object.values(topicUnreadForForum(k, scopes, subs)).some(Boolean);
       };
 
-      const unreadFlags = await Promise.all(visible.map((k) => forumHasUnread(k)));
-      const unreadTabs = visible.filter((_, i) => unreadFlags[i]);
+      const unreadTabs = visible.filter((k) => forumHasUnread(k));
 
       let target: FeedKey;
       if (lastTab && unreadTabs.includes(lastTab as FeedKey)) {
