@@ -1,9 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
-import { extractRssItems, type RssItem } from '@li/core';
+import { extractRssItems, type RssItem, type FeedKey } from '@li/core';
 import { getToken } from './authService';
 import { updateTopicsFromFeedItems } from './topicService';
 
-export type { RssItem };
+export type { RssItem, FeedKey };
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -15,7 +15,6 @@ export const FEEDS = {
     name: 'Members Area',
     route: 'members-area',
     url: 'https://logicalinvestor.net/feed/',
-    priority: 'high',
     alwaysVisible: true,
     hasSubFeeds: false,
   },
@@ -23,7 +22,6 @@ export const FEEDS = {
     name: 'Members Forum',
     route: 'members-forum',
     url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',
-    priority: 'normal',
     alwaysVisible: true,
     hasSubFeeds: true,
   },
@@ -31,7 +29,6 @@ export const FEEDS = {
     name: 'Stock Insights',
     route: 'stock-insights',
     url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',
-    priority: 'normal',
     alwaysVisible: false,
     hasSubFeeds: true,
   },
@@ -39,19 +36,21 @@ export const FEEDS = {
     name: 'Options Insights',
     route: 'options-insights',
     url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',
-    priority: 'normal',
     alwaysVisible: false,
     hasSubFeeds: true,
   },
 /*  investingBasics: {
     name: 'Investing Basics',
     url: 'https://logicalinvestor.net/basic-investing/feed/',
-    priority: 'low',
     alwaysVisible: true,
   }, */
-} as const;
-
-export type FeedKey = keyof typeof FEEDS;
+} as const satisfies Record<FeedKey, {
+  name: string;
+  route: string;
+  url: string;
+  alwaysVisible: boolean;
+  hasSubFeeds: boolean;
+}>;
 
 export interface FeedResult {
   feedKey: FeedKey;

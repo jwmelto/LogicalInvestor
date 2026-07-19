@@ -110,8 +110,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
         const built = await buildSection(result);
         setSection(built);
 
-        // One getAllScopes() read for the whole build — shared across the flat items, every
-        // topic's items, and every topic's preview item, rather than a per-item storage read.
+        // One getAllScopes() read for the whole build, shared across the flat items, every
+        // topic's items, and every topic's preview item — each item's read state is then a
+        // synchronous in-memory lookup via viewScope().
         const scopes = await getAllScopes();
         const readStates: ItemReadState = {};
 

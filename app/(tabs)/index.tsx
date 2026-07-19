@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
+import { FeedKeys } from '@li/core';
 import { getLastOpenedTab, getForumVisibility } from '../../services/storageService';
 import { FeedKey, FEEDS } from '../../services/feedService';
 import { getAllScopes, viewScope } from '../../services/readStateService';
@@ -7,7 +8,7 @@ import { getTopicsForForum } from '../../services/topicService';
 import { getAllTopicSubscriptions } from '../../services/subscriptionService';
 
 // Preference order — Members Area last since users rarely want it first
-const PREFERRED: FeedKey[] = ['membersForum', 'stockInsights', 'optionsInsights', 'membersArea'];
+const PREFERRED: FeedKey[] = [FeedKeys.membersForum, FeedKeys.stockInsights, FeedKeys.optionsInsights, FeedKeys.membersArea];
 
 const TAB_PATH = Object.fromEntries(
   (Object.keys(FEEDS) as FeedKey[]).map((k) => [k, `/(tabs)/${FEEDS[k].route}`])
@@ -18,9 +19,8 @@ export default function TabsIndex() {
 
   useEffect(() => {
     (async () => {
-      // Read directly from storage rather than via FeedContext — this decision needs to happen
-      // before (and independent of) FeedProvider's own async fetch cycle, same as the previous
-      // cached-snapshot approach this replaces.
+      // Reads directly from storage: the landing-tab decision must be knowable immediately from
+      // what's already persisted, independent of FeedProvider's own async fetch cycle.
       const [lastTab, visibility, scopes, subs] = await Promise.all([
         getLastOpenedTab(),
         getForumVisibility(),
@@ -29,8 +29,8 @@ export default function TabsIndex() {
       ]);
 
       const visible = PREFERRED.filter((k) => {
-        if (k === 'stockInsights') return visibility.stockInsights;
-        if (k === 'optionsInsights') return visibility.optionsInsights;
+        if (k === FeedKeys.stockInsights) return visibility.stockInsights;
+        if (k === FeedKeys.optionsInsights) return visibility.optionsInsights;
         return true;
       });
 
@@ -51,7 +51,7 @@ export default function TabsIndex() {
       } else if (lastTab && visible.includes(lastTab as FeedKey)) {
         target = lastTab as FeedKey;                              // last visited, nothing unread
       } else {
-        target = 'membersForum';                                  // nothing unread, no valid last tab
+        target = FeedKeys.membersForum;                           // nothing unread, no valid last tab
       }
 
       router.replace(TAB_PATH[target] as any);

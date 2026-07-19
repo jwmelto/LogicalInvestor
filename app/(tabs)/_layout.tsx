@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { FeedKeys } from '@li/core';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -49,7 +50,7 @@ export default function TabLayout() {
         options={{
           title: 'Members Area',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-          tabBarBadge: badge('membersArea'),
+          tabBarBadge: badge(FeedKeys.membersArea),
         }}
       />
       <Tabs.Screen
@@ -57,7 +58,7 @@ export default function TabLayout() {
         options={{
           title: 'Members Forum',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.and.bubble.right.fill" color={color} />,
-          tabBarBadge: badge('membersForum'),
+          tabBarBadge: badge(FeedKeys.membersForum),
         }}
       />
       <Tabs.Screen
@@ -66,7 +67,7 @@ export default function TabLayout() {
           title: 'Stock Insights',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.line.uptrend.xyaxis" color={color} />,
           href: forumVisibility.stockInsights ? undefined : null,
-          tabBarBadge: badge('stockInsights'),
+          tabBarBadge: badge(FeedKeys.stockInsights),
         }}
       />
       <Tabs.Screen
@@ -75,7 +76,7 @@ export default function TabLayout() {
           title: 'Options Insights',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.line.uptrend.xyaxis" color={color} />,
           href: forumVisibility.optionsInsights ? undefined : null,
-          tabBarBadge: badge('optionsInsights'),
+          tabBarBadge: badge(FeedKeys.optionsInsights),
         }}
       />
       <Tabs.Screen

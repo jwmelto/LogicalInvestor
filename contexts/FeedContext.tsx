@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { FeedKeys } from '@li/core';
 import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
 import { cleanupObsoleteStorage, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
@@ -56,7 +57,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await cleanupObsoleteStorage();
       const scopes = await getAllScopes();
-      setFeedUnreadCount('membersArea', viewScope(scopes['membersArea'] ?? {}).hasUnread);
+      setFeedUnreadCount(FeedKeys.membersArea, viewScope(scopes[FeedKeys.membersArea] ?? {}).hasUnread);
 
       const subs = await getAllTopicSubscriptions();
       const isSubscribed = (topicId: string) => subs[topicId] ?? true;
@@ -190,9 +191,9 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     };
   }, [authed]);
 
-  // Called after ForumFeed marks something read: re-derives hasUnread for that one scope from
-  // storage (cheap local lookup) rather than assuming a new value, and updates the relevant
-  // slice of state. The topicUnread effect above then re-derives the forum's own aggregate flag.
+  // Called after ForumFeed marks something read: re-derives hasUnread for that one scope via a
+  // cheap local storage lookup, and updates the relevant slice of state. The topicUnread effect
+  // above then re-derives the forum's own aggregate flag.
   const refreshScopeUnread = useCallback(async (feedKey: FeedKey, scopeId: string) => {
     const result = await hasUnread(scopeId);
     if (scopeId === feedKey) {

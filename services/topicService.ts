@@ -18,12 +18,11 @@ export interface Topic {
   latestItemLink: string; // Link to the most recent post (for navigation to preview)
 }
 
-// Bumped from 'discovered_topics_v2' to 'discovered_topics_v3': topic ids are now built from the
-// post's stable slug rather than its (editable, reusable) title — see generateTopicId. As with the
-// prior bump, there's no migration code; old data is simply orphaned and topics are rediscovered
-// fresh from the next feed poll. Unlike the prior bump, this one does affect
-// topic_id_subscriptions (keyed by the same id): old title-based subscription entries go
-// unreferenced too, so users re-subscribe/re-silence once after this update.
+// Versioned key: topic ids are built from the post's stable slug (see generateTopicId), not its
+// editable, reusable title. No migration code — a version bump simply orphans old data under the
+// old key, and topics are rediscovered fresh from the next feed poll. This also orphans
+// topic_id_subscriptions (keyed by the same id): old title-based entries go unreferenced, so
+// users re-subscribe/re-silence once after this update.
 const TOPICS_STORAGE_KEY = 'discovered_topics_v3';
 
 /**

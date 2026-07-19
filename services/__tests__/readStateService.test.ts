@@ -33,10 +33,13 @@ import {
   detectForumUnread,
   getAllScopes,
 } from '../readStateService';
+import { FeedKeys } from '@li/core';
 import { fetchTopicFeed, RssItem } from '../feedService';
 import { getTopicsForForum, Topic } from '../topicService';
 import { getAllTopicSubscriptions } from '../subscriptionService';
 import { storageGetObject, storageSetObject } from '../storageService';
+
+const FK = FeedKeys;
 
 const mockFetchTopicFeed = fetchTopicFeed as jest.Mock;
 const mockGetTopicsForForum = getTopicsForForum as jest.Mock;
@@ -50,7 +53,7 @@ const item = (guid: string, slug = 'nvo'): RssItem => ({
   description: '',
   link: `https://logicalinvestor.net/forums/topic/${slug}/#post-${guid}`,
   pubDate: new Date('2024-01-01'),
-  feedKey: 'membersForum' as any,
+  feedKey: FK.membersForum,
   isFirstPost: true,
 });
 
@@ -58,7 +61,7 @@ const topic = (slug: string, lastUpdatedAt = 1): Topic => ({
   id: `membersForum:${slug}`,
   name: slug,
   slug,
-  forumKey: 'membersForum' as any,
+  forumKey: FK.membersForum,
   discoveredAt: 0,
   lastUpdatedAt,
   itemCount: 1,
@@ -108,13 +111,13 @@ describe('markScopesSeen / markGuidsRead', () => {
 
   it('keeps two scopes independent even when guids are identical strings', async () => {
     await markScopesSeen({
-      membersArea: ['shared-guid'],
+      [FK.membersArea]: ['shared-guid'],
       'membersForum:nvo': ['shared-guid'],
     });
-    await markGuidsRead({ membersArea: ['shared-guid'] });
+    await markGuidsRead({ [FK.membersArea]: ['shared-guid'] });
 
     const scopes = await getAllScopes();
-    expect(scopes['membersArea']).toEqual({ 'shared-guid': true });
+    expect(scopes[FK.membersArea]).toEqual({ 'shared-guid': true });
     expect(scopes['membersForum:nvo']).toEqual({ 'shared-guid': false });
   });
 
@@ -166,9 +169,9 @@ describe('hasUnread / isRead / markRead / markAllRead (single-scope wrappers)', 
 
 describe('markFlatFeedSeen', () => {
   it('records every item guid under the feedKey scope', async () => {
-    await markFlatFeedSeen('membersArea' as any, [item('g1'), item('g2')]);
+    await markFlatFeedSeen(FK.membersArea, [item('g1'), item('g2')]);
     const scopes = await getAllScopes();
-    expect(scopes['membersArea']).toEqual({ g1: false, g2: false });
+    expect(scopes[FK.membersArea]).toEqual({ g1: false, g2: false });
   });
 });
 
@@ -176,7 +179,7 @@ describe('detectForumUnread', () => {
   it('fast path: newest considered item already known — zero fetchTopicFeed calls, zero touched topics', async () => {
     await markScopesSeen({ 'membersForum:nvo': ['g1'] });
 
-    const result = await detectForumUnread('membersForum' as any, [item('g1', 'nvo')]);
+    const result = await detectForumUnread(FK.membersForum, [item('g1', 'nvo')]);
 
     expect(result).toEqual({});
     expect(mockFetchTopicFeed).not.toHaveBeenCalled();
@@ -188,7 +191,7 @@ describe('detectForumUnread', () => {
 
     // Newest-first: g-new-2, g-new-1, g-old (known) — g-old proves completeness.
     const items = [item('g-new-2', 'tsla'), item('g-new-1', 'nvo'), item('g-old', 'nvo')];
-    const result = await detectForumUnread('membersForum' as any, items);
+    const result = await detectForumUnread(FK.membersForum, items);
 
     expect(result).toEqual({ 'membersForum:tsla': true, 'membersForum:nvo': true });
     expect(mockFetchTopicFeed).not.toHaveBeenCalled();
@@ -211,7 +214,7 @@ describe('detectForumUnread', () => {
     );
 
     const items = [item('g-new', 'nvo')]; // never-before-seen, window exhausted with no boundary
-    const result = await detectForumUnread('membersForum' as any, items);
+    const result = await detectForumUnread(FK.membersForum, items);
 
     expect(mockFetchTopicFeed).toHaveBeenCalledTimes(2); // nvo + tsla, not the silenced topic
     expect(result['membersForum:nvo']).toBe(true);
@@ -225,7 +228,7 @@ describe('detectForumUnread', () => {
     );
     mockGetAllTopicSubscriptions.mockResolvedValue({});
 
-    await detectForumUnread('membersForum' as any, [item('g-new', 'topic-0')]);
+    await detectForumUnread(FK.membersForum, [item('g-new', 'topic-0')]);
 
     expect(mockFetchTopicFeed).toHaveBeenCalledTimes(10);
   });
@@ -235,7 +238,7 @@ describe('detectForumUnread', () => {
     // own read-modify-write when there's anything to persist — never proportional to how many
     // items/topics were in the window (a 25-item, 25-topic window must not cause 25 reads).
     const items = Array.from({ length: 25 }, (_, i) => item(`g${i}`, `topic-${i}`));
-    await detectForumUnread('membersForum' as any, items);
+    await detectForumUnread(FK.membersForum, items);
 
     const scopeReads = mockStorageGetObject.mock.calls.filter(([key]) => key === 'scope_guids');
     expect(scopeReads.length).toBeLessThanOrEqual(2);
@@ -243,7 +246,7 @@ describe('detectForumUnread', () => {
   });
 
   it('returns an empty result for an empty window', async () => {
-    expect(await detectForumUnread('membersForum' as any, [])).toEqual({});
+    expect(await detectForumUnread(FK.membersForum, [])).toEqual({});
     expect(mockFetchTopicFeed).not.toHaveBeenCalled();
   });
 });
