@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { extractRssItems, type RssItem, type FeedKey, FeedKeys } from '@li/core';
+import { extractRssItems, type RssItem, type FeedKey } from '@li/core';
 import { getToken } from './authService';
 import { updateTopicsFromFeedItems } from './topicService';
 import type { ForumVisibility } from './storageService';
@@ -11,58 +11,48 @@ const parser = new XMLParser({
   attributeNamePrefix: '@_',
 });
 
+// isVisible answers "is this feed's tab currently shown at all" — distinct from `.accessible`
+// (which, per fetchFeed's Error Handling note below, is essentially always true) and from having
+// zero items (which just means "not subscribed"). Members Area/Members Forum aren't togglable, so
+// their isVisible ignores the argument entirely; Stock/Options Insights defer to the user's
+// stored preference. Each feed owns the answer to its own question rather than a shared function
+// having to special-case every key.
 export const FEEDS = {
   membersArea: {
     name: 'Members Area',
     route: 'members-area',
     url: 'https://logicalinvestor.net/feed/',
-    alwaysVisible: true,
     hasSubFeeds: false,
+    isVisible: (_visibility: ForumVisibility) => true,
   },
   membersForum: {
     name: 'Members Forum',
     route: 'members-forum',
     url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',
-    alwaysVisible: true,
     hasSubFeeds: true,
+    isVisible: (_visibility: ForumVisibility) => true,
   },
   stockInsights: {
     name: 'Stock Insights',
     route: 'stock-insights',
     url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',
-    alwaysVisible: false,
     hasSubFeeds: true,
+    isVisible: (visibility: ForumVisibility) => visibility.stockInsights,
   },
   optionsInsights: {
     name: 'Options Insights',
     route: 'options-insights',
     url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',
-    alwaysVisible: false,
     hasSubFeeds: true,
+    isVisible: (visibility: ForumVisibility) => visibility.optionsInsights,
   },
-/*  investingBasics: {
-    name: 'Investing Basics',
-    url: 'https://logicalinvestor.net/basic-investing/feed/',
-    alwaysVisible: true,
-  }, */
 } as const satisfies Record<FeedKey, {
   name: string;
   route: string;
   url: string;
-  alwaysVisible: boolean;
   hasSubFeeds: boolean;
+  isVisible: (visibility: ForumVisibility) => boolean;
 }>;
-
-// Whether a feed's tab is currently shown at all — distinct from `.accessible` (which, per
-// fetchFeed's Error Handling note below, is essentially always true) and from having zero items
-// (which just means "not subscribed"). Feeds with FEEDS[k].alwaysVisible never consult the user's
-// visibility toggle at all; today that's exactly the two feeds ForumVisibility doesn't cover.
-export function isFeedVisible(feedKey: FeedKey, visibility: ForumVisibility): boolean {
-  if (FEEDS[feedKey].alwaysVisible) return true;
-  if (feedKey === FeedKeys.stockInsights) return visibility.stockInsights;
-  if (feedKey === FeedKeys.optionsInsights) return visibility.optionsInsights;
-  return true;
-}
 
 export interface FeedResult {
   feedKey: FeedKey;

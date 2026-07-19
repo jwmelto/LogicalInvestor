@@ -1,26 +1,28 @@
-// isFeedVisible/FEEDS are pure — no I/O — but feedService.ts transitively imports authService
+// FEEDS[k].isVisible is pure — no I/O — but feedService.ts transitively imports authService
 // (expo-secure-store) and topicService (which imports storageService/AsyncStorage), neither of
 // which resolve cleanly under Jest without a native-module bridge. Mock them out; nothing under
 // test here calls into either.
 jest.mock('../authService', () => ({ getToken: jest.fn() }));
 jest.mock('../topicService', () => ({ updateTopicsFromFeedItems: jest.fn() }));
 
-import { FeedKeys } from '@li/core';
-import { isFeedVisible, FEEDS } from '../feedService';
+import { FEEDS } from '../feedService';
 
-describe('isFeedVisible', () => {
-  it('is always visible for a feed with alwaysVisible: true, regardless of the visibility prefs', () => {
-    expect(FEEDS.membersArea.alwaysVisible).toBe(true);
-    expect(isFeedVisible(FeedKeys.membersArea, { stockInsights: false, optionsInsights: false })).toBe(true);
+describe('FEEDS[k].isVisible', () => {
+  it('membersArea is always visible, regardless of the visibility prefs', () => {
+    expect(FEEDS.membersArea.isVisible({ stockInsights: false, optionsInsights: false })).toBe(true);
   });
 
-  it('follows the stored preference for stockInsights', () => {
-    expect(isFeedVisible(FeedKeys.stockInsights, { stockInsights: true, optionsInsights: false })).toBe(true);
-    expect(isFeedVisible(FeedKeys.stockInsights, { stockInsights: false, optionsInsights: false })).toBe(false);
+  it('membersForum is always visible, regardless of the visibility prefs', () => {
+    expect(FEEDS.membersForum.isVisible({ stockInsights: false, optionsInsights: false })).toBe(true);
   });
 
-  it('follows the stored preference for optionsInsights', () => {
-    expect(isFeedVisible(FeedKeys.optionsInsights, { stockInsights: false, optionsInsights: true })).toBe(true);
-    expect(isFeedVisible(FeedKeys.optionsInsights, { stockInsights: false, optionsInsights: false })).toBe(false);
+  it('stockInsights follows the stored preference', () => {
+    expect(FEEDS.stockInsights.isVisible({ stockInsights: true, optionsInsights: false })).toBe(true);
+    expect(FEEDS.stockInsights.isVisible({ stockInsights: false, optionsInsights: false })).toBe(false);
+  });
+
+  it('optionsInsights follows the stored preference', () => {
+    expect(FEEDS.optionsInsights.isVisible({ stockInsights: false, optionsInsights: true })).toBe(true);
+    expect(FEEDS.optionsInsights.isVisible({ stockInsights: false, optionsInsights: false })).toBe(false);
   });
 });

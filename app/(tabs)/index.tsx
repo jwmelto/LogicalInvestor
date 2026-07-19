@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { FeedKeys } from '@li/core';
 import { getLastOpenedTab, getForumVisibility } from '../../services/storageService';
-import { FeedKey, FEEDS, isFeedVisible } from '../../services/feedService';
+import { FeedKey, FEEDS } from '../../services/feedService';
 import { getAllScopes, viewScope, topicUnreadForForum } from '../../services/readStateService';
 import { getAllTopicSubscriptions } from '../../services/subscriptionService';
 
@@ -27,7 +27,7 @@ export default function TabsIndex() {
         getAllTopicSubscriptions(),
       ]);
 
-      const visible = PREFERRED.filter((k) => isFeedVisible(k, visibility));
+      const visible = PREFERRED.filter((k) => FEEDS[k].isVisible(visibility));
 
       const forumHasUnread = (k: FeedKey): boolean => {
         if (!FEEDS[k].hasSubFeeds) return viewScope(scopes[k] ?? {}).hasUnread;

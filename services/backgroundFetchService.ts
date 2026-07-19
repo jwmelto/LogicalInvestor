@@ -1,6 +1,6 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { fetchAllFeeds, FEEDS, isFeedVisible } from './feedService';
+import { fetchAllFeeds, FEEDS } from './feedService';
 import { isAuthenticated } from './authService';
 import { getForumVisibility } from './storageService';
 import { markFlatFeedSeen, detectForumUnread } from './readStateService';
@@ -24,7 +24,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     // tab nobody can currently see.
     await Promise.all(results.map(async (result) => {
       if (!result.accessible) return;
-      if (!isFeedVisible(result.feedKey, visibility)) return;
+      if (!FEEDS[result.feedKey].isVisible(visibility)) return;
       if (FEEDS[result.feedKey].hasSubFeeds) {
         await detectForumUnread(result.feedKey, result.items);
       } else {

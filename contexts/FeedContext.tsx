@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { FeedKeys } from '@li/core';
-import { FeedKey, FeedResult, FEEDS, fetchSingleFeed, isFeedVisible } from '../services/feedService';
+import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
 import { cleanupObsoleteStorage, getForumVisibility, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
@@ -96,7 +96,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     // Each feed's detection runs independently and concurrently — a slow forum's bounded
     // deep-dive fallback shouldn't delay another forum's (or the flat feed's) badge update.
     await Promise.all(keys.map(async (k) => {
-      if (!isFeedVisible(k, visibility)) return;
+      if (!FEEDS[k].isVisible(visibility)) return;
       const result = next[k]!;
       if (!result.accessible) { setFeedUnread(k, false); return; }
 
