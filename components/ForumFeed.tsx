@@ -18,6 +18,7 @@ import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../ser
 import { getTopicsForForum, generateTopicUrl, Topic } from '../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
+import { getToken } from '../services/authService';
 import { addPushAuthor } from '../services/pushService';
 import { reportMissedAlert, type ReportableItem } from '../services/reportService';
 import { useColorScheme } from '../hooks/use-color-scheme';
@@ -231,11 +232,20 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     }
   }
 
+  // Post links come straight from the feed's raw <link>, with no feed_token — the site's
+  // paywall requires it on every page load, not just feed URLs.
+  async function openPostLink(link: string) {
+    const token = await getToken();
+    const url = new URL(link);
+    if (token) url.searchParams.set('feed_token', token);
+    Linking.openURL(url.toString());
+  }
+
   async function onPressItem(item: RssItem, scopeId: string) {
     await markRead(scopeId, item.guid);
     setItemReadStates((prev) => ({ ...prev, [item.guid]: true }));
     await refreshScopeUnread(feedKey, scopeId);
-    Linking.openURL(item.link);
+    openPostLink(item.link);
   }
 
   async function unsubscribeTopic(topicId: string) {
@@ -404,7 +414,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           style={[styles.topicPreview, { backgroundColor: c.surfaceAlt, borderBottomColor: c.borderSubtle }]}
                           onPress={async () => {
                             await markTopicAsRead(topicSection.topic.id);
-                            Linking.openURL(topicSection.topic.latestItemLink);
+                            openPostLink(topicSection.topic.latestItemLink);
                           }}
                           onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, description: topicSection.topic.latestExcerpt })}
                         >
