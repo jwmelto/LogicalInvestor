@@ -1,7 +1,8 @@
 import { XMLParser } from 'fast-xml-parser';
-import { extractRssItems, type RssItem, type FeedKey } from '@li/core';
+import { extractRssItems, type RssItem, type FeedKey, FeedKeys } from '@li/core';
 import { getToken } from './authService';
 import { updateTopicsFromFeedItems } from './topicService';
+import type { ForumVisibility } from './storageService';
 
 export type { RssItem, FeedKey };
 
@@ -51,6 +52,17 @@ export const FEEDS = {
   alwaysVisible: boolean;
   hasSubFeeds: boolean;
 }>;
+
+// Whether a feed's tab is currently shown at all — distinct from `.accessible` (which, per
+// fetchFeed's Error Handling note below, is essentially always true) and from having zero items
+// (which just means "not subscribed"). Feeds with FEEDS[k].alwaysVisible never consult the user's
+// visibility toggle at all; today that's exactly the two feeds ForumVisibility doesn't cover.
+export function isFeedVisible(feedKey: FeedKey, visibility: ForumVisibility): boolean {
+  if (FEEDS[feedKey].alwaysVisible) return true;
+  if (feedKey === FeedKeys.stockInsights) return visibility.stockInsights;
+  if (feedKey === FeedKeys.optionsInsights) return visibility.optionsInsights;
+  return true;
+}
 
 export interface FeedResult {
   feedKey: FeedKey;

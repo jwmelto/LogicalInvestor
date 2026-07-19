@@ -2,8 +2,8 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { FeedKeys } from '@li/core';
-import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
-import { cleanupObsoleteStorage, getRefreshInterval } from '../services/storageService';
+import { FeedKey, FeedResult, FEEDS, fetchSingleFeed, isFeedVisible } from '../services/feedService';
+import { cleanupObsoleteStorage, getForumVisibility, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
 import { getAllScopes, viewScope, markFlatFeedSeen, hasUnread, detectForumUnread, topicUnreadForForum } from '../services/readStateService';
@@ -87,9 +87,16 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     keys.forEach((k, i) => { next[k] = results[i]; });
     setFeedResults(next);
 
+    // The fetch above always runs for every feed, so a re-enabled forum's data is already fresh
+    // the moment the user flips it back on — only the detection work below (which, for topic
+    // forums, can mean a real bounded deep-dive fetch) is worth skipping for a hidden tab, since
+    // nothing renders its badge while it's hidden.
+    const visibility = await getForumVisibility();
+
     // Each feed's detection runs independently and concurrently — a slow forum's bounded
     // deep-dive fallback shouldn't delay another forum's (or the flat feed's) badge update.
     await Promise.all(keys.map(async (k) => {
+      if (!isFeedVisible(k, visibility)) return;
       const result = next[k]!;
       if (!result.accessible) { setFeedUnread(k, false); return; }
 
