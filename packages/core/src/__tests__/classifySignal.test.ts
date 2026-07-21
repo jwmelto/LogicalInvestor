@@ -31,6 +31,10 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad("Yeah, I was urging everyone to get it while close to $80/averaging down"), MIN)).toBe('fail-historical');
   });
 
+  test('fail-hypothetical: "could either...or" two-sided hedge', () => {
+    expect(classifySignal(pad('Yep, could either tank to an averaging down level (good) or rally after the earnings report with our present tranche (good)'), MIN)).toBe('fail-hypothetical');
+  });
+
   test('fail-too-short: no pattern match and below minLength', () => {
     expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });
