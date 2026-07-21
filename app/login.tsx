@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
     color: '#cc3333',
     textAlign: 'center',
     marginBottom: 16,
-    fontSize: 14,
+    fontSize: 16,
   },
   input: {
     borderWidth: 1,
@@ -190,7 +190,7 @@ const styles = StyleSheet.create({
   },
   signUpLink: {
     textAlign: 'center',
-    fontSize: 14,
+    fontSize: 16,
     marginTop: 20,
   },
   signUpLinkBold: {
