@@ -1,10 +1,13 @@
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
-import { getCachedUnreadCounts, getLastOpenedTab, getForumVisibility } from '../../services/storageService';
+import { FeedKeys } from '@li/core';
+import { getLastOpenedTab, getForumVisibility } from '../../services/storageService';
 import { FeedKey, FEEDS } from '../../services/feedService';
+import { getAllScopes, viewScope, topicUnreadForForum } from '../../services/readStateService';
+import { getAllTopicSubscriptions } from '../../services/subscriptionService';
 
 // Preference order — Members Area last since users rarely want it first
-const PREFERRED: FeedKey[] = ['membersForum', 'stockInsights', 'optionsInsights', 'membersArea'];
+const PREFERRED: FeedKey[] = [FeedKeys.membersForum, FeedKeys.stockInsights, FeedKeys.optionsInsights, FeedKeys.membersArea];
 
 const TAB_PATH = Object.fromEntries(
   (Object.keys(FEEDS) as FeedKey[]).map((k) => [k, `/(tabs)/${FEEDS[k].route}`])
@@ -14,30 +17,38 @@ export default function TabsIndex() {
   const router = useRouter();
 
   useEffect(() => {
-    Promise.all([getCachedUnreadCounts(), getLastOpenedTab(), getForumVisibility()]).then(
-      ([counts, lastTab, visibility]) => {
-        const visible = PREFERRED.filter((k) => {
-          if (k === 'stockInsights') return visibility.stockInsights;
-          if (k === 'optionsInsights') return visibility.optionsInsights;
-          return true;
-        });
+    (async () => {
+      // Reads directly from storage: the landing-tab decision must be knowable immediately from
+      // what's already persisted, independent of FeedProvider's own async fetch cycle.
+      const [lastTab, visibility, scopes, subs] = await Promise.all([
+        getLastOpenedTab(),
+        getForumVisibility(),
+        getAllScopes(),
+        getAllTopicSubscriptions(),
+      ]);
 
-        const unread = visible.filter((k) => (counts[k] ?? 0) > 0);
+      const visible = PREFERRED.filter((k) => FEEDS[k].isVisible(visibility));
 
-        let target: FeedKey;
-        if (lastTab && unread.includes(lastTab as FeedKey)) {
-          target = lastTab as FeedKey;                              // last visited has unread
-        } else if (unread.length > 0) {
-          target = unread[0];                                       // any unread tab
-        } else if (lastTab && visible.includes(lastTab as FeedKey)) {
-          target = lastTab as FeedKey;                              // last visited, nothing unread
-        } else {
-          target = 'membersForum';                                  // nothing unread, no valid last tab
-        }
+      const forumHasUnread = (k: FeedKey): boolean => {
+        if (!FEEDS[k].hasSubFeeds) return viewScope(scopes[k] ?? {}).hasUnread;
+        return Object.values(topicUnreadForForum(k, scopes, subs)).some(Boolean);
+      };
 
-        router.replace(TAB_PATH[target] as any);
+      const unreadTabs = visible.filter((k) => forumHasUnread(k));
+
+      let target: FeedKey;
+      if (lastTab && unreadTabs.includes(lastTab as FeedKey)) {
+        target = lastTab as FeedKey;                              // last visited has unread
+      } else if (unreadTabs.length > 0) {
+        target = unreadTabs[0];                                   // any unread tab
+      } else if (lastTab && visible.includes(lastTab as FeedKey)) {
+        target = lastTab as FeedKey;                              // last visited, nothing unread
+      } else {
+        target = FeedKeys.membersForum;                           // nothing unread, no valid last tab
       }
-    );
+
+      router.replace(TAB_PATH[target] as any);
+    })();
   }, [router]);
 
   return null;

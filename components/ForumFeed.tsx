@@ -13,11 +13,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { fetchTopicFeed, RssItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
-import { getUnreadCount, markRead, markAllRead, isRead } from '../services/readStateService';
-import { getHideSnippetOnRead, storageGetObject, storageSetObject, getCachedUnreadCounts, setCachedUnreadCounts } from '../services/storageService';
-import { getTopicsForForum, generateTopicFeedUrl, Topic } from '../services/topicService';
-import { isTopicSubscribed, setTopicSubscription } from '../services/subscriptionService';
+import { getAllScopes, viewScope, markRead, markAllRead, markGuidsRead, markScopesSeen } from '../services/readStateService';
+import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
+import { getTopicsForForum, generateTopicUrl, Topic } from '../services/topicService';
+import { getAllTopicSubscriptions, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
+import { getToken } from '../services/authService';
 import { addPushAuthor } from '../services/pushService';
 import { reportMissedAlert, type ReportableItem } from '../services/reportService';
 import { useColorScheme } from '../hooks/use-color-scheme';
@@ -30,7 +31,6 @@ interface ItemReadState {
 interface TopicSection {
   topic: Topic;
   items: RssItem[];
-  unreadCount: number;
   expanded: boolean;
   loading: boolean;
 }
@@ -38,7 +38,6 @@ interface TopicSection {
 interface SectionState {
   items: RssItem[];
   topics: TopicSection[];
-  unreadCount: number;
   accessible: boolean;
   loading: boolean;
   error?: string;
@@ -60,47 +59,33 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const [refreshing, setRefreshing] = useState(false);
   const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
-  const { feedResults, setFeedUnreadCount, triggerRefresh } = useFeed();
+  const { feedResults, unread, topicUnread, refreshScopeUnread, triggerRefresh } = useFeed();
   const result = feedResults[feedKey];
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
-    const unreadCount = await getUnreadCount(result.items.map((i) => i.guid));
-
     const feed = FEEDS[feedKey];
     let topicSections: TopicSection[] = []; // Always initialize
 
     if (feed.hasSubFeeds && result.accessible) {
       const allTopics = await getTopicsForForum(feedKey);
       const topicExpandedStates = await getTopicExpandedStates(feedKey);
-
-      const subscribedTopics = await Promise.all(
-        allTopics.map(async (topic) => ({
-          topic,
-          subscribed: await isTopicSubscribed(topic.id, feedKey),
-        }))
-      );
+      const subs = await getAllTopicSubscriptions(); // one read, not one per topic
+      const isSubscribed = (topicId: string) => subs[topicId] ?? true;
 
       topicSections = await Promise.all(
-        subscribedTopics
-          .filter(({ subscribed }) => subscribed)
-          .map(async ({ topic }) => {
-            const topicPosts = result.items.filter(
-              item => item.title === topic.name
-            );
-            const unreadCount = await getUnreadCount(topicPosts.map(p => p.guid));
-
+        allTopics
+          .filter((topic) => isSubscribed(topic.id))
+          .map(async (topic) => {
             const isExpanded = topicExpandedStates[topic.id] ?? false;
             let items: RssItem[] = [];
 
             if (isExpanded) {
-              const feedUrl = generateTopicFeedUrl(topic.slug);
-              items = await fetchTopicFeed(feedUrl, feedKey);
+              items = await fetchTopicFeed(generateTopicUrl(topic.slug), feedKey);
             }
 
             return {
               topic,
               items,
-              unreadCount,
               expanded: isExpanded,
               loading: false,
             };
@@ -110,8 +95,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
     return {
       items: result.items || [],
-      topics: topicSections || [],
-      unreadCount,
+      topics: topicSections,
       accessible: result.accessible,
       loading: false,
       error: result.error,
@@ -126,26 +110,21 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
         const built = await buildSection(result);
         setSection(built);
 
-        const totalUnread = built.topics.length > 0
-          ? built.topics.reduce((sum, t) => sum + t.unreadCount, 0)
-          : built.unreadCount;
-        setFeedUnreadCount(feedKey, totalUnread);
-
-        const cached = await getCachedUnreadCounts();
-        await setCachedUnreadCounts({ ...cached, [feedKey]: totalUnread });
-
-        const allItems = [...built.items, ...built.topics.flatMap(t => t.items)];
-        const previewItemIds = built.topics
-          .map(t => t.topic.latestItemId)
-          .filter((id): id is string => !!id);
-
+        // One getAllScopes() read for the whole build, shared across the flat items, every
+        // topic's items, and every topic's preview item — each item's read state is then a
+        // synchronous in-memory lookup via viewScope().
+        const scopes = await getAllScopes();
         const readStates: ItemReadState = {};
-        for (const item of allItems) {
-          readStates[item.guid] = await isRead(item.guid);
+
+        const flatView = viewScope(scopes[feedKey] ?? {});
+        for (const item of built.items) {
+          readStates[item.guid] = flatView.isRead(item.guid);
         }
-        for (const id of previewItemIds) {
-          if (!(id in readStates)) {
-            readStates[id] = await isRead(id);
+        for (const t of built.topics) {
+          const view = viewScope(scopes[t.topic.id] ?? {});
+          for (const item of t.items) readStates[item.guid] = view.isRead(item.guid);
+          if (!(t.topic.latestItemId in readStates)) {
+            readStates[t.topic.latestItemId] = view.isRead(t.topic.latestItemId);
           }
         }
         setItemReadStates(readStates);
@@ -174,37 +153,32 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     triggerRefresh();
   }
 
-
-  async function toggleTopic(topicId: string) {
+  function toggleTopic(topicId: string) {
     if (!section) return;
+    const target = section.topics.find((t) => t.topic.id === topicId);
+    if (!target) return;
+
+    const newExpanded = !target.expanded;
+    const shouldLoad = newExpanded && target.items.length === 0 && !target.loading;
 
     setSection((prev) => {
       if (!prev) return prev;
-
-      const updated = {
+      return {
         ...prev,
-        topics: prev.topics.map((t) => {
-          if (t.topic.id !== topicId) return t;
-
-          const newExpanded = !t.expanded;
-          const shouldLoad = newExpanded && t.items.length === 0 && !t.loading;
-
-          if (shouldLoad) {
-            loadTopicPosts(t.topic);
-          }
-
-          return { ...t, expanded: newExpanded, loading: shouldLoad ? true : t.loading };
-        }),
+        topics: prev.topics.map((t) =>
+          t.topic.id === topicId
+            ? { ...t, expanded: newExpanded, loading: shouldLoad ? true : t.loading }
+            : t
+        ),
       };
-
-      // Save topic expanded states
-      const topicStates = Object.fromEntries(
-        updated.topics.map(t => [t.topic.id, t.expanded])
-      );
-      saveTopicExpandedStates(feedKey, topicStates);
-
-      return updated;
     });
+
+    const topicStates = Object.fromEntries(
+      section.topics.map((t) => [t.topic.id, t.topic.id === topicId ? newExpanded : t.expanded])
+    );
+    saveTopicExpandedStates(feedKey, topicStates);
+
+    if (shouldLoad) loadTopicPosts(target.topic);
   }
 
   async function loadTopicPosts(topic: Topic) {
@@ -220,34 +194,31 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
 
     try {
-      const feedUrl = generateTopicFeedUrl(topic.slug);
-      const posts = await fetchTopicFeed(feedUrl, feedKey);
+      const posts = await fetchTopicFeed(generateTopicUrl(topic.slug), feedKey);
+      // Write-through to the same store detection uses, so a manual expand short-circuits the
+      // next detection pass for this topic.
+      await markScopesSeen({ [topic.id]: posts.map((p) => p.guid) });
 
-      const readStates: ItemReadState = {};
-      for (const post of posts) {
-        readStates[post.guid] = await isRead(post.guid);
-      }
-      setItemReadStates((prev) => ({ ...prev, ...readStates }));
-
-      const topicUnreadCount = await getUnreadCount(posts.map((p) => p.guid));
+      const scopes = await getAllScopes();
+      const view = viewScope(scopes[topic.id] ?? {});
+      setItemReadStates((prev) => {
+        const updated = { ...prev };
+        posts.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
+        return updated;
+      });
 
       setSection((prev) =>
         prev
           ? {
               ...prev,
               topics: prev.topics.map((t) =>
-                t.topic.id === topic.id
-                  ? {
-                      ...t,
-                      items: posts,
-                      unreadCount: topicUnreadCount,
-                      loading: false,
-                    }
-                  : t
+                t.topic.id === topic.id ? { ...t, items: posts, loading: false } : t
               ),
             }
           : prev
       );
+
+      await refreshScopeUnread(feedKey, topic.id);
     } catch {
       setSection((prev) =>
         prev
@@ -262,16 +233,20 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     }
   }
 
-  async function onPressItem(item: RssItem) {
-    await markRead(item.guid);
+  // Post links come straight from the feed's raw <link>, with no feed_token — the site's
+  // paywall requires it on every page load, not just feed URLs.
+  async function openPostLink(link: string) {
+    const token = await getToken();
+    const url = new URL(link);
+    if (token) url.searchParams.set('feed_token', token);
+    Linking.openURL(url.toString());
+  }
+
+  async function onPressItem(item: RssItem, scopeId: string) {
+    await markRead(scopeId, item.guid);
     setItemReadStates((prev) => ({ ...prev, [item.guid]: true }));
-    setSection((prev) => {
-      if (!prev) return prev;
-      return { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) };
-    });
-    const newCount = Math.max(0, (section?.unreadCount ?? 1) - 1);
-    setFeedUnreadCount(feedKey, newCount);
-    Linking.openURL(item.link);
+    await refreshScopeUnread(feedKey, scopeId);
+    openPostLink(item.link);
   }
 
   async function unsubscribeTopic(topicId: string) {
@@ -291,33 +266,33 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
   async function markAllFeedRead() {
     if (!section) return;
-    const allIds = [
-      ...section.items.map(i => i.guid),
-      ...section.topics.flatMap(t => [
-        ...t.items.map(i => i.guid),
-        ...section.items
-          .filter(i => i.title === t.topic.name)
-          .map(i => i.guid),
-      ]),
-    ];
-    if (allIds.length === 0) return;
-    await markAllRead(allIds);
-    setItemReadStates(prev => {
-      const updated = { ...prev };
-      allIds.forEach(id => { updated[id] = true; });
-      return updated;
-    });
-    setSection(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        unreadCount: 0,
-        topics: prev.topics.map(t => ({ ...t, unreadCount: 0 })),
-      };
-    });
-    setFeedUnreadCount(feedKey, 0);
-    const cached = await getCachedUnreadCounts();
-    await setCachedUnreadCounts({ ...cached, [feedKey]: 0 });
+
+    if (section.topics.length > 0) {
+      const scopes = await getAllScopes();
+      const updates: Record<string, string[]> = {};
+      for (const t of section.topics) {
+        updates[t.topic.id] = Object.keys(scopes[t.topic.id] ?? {});
+      }
+      await markGuidsRead(updates); // one write for the whole forum, not one per topic
+
+      setItemReadStates((prev) => {
+        const updated = { ...prev };
+        Object.values(updates).flat().forEach((guid) => { updated[guid] = true; });
+        return updated;
+      });
+
+      await Promise.all(section.topics.map((t) => refreshScopeUnread(feedKey, t.topic.id)));
+    } else {
+      const allIds = section.items.map((i) => i.guid);
+      if (allIds.length === 0) return;
+      await markAllRead(feedKey, allIds);
+      setItemReadStates((prev) => {
+        const updated = { ...prev };
+        allIds.forEach((id) => { updated[id] = true; });
+        return updated;
+      });
+      await refreshScopeUnread(feedKey, feedKey);
+    }
   }
 
   function showPostMenu(item: ReportableItem) {
@@ -329,50 +304,28 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     ]);
   }
 
+  // Marks every guid known for this topic as read, not just the ones currently displayed — the
+  // store already holds the full known-guid set regardless of source (top-level attribution,
+  // bounded deep-dive, or a prior fetch-on-expand), so a collapsed, never-expanded topic can still
+  // be fully marked read from its "[new]" badge alone.
   async function markTopicAsRead(topicId: string) {
     if (!section) return;
-
     const topicSection = section.topics.find((t) => t.topic.id === topicId);
     if (!topicSection) return;
 
-    // Collect all items for this topic from both the expanded list and the
-    // top-level feed items (which contain replies filed under the topic name).
-    const itemsToMark = [
-      ...topicSection.items,
-      ...section.items.filter(
-        (item) => item.title === topicSection.topic.name
-      ),
-    ];
-
-    // Single atomic read-modify-write for all IDs. Using Promise.all with
-    // individual markRead calls would race (each does its own read-modify-write
-    // on the same key and they overwrite each other).
-    const unreadIds = itemsToMark
-      .filter((item) => !itemReadStates[item.guid])
-      .map((item) => item.guid);
-    if (unreadIds.length > 0) {
-      await markAllRead(unreadIds);
+    const scopes = await getAllScopes();
+    const allGuids = Object.keys(scopes[topicId] ?? {});
+    if (allGuids.length > 0) {
+      await markAllRead(topicId, allGuids);
     }
 
-    // Storage is settled — now update in-memory state.
     setItemReadStates((prev) => {
       const updated = { ...prev };
-      itemsToMark.forEach((item) => { updated[item.guid] = true; });
+      allGuids.forEach((guid) => { updated[guid] = true; });
       return updated;
     });
 
-    setSection((prev) => {
-      if (!prev) return prev;
-      const updatedTopics = prev.topics.map((t) =>
-        t.topic.id === topicId ? { ...t, unreadCount: 0 } : t
-      );
-      const totalUnread = updatedTopics.reduce((sum, t) => sum + t.unreadCount, 0);
-      return { ...prev, topics: updatedTopics, unreadCount: totalUnread };
-    });
-    // Compute total from current section state (topics already zeroed for this topic)
-    const totalUnread = (section?.topics ?? [])
-      .reduce((sum, t) => t.topic.id === topicId ? sum : sum + t.unreadCount, 0);
-    setFeedUnreadCount(feedKey, totalUnread);
+    await refreshScopeUnread(feedKey, topicId);
   }
 
   if (loading) {
@@ -399,12 +352,16 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
+  const flatHasUnread = unread[feedKey] ?? false;
+  const anyTopicUnread = section.topics.some((t) => topicUnread[feedKey]?.[t.topic.id] ?? false);
+  const showMarkAllRead = anyTopicUnread || flatHasUnread;
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg }]}>
       {title && (
         <View style={[styles.feedHeader, { borderBottomColor: c.borderSubtle }]}>
           <Text style={[styles.forumTitle, { color: c.text }]}>{title}</Text>
-          {section && section.unreadCount > 0 && (
+          {showMarkAllRead && (
             <TouchableOpacity onPress={markAllFeedRead} style={styles.markAllButton}>
               <Text style={[styles.markAllText, { color: c.tint }]}>Mark all read</Text>
             </TouchableOpacity>
@@ -419,7 +376,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
           section ? (
             <View>
               {section.topics.length > 0
-                ? section.topics.map((topicSection) => (
+                ? section.topics.map((topicSection) => {
+                    const topicHasUnread = topicUnread[feedKey]?.[topicSection.topic.id] ?? false;
+                    return (
                     <View key={topicSection.topic.id}>
                       <View style={[styles.topicHeader, { backgroundColor: c.surface, borderBottomColor: c.borderSubtle }]}>
                         <TouchableOpacity
@@ -431,7 +390,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                           </Text>
                         </TouchableOpacity>
                         <View style={styles.topicHeaderRight}>
-                          {topicSection.unreadCount > 0 && (
+                          {topicHasUnread && (
                             <TouchableOpacity onPress={async () => {
                               await markTopicAsRead(topicSection.topic.id);
                               // Collapse the topic
@@ -451,12 +410,12 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         </View>
                       </View>
 
-                      {!topicSection.expanded && topicSection.unreadCount > 0 && !itemReadStates[topicSection.topic.latestItemId] && (
+                      {!topicSection.expanded && topicHasUnread && !itemReadStates[topicSection.topic.latestItemId] && (
                         <TouchableOpacity
                           style={[styles.topicPreview, { backgroundColor: c.surfaceAlt, borderBottomColor: c.borderSubtle }]}
                           onPress={async () => {
                             await markTopicAsRead(topicSection.topic.id);
-                            Linking.openURL(topicSection.topic.latestItemLink);
+                            openPostLink(topicSection.topic.latestItemLink);
                           }}
                           onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, description: topicSection.topic.latestExcerpt })}
                         >
@@ -487,7 +446,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                             <TouchableOpacity
                               key={item.guid}
                               style={[styles.topicItem, { backgroundColor: c.bg }]}
-                              onPress={() => onPressItem(item)}
+                              onPress={() => onPressItem(item, topicSection.topic.id)}
                               onLongPress={() => showPostMenu(item)}
                             >
                               <View style={styles.itemMeta}>
@@ -516,7 +475,8 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         <Text style={[styles.empty, { color: c.textMuted }]}>No posts found.</Text>
                       )}
                     </View>
-                  ))
+                    );
+                  })
                 : section.items.map((item) => {
                     const itemIsRead = itemReadStates[item.guid];
                     const showSnippet = !itemIsRead || !hideSnippetOnRead;
@@ -525,7 +485,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                       <TouchableOpacity
                         key={item.guid}
                         style={[styles.item, { backgroundColor: c.bg }]}
-                        onPress={() => onPressItem(item)}
+                        onPress={() => onPressItem(item, feedKey)}
                         onLongPress={() => showPostMenu(item)}
                       >
                         <View style={styles.titleRow}>
@@ -534,10 +494,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                             <TouchableOpacity
                               onPress={async (e) => {
                                 e.stopPropagation();
-                                await markRead(item.guid);
+                                await markRead(feedKey, item.guid);
                                 setItemReadStates(prev => ({ ...prev, [item.guid]: true }));
-                                setSection(prev => prev ? { ...prev, unreadCount: Math.max(0, prev.unreadCount - 1) } : prev);
-                                setFeedUnreadCount(feedKey, Math.max(0, (section?.unreadCount ?? 1) - 1));
+                                await refreshScopeUnread(feedKey, feedKey);
                               }}
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >

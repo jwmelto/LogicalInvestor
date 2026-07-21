@@ -80,15 +80,25 @@ export async function setForumVisibility(visibility: ForumVisibility): Promise<v
   await storageSetObject('forumVisibility', visibility);
 }
 
-// Cached unread counts (persisted so all tabs show correct badges on app open)
-const CACHED_UNREAD_KEY = 'cached_unread_counts';
+// Keys made obsolete by the topic-store/read-state redesign (slug-based topic ids, unified
+// scope_guids read-state — see readStateService.ts). Safe to call on every launch: removing an
+// already-absent key is a no-op, so no "have I migrated" flag is needed. An orphaned
+// topic_id_subscriptions entry isn't just inert — it would render in Settings' "Silenced Topics"
+// list as an entry for a topic that no longer exists under the new id scheme, so this is an
+// active sweep, not just "stop writing to these."
+const OBSOLETE_KEYS = [
+  'read_post_ids',          // superseded by scope_guids
+  'cached_unread_counts',   // superseded by scope_guids + on-demand hasUnread()
+  'discovered_topics',      // pre-v2 topics key, already dead before this change
+  'discovered_topics_v2',   // superseded by discovered_topics_v3 (title-based topic ids)
+  'topic_id_subscriptions', // entries keyed by old title-based topic ids, all invalid now
+  'topic_expanded_membersForum',
+  'topic_expanded_stockInsights',
+  'topic_expanded_optionsInsights',
+];
 
-export async function getCachedUnreadCounts(): Promise<Record<string, number>> {
-  return (await storageGetObject<Record<string, number>>(CACHED_UNREAD_KEY)) ?? {};
-}
-
-export async function setCachedUnreadCounts(counts: Record<string, number>): Promise<void> {
-  await storageSetObject(CACHED_UNREAD_KEY, counts);
+export async function cleanupObsoleteStorage(): Promise<void> {
+  await Promise.all(OBSOLETE_KEYS.map((key) => storageRemove(key)));
 }
 
 const LAST_TAB_KEY = 'last_opened_tab';

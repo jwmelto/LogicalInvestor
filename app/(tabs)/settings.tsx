@@ -10,6 +10,7 @@ import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefr
 import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken } from '../../services/pushService';
 import { FILTER_TIERS, type ContentFilter } from '@li/core';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
+import { useFeed } from '../../contexts/FeedContext';
 import { getTopics } from '../../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../../services/subscriptionService';
 import type { Topic } from '../../services/topicService';
@@ -38,6 +39,7 @@ export default function SettingsScreen() {
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
   const [expandedForum, setExpandedForum] = useState<string | null>(null);
   const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
+  const { triggerRefresh } = useFeed();
   const { setAuthed } = useAuth();
 
   useEffect(() => {
@@ -97,6 +99,10 @@ export default function SettingsScreen() {
 
   async function handleToggleForumVisibility(forum: 'stockInsights' | 'optionsInsights', value: boolean) {
     await updateVisibility(forum, value);
+    // Turning a forum back on: its badge is whatever was last computed while it was hidden
+    // (fetchAllFeeds skips detection for hidden forums) — refresh now instead of waiting for the
+    // next scheduled cycle. Turning one off needs no refresh; there's nothing new to compute.
+    if (value) triggerRefresh();
   }
 
   async function handleLogout() {

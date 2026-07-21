@@ -10,7 +10,7 @@ jest.mock('react-native', () => ({
 
 import {
   extractTopicSlugFromLink,
-  generateTopicFeedUrl,
+  generateTopicUrl,
   discoverTopicsFromFeedItems,
   generateTopicId,
 } from '../topicService';
@@ -52,24 +52,36 @@ describe('topicService', () => {
     });
   });
 
-  describe('generateTopicFeedUrl', () => {
-    it('should generate feed URL from slug', () => {
-      expect(generateTopicFeedUrl('nvo')).toBe(
-        'https://logicalinvestor.net/forums/topic/nvo/feed/'
+  describe('generateTopicId', () => {
+    it('should build the id from forum key and slug, not title', () => {
+      expect(generateTopicId(FK.membersForum, 'nvo')).toBe('membersForum:nvo');
+    });
+
+    it('should produce different ids for different forums with the same slug', () => {
+      expect(generateTopicId(FK.membersForum, 'nvo')).not.toBe(
+        generateTopicId(FK.stockInsights, 'nvo')
+      );
+    });
+  });
+
+  describe('generateTopicUrl', () => {
+    it('should generate the bare topic URL from slug', () => {
+      expect(generateTopicUrl('nvo')).toBe(
+        'https://logicalinvestor.net/forums/topic/nvo/'
       );
     });
 
     it('should handle complex slugs', () => {
       expect(
-        generateTopicFeedUrl('unsolicited-options-insights-testimonial')
+        generateTopicUrl('unsolicited-options-insights-testimonial')
       ).toBe(
-        'https://logicalinvestor.net/forums/topic/unsolicited-options-insights-testimonial/feed/'
+        'https://logicalinvestor.net/forums/topic/unsolicited-options-insights-testimonial/'
       );
     });
 
     it('should preserve slug as-is', () => {
-      expect(generateTopicFeedUrl('my-topic-slug')).toBe(
-        'https://logicalinvestor.net/forums/topic/my-topic-slug/feed/'
+      expect(generateTopicUrl('my-topic-slug')).toBe(
+        'https://logicalinvestor.net/forums/topic/my-topic-slug/'
       );
     });
   });
@@ -110,7 +122,7 @@ describe('topicService', () => {
       expect(discovered.map(t => t.slug)).toContain('tsla');
     });
 
-    it('should deduplicate topics by name', async () => {
+    it('should deduplicate topics by slug', async () => {
       const items = [
         createFeedItem('NVO', 'nvo'),
         createFeedItem('NVO', 'nvo'),
@@ -122,6 +134,39 @@ describe('topicService', () => {
       expect(discovered).toHaveLength(1);
       expect(discovered[0].name).toBe('NVO');
       expect(discovered[0].slug).toBe('nvo');
+    });
+
+    it('should treat the same title with two different slugs as two distinct topics', async () => {
+      // Title alone is not a stable identity — a moderator edit or an unrelated topic reusing a
+      // title must not collide. Slug (from the URL) is what actually distinguishes them.
+      const items = [
+        createFeedItem('NVO', 'nvo-original'),
+        createFeedItem('NVO', 'nvo-relaunch'),
+      ];
+
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
+
+      expect(discovered).toHaveLength(2);
+      expect(discovered.map(t => t.id).sort()).toEqual([
+        'membersForum:nvo-original',
+        'membersForum:nvo-relaunch',
+      ]);
+    });
+
+    it('should not fork into a second topic when the same slug appears under a changed title', async () => {
+      // The first item encountered for a topicId sets the record (RSS lists items newest-first);
+      // a later item with the same slug but a different title doesn't create a second record.
+      const items = [
+        createFeedItem('NVO', 'nvo'),
+        createFeedItem('NVO (renamed)', 'nvo'),
+      ];
+
+      const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
+
+      expect(discovered).toHaveLength(1);
+      expect(discovered[0].id).toBe('membersForum:nvo');
+      expect(discovered[0].name).toBe('NVO');
+      expect(discovered[0].itemCount).toBe(2);
     });
 
     it('should count items per topic', async () => {
@@ -140,12 +185,12 @@ describe('topicService', () => {
       expect(tslaTopic?.itemCount).toBe(1);
     });
 
-    it('should generate unique topic IDs by forum and name', async () => {
+    it('should generate unique topic IDs by forum and slug', async () => {
       const items = [createFeedItem('NVO', 'nvo')];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
-      expect(discovered[0].id).toBe('membersForum:NVO');
+      expect(discovered[0].id).toBe('membersForum:nvo');
     });
 
     it('should set discoveredAt to current time', async () => {
