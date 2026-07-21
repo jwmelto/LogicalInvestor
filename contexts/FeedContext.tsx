@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { FeedKeys } from '@li/core';
+import { FeedKeys, FEEDKEY_TO_CHANNEL, type Channel } from '@li/core';
 import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedService';
 import { cleanupObsoleteStorage, getForumVisibility, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
@@ -37,7 +37,12 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const foregroundDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastRefreshAtRef = useRef<number>(Date.now());
-  const pushRegisteredRef = useRef<Set<FeedKey>>(new Set());
+  // Keyed by Channel, not FeedKey — membersArea and membersForum both map to the 'members'
+  // channel (see FEEDKEY_TO_CHANNEL), and registering it twice on every cold start was pure
+  // waste: the server-side access check (feedTokenHasAccess) validates against Members Forum
+  // regardless of which FeedKey triggered the call, so both would always succeed or fail
+  // together — the second call was never doing independent work.
+  const pushRegisteredRef = useRef<Set<Channel>>(new Set());
 
   const setFeedUnread = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
     setUnread((prev) => {
@@ -114,14 +119,15 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const feedToken = await getToken();
     if (feedToken) {
       for (const k of keys) {
+        const channel = FEEDKEY_TO_CHANNEL[k];
         // Optional feeds (Stock/Options Insights) return accessible:true with 0 items
         // when the user isn't subscribed — require actual items too, so we don't
         // register push for a forum the user can't read.
-        if (next[k]?.accessible && (next[k]?.items.length ?? 0) > 0 && !pushRegisteredRef.current.has(k)) {
+        if (next[k]?.accessible && (next[k]?.items.length ?? 0) > 0 && !pushRegisteredRef.current.has(channel)) {
           // Only mark registered once the server confirms — an unconfirmed
           // channel is retried on the next refresh instead of silently stuck.
           if (await registerPushChannel(k, feedToken)) {
-            pushRegisteredRef.current.add(k);
+            pushRegisteredRef.current.add(channel);
           }
         }
       }
