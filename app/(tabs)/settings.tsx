@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as Application from 'expo-application';
 import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput } from 'react-native';
 import Slider from '@react-native-community/slider';
@@ -41,9 +41,21 @@ export default function SettingsScreen() {
   const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
   const { triggerRefresh } = useFeed();
   const { setAuthed } = useAuth();
+  const minLengthCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshIntervalCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce window for slider commits: a real drag gesture is rarely a single clean pull to the
+  // target value — users often lift and re-touch a few times while feeling their way to a value.
+  // Each onValueChange resets this timer, so the network/storage write only fires once input has
+  // actually paused for this long, no matter how many touch/lift cycles it took to get there.
+  const SLIDER_COMMIT_DEBOUNCE_MS = 600;
 
   useEffect(() => {
     loadPreferences();
+    return () => {
+      if (minLengthCommitTimer.current) clearTimeout(minLengthCommitTimer.current);
+      if (refreshIntervalCommitTimer.current) clearTimeout(refreshIntervalCommitTimer.current);
+    };
   }, []);
 
   useFocusEffect(
@@ -82,11 +94,15 @@ export default function SettingsScreen() {
     await updatePushSettings({ filter: pushFilter, authors, minLength: pushMinLength });
   }
 
-  // Slider onValueChange fires continuously during drag (dozens of times per gesture) — only
-  // update the live-preview label here. The network/storage write happens once, on release.
-  async function handlePushMinLengthCommit(minLength: number) {
+  // Slider onValueChange fires continuously during drag (dozens of times per gesture) — update
+  // the live-preview label immediately, but debounce the actual write (see
+  // SLIDER_COMMIT_DEBOUNCE_MS) so it only happens once the value has settled.
+  function handlePushMinLengthChange(minLength: number) {
     setPushMinLengthState(minLength);
-    await updatePushSettings({ filter: pushFilter, authors: pushAuthors, minLength });
+    if (minLengthCommitTimer.current) clearTimeout(minLengthCommitTimer.current);
+    minLengthCommitTimer.current = setTimeout(() => {
+      updatePushSettings({ filter: pushFilter, authors: pushAuthors, minLength });
+    }, SLIDER_COMMIT_DEBOUNCE_MS);
   }
 
   async function handleToggleHideSnippet(value: boolean) {
@@ -94,9 +110,12 @@ export default function SettingsScreen() {
     await setHideSnippetOnRead(value);
   }
 
-  async function handleChangeRefreshIntervalCommit(minutes: number) {
+  function handleChangeRefreshInterval(minutes: number) {
     setRefreshIntervalState(minutes);
-    await setRefreshInterval(minutes);
+    if (refreshIntervalCommitTimer.current) clearTimeout(refreshIntervalCommitTimer.current);
+    refreshIntervalCommitTimer.current = setTimeout(() => {
+      setRefreshInterval(minutes);
+    }, SLIDER_COMMIT_DEBOUNCE_MS);
   }
 
   async function handleToggleForumVisibility(forum: 'stockInsights' | 'optionsInsights', value: boolean) {
@@ -205,8 +224,7 @@ export default function SettingsScreen() {
               maximumValue={120}
               step={1}
               value={refreshInterval}
-              onValueChange={setRefreshIntervalState}
-              onSlidingComplete={handleChangeRefreshIntervalCommit}
+              onValueChange={handleChangeRefreshInterval}
               disabled={loading}
               minimumTrackTintColor={c.tint}
               maximumTrackTintColor={c.border}
@@ -259,8 +277,7 @@ export default function SettingsScreen() {
                       maximumValue={500}
                       step={25}
                       value={pushMinLength}
-                      onValueChange={(v) => setPushMinLengthState(Math.round(v))}
-                      onSlidingComplete={(v) => handlePushMinLengthCommit(Math.round(v))}
+                      onValueChange={(v) => handlePushMinLengthChange(Math.round(v))}
                       disabled={loading}
                       minimumTrackTintColor={c.tint}
                       maximumTrackTintColor={c.border}
