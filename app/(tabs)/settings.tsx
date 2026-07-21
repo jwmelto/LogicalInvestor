@@ -82,7 +82,9 @@ export default function SettingsScreen() {
     await updatePushSettings({ filter: pushFilter, authors, minLength: pushMinLength });
   }
 
-  async function handlePushMinLengthChange(minLength: number) {
+  // Slider onValueChange fires continuously during drag (dozens of times per gesture) — only
+  // update the live-preview label here. The network/storage write happens once, on release.
+  async function handlePushMinLengthCommit(minLength: number) {
     setPushMinLengthState(minLength);
     await updatePushSettings({ filter: pushFilter, authors: pushAuthors, minLength });
   }
@@ -92,7 +94,7 @@ export default function SettingsScreen() {
     await setHideSnippetOnRead(value);
   }
 
-  async function handleChangeRefreshInterval(minutes: number) {
+  async function handleChangeRefreshIntervalCommit(minutes: number) {
     setRefreshIntervalState(minutes);
     await setRefreshInterval(minutes);
   }
@@ -203,7 +205,8 @@ export default function SettingsScreen() {
               maximumValue={120}
               step={1}
               value={refreshInterval}
-              onValueChange={handleChangeRefreshInterval}
+              onValueChange={setRefreshIntervalState}
+              onSlidingComplete={handleChangeRefreshIntervalCommit}
               disabled={loading}
               minimumTrackTintColor={c.tint}
               maximumTrackTintColor={c.border}
@@ -256,7 +259,8 @@ export default function SettingsScreen() {
                       maximumValue={500}
                       step={25}
                       value={pushMinLength}
-                      onValueChange={(v) => handlePushMinLengthChange(Math.round(v))}
+                      onValueChange={(v) => setPushMinLengthState(Math.round(v))}
+                      onSlidingComplete={(v) => handlePushMinLengthCommit(Math.round(v))}
                       disabled={loading}
                       minimumTrackTintColor={c.tint}
                       maximumTrackTintColor={c.border}
