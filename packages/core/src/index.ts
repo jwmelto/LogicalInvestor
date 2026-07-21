@@ -142,6 +142,10 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bwe may consider\b|\bwe'?d likely\b/i,             'fail-hypothetical'],
   [/\bif it should\b/i,                                 'fail-hypothetical'],
   [/\bI was (urging|pushing|saying|telling|recommending)\b/i, 'fail-historical'],
+  // ponytail: catches "could either tank... or rally..." two-sided hedges; a genuine
+  // "buy either at $50 or $52" instruction would false-negative here too — narrow further
+  // (e.g. require both sides to end in a parenthetical) if that shows up in practice.
+  [/\b(could|might|may)\s+either\b[\s\S]{0,80}\bor\b/i,       'fail-hypothetical'],
 ];
 
 const POS_PATTERNS: [RegExp, ActionableResult][] = [

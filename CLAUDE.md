@@ -277,7 +277,7 @@ Filters incoming feed items and schedules local notifications via `expo-notifica
 **Key logic**:
 - First run: seeds all current item IDs as "seen" without notifying (flood prevention)
 - Subsequent runs: notifies only for truly new items that pass filters, max 5 per cycle
-- Notification title format: `"[LOCAL] Sean Hyman in EWZ:"` (strips `Reply To:` prefix). The `[LOCAL]`/`[PUSH]` tag lets delivery-channel dedup (below) be visually verified on a real device
+- Notification title format: `"Sean Hyman in EWZ:"` (strips `Reply To:` prefix). No delivery-channel tag — server push (Worker) is the only channel now, local generation was removed in `56abc3d`
 - Local notification is skipped whenever `wouldServerPush()` predicts the Worker's server push already covers that item — one alert per item, not two, on either platform
 - `fireTestNotification()` bypasses seen-ID tracking for dev testing (`__DEV__` gated button in Settings)
 - `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
