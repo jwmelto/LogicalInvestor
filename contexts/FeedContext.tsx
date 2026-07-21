@@ -39,8 +39,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const lastRefreshAtRef = useRef<number>(Date.now());
   // Keyed by Channel: membersArea and membersForum both map to the 'members' channel (see
   // FEEDKEY_TO_CHANNEL), and the server-side access check (feedTokenHasAccess) validates
-  // against Members Forum regardless of which FeedKey triggered the call — so registering
-  // once per channel is sufficient, not once per FeedKey.
+  // against Members Forum regardless of which FeedKey triggered the call.
   const pushRegisteredRef = useRef<Set<Channel>>(new Set());
 
   const setFeedUnread = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
