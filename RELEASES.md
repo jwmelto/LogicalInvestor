@@ -1,5 +1,9 @@
 # Release History
 
+## 0.10.2 — July 2026
+
+- Fixed the notification settings sliders (min content length, feed refresh interval) sending a server update on every drag frame instead of once the value settles — could flood the server with requests during a single adjustment
+
 ## 0.10.1 — July 2026
 
 - Read/unread tracking reworked: unread status for every feed and forum topic is now tracked more reliably, closing gaps where badges could show stale or incorrect state. Note: this is a one-time reset — everyone's read history and topic subscriptions start fresh once on this update
