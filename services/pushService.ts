@@ -98,28 +98,38 @@ export async function registerPushChannel(feedKey: FeedKey, feedToken: string, o
   } catch { return false; /* non-fatal: registration retried on next refresh */ }
 }
 
-// Called by Settings when the user changes the filter tier, author whitelist, or min length.
-// Persists the new values and re-registers every channel the user is enrolled in.
-export async function updatePushSettings(settings: PushFilterSettings): Promise<void> {
+// Called by Settings' Apply button (a deliberate, explicit save — not on every field edit) and by
+// ForumFeed's long-press "add author" action. Re-registers every channel the user is enrolled in
+// and only persists locally once every channel confirms — the Worker's /register writes to KV
+// before responding 'ok', so response.ok is a reliable "it took" signal. There's no separate
+// read-back endpoint available to the client to double-check afterward (/status requires the
+// Worker's server-only secret), so this is the strongest confirmation available.
+// Returns whether every channel confirmed, so the caller can show success/failure and decide
+// whether to treat the edit as saved.
+export async function updatePushSettings(settings: PushFilterSettings): Promise<boolean> {
   try {
     const pushToken = await getExpoPushToken();
-    if (!pushToken) return;
+    if (!pushToken) return false;
     const feedToken = await getToken();
-    if (!feedToken) return;
-    await storageSet(PUSH_FILTER_KEY, settings.filter);
-    await storageSet(PUSH_AUTHORS_KEY, JSON.stringify(settings.authors));
-    await storageSet(PUSH_MIN_LENGTH_KEY, String(settings.minLength));
+    if (!feedToken) return false;
     const channels = await getRegisteredChannels();
-    await Promise.all(
+    const results = await Promise.all(
       channels.map(channel =>
         fetch(`${WORKER_URL}/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: pushToken, channel, filter: settings.filter, authors: settings.authors, minLength: settings.minLength, feed_token: feedToken }),
-        })
+        }).then((res) => res.ok).catch(() => false)
       )
     );
-  } catch { /* non-fatal */ }
+    const allConfirmed = results.every(Boolean);
+    if (allConfirmed) {
+      await storageSet(PUSH_FILTER_KEY, settings.filter);
+      await storageSet(PUSH_AUTHORS_KEY, JSON.stringify(settings.authors));
+      await storageSet(PUSH_MIN_LENGTH_KEY, String(settings.minLength));
+    }
+    return allConfirmed;
+  } catch { return false; }
 }
 
 // Called from ForumFeed's long-press "Add author to alerts" gesture.
