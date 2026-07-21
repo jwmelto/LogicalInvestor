@@ -558,7 +558,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
 
       const messages = toNotify.map((item, i) => ({
         to: bucket.tokens,
-        title: `[PUSH] ${formatTitle(item)}`,
+        title: formatTitle(item),
         body: item.description.slice(0, 150) || 'New post',
         sound: i === 0 ? 'default' : undefined,
       }));
