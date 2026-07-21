@@ -74,7 +74,7 @@ Track planned work, bugs, and open questions as GitHub Issues — not in this fi
   - `@nauverse/expo-cloud-settings` (iCloud KVS sync on iOS)
   - `@react-native-async-storage/async-storage` (fallback for non-iOS)
 - **Data Parsing**: `fast-xml-parser` (RSS/XML feeds)
-- **WebView**: `react-native-webview` (post viewer)
+- **Post Links**: Opened via `Linking.openURL()` in the system default browser, with `feed_token` appended manually (RSS `<link>` values never carry it) — `react-native-webview` remains an installed dependency but has no current usage in app code
 - **UI Components**: Native React Native components with custom theming
 - **Background Tasks**: `expo-background-task` + `expo-task-manager`
 
@@ -185,6 +185,8 @@ All require `?feed_token=<token>` appended. Stock Insights and Options Insights 
 
 Each entry in `FEEDS` includes a `hasSubFeeds` boolean. Feeds with `hasSubFeeds: true` trigger topic discovery via `topicService`.
 
+Each entry also owns its own `isVisible(visibility: ForumVisibility): boolean` method — Members Area/Members Forum always return `true`; Stock/Options Insights defer to the user's stored Settings toggle. A feed answers its own visibility question directly rather than a shared function special-casing every key by name.
+
 **Topic Sub-feeds**: For a topic URL like `https://logicalinvestor.net/forums/topic/nvo/`, the sub-feed is `https://logicalinvestor.net/forums/topic/nvo/feed/`. Derived dynamically in `fetchTopicFeed()` — no hardcoding needed.
 
 **Parsing**: Uses `fast-xml-parser` with config:
@@ -240,7 +242,9 @@ Single store, `scope_guids` (`Record<scopeId, Record<guid, boolean>>`), answers 
 
 **`markFlatFeedSeen(feedKey, items)`**: the flat-feed equivalent — no boundary-walk needed, since there's no per-item fetch cost to save, so every fetch just records its whole window as seen.
 
-**Key Functions**: `hasUnread()`, `isRead()`, `markRead()`, `markAllRead()`, `markScopesSeen()`, `markGuidsRead()`, `markFlatFeedSeen()`, `detectForumUnread()`, `viewScope()`, `getAllScopes()`
+**`topicUnreadForForum(forumKey, scopes, subs)`**: a pure, synchronous helper deriving every subscribed topic's `hasUnread` for a forum directly from an already-loaded `scopes`/`subs` snapshot — no I/O, no topic-registry read. Which topics belong to a forum is derived from scanning `scopes`' own keys for the `"{forumKey}:"` prefix, not a separate `getTopicsForForum()` lookup. Shared by both `FeedContext.tsx`'s cold-start seed and `app/(tabs)/index.tsx`'s landing-tab decision, so the same derivation isn't duplicated across the two.
+
+**Key Functions**: `hasUnread()`, `isRead()`, `markRead()`, `markAllRead()`, `markScopesSeen()`, `markGuidsRead()`, `markFlatFeedSeen()`, `detectForumUnread()`, `topicUnreadForForum()`, `viewScope()`, `getAllScopes()`
 
 #### `subscriptionService.ts` - Topic Subscriptions
 
@@ -257,6 +261,8 @@ Discovers forum topics from RSS feed items, persists them across sessions. Topic
 #### `backgroundFetchService.ts` - Background Refresh
 
 Registers an `expo-background-task` task that fetches all feeds while the app is closed, then writes straight into the same `scope_guids` store `readStateService.ts` owns (`markFlatFeedSeen` for the flat feed, `detectForumUnread` per topic-based forum) — there's no separate cached badge snapshot; the next foreground open's cold-start seed (`FeedContext.tsx`) reads `scope_guids` directly. This task is a best-effort supplement only, not load-bearing — `expo-background-task`'s 15-minute minimum is non-deterministic on iOS, and the primary detection trigger is `FeedContext.tsx`'s foreground refresh cycle.
+
+Skips detection entirely for a forum currently hidden in Settings (`FEEDS[k].isVisible(visibility)`) — no point spending a bounded per-topic deep-dive fetch on a badge nobody can see. The top-level fetch itself still runs for every feed regardless, so a re-enabled forum's data isn't stale.
 
 **Note**: Background tasks only run on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
 
@@ -311,6 +317,8 @@ Central store for per-feed `hasUnread` booleans (`unread`) and per-topic boolean
 
 **Badges**: On mount, a cold-start seed effect computes every badge — flat feed and every subscribed topic in every forum — directly from the local `scope_guids` store (`readStateService.ts`), with zero network calls, before the first fetch even lands. After each fetch, the flat feed calls `markFlatFeedSeen` + `hasUnread`; each topic-based forum calls `detectForumUnread` and merges the result into `topicUnread`. A forum's own badge is always the OR across its topics' flags, kept in sync by a dedicated effect. `refreshScopeUnread(feedKey, scopeId)` lets `ForumFeed` re-derive a single scope's badge immediately after marking something read, rather than waiting for the next fetch cycle.
 
+Detection (`markFlatFeedSeen`/`detectForumUnread`) is skipped entirely for a forum currently hidden via Settings' visibility toggle (`FEEDS[k].isVisible(visibility)`) — the top-level fetch itself still runs for every feed regardless, so a re-enabled forum's data isn't stale, only its detection work was deferred while hidden.
+
 **Foreground refresh timer**:
 - Fires every N minutes (configured via `getRefreshInterval()`, default 30 min)
 - Increments `refreshSignal`; all mounted `ForumFeed` components re-fetch when signal changes
@@ -321,6 +329,8 @@ Central store for per-feed `hasUnread` booleans (`unread`) and per-topic boolean
 #### `ForumVisibilityContext.tsx` - Forum Tab Visibility
 
 Persists which optional forum tabs (Stock Insights, Options Insights) are enabled. Drives `href: null` in the tab layout to hide disabled tabs entirely.
+
+Since `FeedContext` skips detection work for a hidden forum, its badge would otherwise show stale state (whatever was last computed before it was hidden) for as long as it stays disabled. `app/(tabs)/settings.tsx`'s toggle handler calls `FeedContext`'s `triggerRefresh()` immediately whenever a forum is turned back **on** — turning one off doesn't refresh, since there's nothing new to compute for a forum about to stop being shown.
 
 ### UI Structure
 
@@ -336,13 +346,13 @@ Persists which optional forum tabs (Stock Insights, Options Insights) are enable
 **Additional Screens**:
 - `login.tsx` — Authentication screen
 - `modal.tsx` — Modal presentation
-- `post.tsx` — WebView post detail viewer (headerShown: true, loads authenticated URL with token via `URL.searchParams.set()`)
 
 **`ForumFeed` component** (`components/ForumFeed.tsx`):
 The core UI component. Handles flat feeds (Members Area) and topic-based feeds (forum tabs).
 - Header row shows forum title + "Mark all read" button when unread items exist
 - Flat feeds: individual `[new]` badges are tappable to mark that post read without opening it
 - Topic feeds: hierarchical display (Topic → posts), tappable `[new]` badge per topic, topic preview snippet (latest post) shown only when that topic `hasUnread`
+- Tapping a post calls `openPostLink()`, which appends `feed_token` to the item's raw RSS `<link>` (via `URL.searchParams.set()`) before opening it with `Linking.openURL()` — the system's default browser, not an in-app viewer
 - Pull-to-refresh triggers `triggerRefresh()` on the context to reset the timer
 
 ### Theming
@@ -378,7 +388,7 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Foreground refresh timer (configurable interval, pauses when backgrounded, resumes correctly on return)
 - ✅ Background fetch (physical device only) — keeps the shared `scope_guids` read-state store fresh as a best-effort supplement to the foreground detection cycle
 - ✅ Pull-to-refresh resets the foreground timer
-- ✅ Post detail viewer with WebView
+- ✅ Post links open in the system browser with `feed_token` appended
 - ✅ Dark/light mode support
 - ✅ Cross-platform (iOS with iCloud sync, Android, Web)
 - ✅ Inaccessible feeds filtered out (Options Insights hidden if no access)
@@ -396,8 +406,6 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - `ld: ignoring duplicate libraries: '-lc++'` — Harmless Xcode 16 warning
 
 **Behavior Notes**:
-- reCAPTCHA widget may appear in WebView occasionally — passes automatically in testing
-- WebView correctly navigates to post anchor (e.g. `#post-287927`) automatically
 - Optional subscription feeds (Stock Insights, Options Insights) return 0 items if user lacks access — correct behavior, not a bug
 - Background fetch does not run in simulator — requires physical device
 
@@ -417,7 +425,7 @@ Run on a physical device before each TestFlight submission.
 - [ ] Posts marked read persist after app restart
 - [ ] "Mark all read" clears all badges in that feed
 - [ ] Tapping a `[new]` badge on a flat-feed post marks it read without opening it
-- [ ] Tapping a post opens the WebView with correct content and scroll-to-anchor
+- [ ] Tapping a post opens it in the system browser, authenticated (`feed_token` present in the URL)
 
 **Topics (forum feeds)**
 - [ ] Topics appear and are sorted by most recently active
@@ -426,11 +434,12 @@ Run on a physical device before each TestFlight submission.
 - [ ] Tapping topic `[new]` badge marks topic read without navigating away
 
 **Tab badges**
-- [ ] Unread badges appear on all tabs with unread content on launch (seeded from cache)
+- [ ] Unread badges appear on all tabs with unread content on launch (seeded locally from `scope_guids`, before the first network fetch lands)
 - [ ] Badges clear when feed is viewed and posts are marked read
 
 **Settings**
 - [ ] Forum visibility toggles hide/show Stock Insights and Options Insights tabs
+- [ ] Re-enabling a hidden forum shows its correct badge promptly (triggers an immediate refresh), not stale state from before it was hidden
 - [ ] Refresh interval change takes effect on next timer fire
 - [ ] Notification settings: enable/disable, author filter add/remove, min length slider
 - [ ] Long-press on a post adds its author to the notification whitelist
@@ -460,7 +469,7 @@ Run on a physical device before each TestFlight submission.
 - **Batch writes**: When marking multiple items read, always use `markAllRead()` — concurrent `markRead()` calls race on the same storage key
 - **Read State**: Tracked via `readStateService`'s unified `scope_guids` store; `hasUnread` is boolean everywhere (no counts) and updates in real time as posts are viewed
 - **Feed Organization**: Uses `FeedKey` type to ensure type-safe feed references throughout app
-- **WebView Auth**: Post URLs include token via `URL.searchParams.set('feed_token', token)`
+- **Post Link Auth**: RSS `<link>` values never carry `feed_token` — `ForumFeed.tsx`'s `openPostLink()` appends it via `URL.searchParams.set('feed_token', token)` before opening the link with `Linking.openURL()` in the system browser (not an in-app WebView)
 - **State updaters**: Do not perform async side effects (e.g. storage writes) inside React `setState` updater functions — run them before the state update and await completion
 
 ## File Structure
@@ -470,7 +479,6 @@ Run on a physical device before each TestFlight submission.
 ├── app/
 │   ├── _layout.tsx          ← Root layout, Stack.Protected auth gate, provider tree
 │   ├── login.tsx            ← Login screen
-│   ├── post.tsx             ← WebView post viewer
 │   └── (tabs)/
 │       ├── _layout.tsx      ← Tab bar with badges; per-forum tabs
 │       ├── index.tsx        ← Redirects to members-area
