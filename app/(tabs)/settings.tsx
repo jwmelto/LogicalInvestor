@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import * as Application from 'expo-application';
 import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput } from 'react-native';
 import Slider from '@react-native-community/slider';
@@ -41,6 +41,7 @@ export default function SettingsScreen() {
   // a single tier-button tap is just as capable of firing an immediate registration as a drag.
   const [appliedPush, setAppliedPush] = useState<PushFilterSettings>({ filter: 'actionable', authors: ['Sean'], minLength: 200 });
   const [applyStatus, setApplyStatus] = useState<'idle' | 'applying' | 'error'>('idle');
+  const [appliedRefreshInterval, setAppliedRefreshInterval] = useState(30);
   const [newAuthor, setNewAuthor] = useState('');
   const [expandedNotifications, setExpandedNotifications] = useState(true);
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
@@ -48,24 +49,15 @@ export default function SettingsScreen() {
   const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
   const { triggerRefresh } = useFeed();
   const { setAuthed } = useAuth();
-  const refreshIntervalCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Debounce window for the refresh-interval slider: a real drag gesture is rarely a single clean
-  // pull to the target value, so this waits out a pause rather than writing on every frame. This
-  // one only ever touches local storage (no server round-trip), so it stays debounced rather than
-  // gated behind Apply like the push-notification controls above.
-  const SLIDER_COMMIT_DEBOUNCE_MS = 1500;
 
   const pushSettingsDirty =
     pushFilter !== appliedPush.filter ||
     pushMinLength !== appliedPush.minLength ||
     JSON.stringify(pushAuthors) !== JSON.stringify(appliedPush.authors);
+  const refreshIntervalDirty = refreshInterval !== appliedRefreshInterval;
 
   useEffect(() => {
     loadPreferences();
-    return () => {
-      if (refreshIntervalCommitTimer.current) clearTimeout(refreshIntervalCommitTimer.current);
-    };
   }, []);
 
   useFocusEffect(
@@ -87,6 +79,7 @@ export default function SettingsScreen() {
 
     const interval = await getRefreshInterval();
     setRefreshIntervalState(interval);
+    setAppliedRefreshInterval(interval);
 
     const allTopics = await getTopics();
     const subscriptions = await getAllTopicSubscriptions();
@@ -129,10 +122,11 @@ export default function SettingsScreen() {
 
   function handleChangeRefreshInterval(minutes: number) {
     setRefreshIntervalState(minutes);
-    if (refreshIntervalCommitTimer.current) clearTimeout(refreshIntervalCommitTimer.current);
-    refreshIntervalCommitTimer.current = setTimeout(() => {
-      setRefreshInterval(minutes);
-    }, SLIDER_COMMIT_DEBOUNCE_MS);
+  }
+
+  async function handleApplyRefreshInterval() {
+    await setRefreshInterval(refreshInterval);
+    setAppliedRefreshInterval(refreshInterval);
   }
 
   async function handleToggleForumVisibility(forum: 'stockInsights' | 'optionsInsights', value: boolean) {
@@ -246,6 +240,14 @@ export default function SettingsScreen() {
               minimumTrackTintColor={c.tint}
               maximumTrackTintColor={c.border}
             />
+            {refreshIntervalDirty && (
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: c.tint, marginTop: 12 }]}
+                onPress={handleApplyRefreshInterval}
+              >
+                <Text style={styles.buttonText}>Apply</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
