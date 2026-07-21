@@ -1,5 +1,12 @@
 # Release History
 
+## 0.10.1 — July 2026
+
+- Read/unread tracking reworked: unread status for every feed and forum topic is now tracked more reliably, closing gaps where badges could show stale or incorrect state. Note: this is a one-time reset — everyone's read history and topic subscriptions start fresh once on this update
+- Fixed a false-positive push alert on hedge-style posts (e.g. "could either drop... or rally...") being flagged as an actionable trade call when it wasn't one
+- Notification settings screen no longer shows the min-length/author controls under tiers where they don't apply
+- Improved push notification reliability and server efficiency (registration cleanup, reduced duplicate delivery risk)
+
 ## 0.10.0 — July 2026
 
 - Notification filters redesigned: choose one of three alert tiers per device — Members Area, Actionable trade calls only, or everything past a length threshold — replacing the old single global author/length filter. Server-side push now applies the exact same rules as in-app filtering
