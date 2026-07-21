@@ -45,10 +45,12 @@ export default function SettingsScreen() {
   const refreshIntervalCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Debounce window for slider commits: a real drag gesture is rarely a single clean pull to the
-  // target value — users often lift and re-touch a few times while feeling their way to a value.
-  // Each onValueChange resets this timer, so the network/storage write only fires once input has
-  // actually paused for this long, no matter how many touch/lift cycles it took to get there.
-  const SLIDER_COMMIT_DEBOUNCE_MS = 600;
+  // target value — users often lift and re-touch several times, with pauses in between, while
+  // feeling their way to a value. Each onValueChange resets this timer, so the network/storage
+  // write only fires once input has actually paused for this long. Generous on purpose: nothing
+  // reads this value until the user navigates away from Settings, so there's no responsiveness
+  // cost to waiting out a longer pause instead of firing early.
+  const SLIDER_COMMIT_DEBOUNCE_MS = 1500;
 
   useEffect(() => {
     loadPreferences();
