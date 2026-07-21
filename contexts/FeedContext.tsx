@@ -37,11 +37,10 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const foregroundDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastRefreshAtRef = useRef<number>(Date.now());
-  // Keyed by Channel, not FeedKey — membersArea and membersForum both map to the 'members'
-  // channel (see FEEDKEY_TO_CHANNEL), and registering it twice on every cold start was pure
-  // waste: the server-side access check (feedTokenHasAccess) validates against Members Forum
-  // regardless of which FeedKey triggered the call, so both would always succeed or fail
-  // together — the second call was never doing independent work.
+  // Keyed by Channel: membersArea and membersForum both map to the 'members' channel (see
+  // FEEDKEY_TO_CHANNEL), and the server-side access check (feedTokenHasAccess) validates
+  // against Members Forum regardless of which FeedKey triggered the call — so registering
+  // once per channel is sufficient, not once per FeedKey.
   const pushRegisteredRef = useRef<Set<Channel>>(new Set());
 
   const setFeedUnread = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
