@@ -249,6 +249,13 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     openPostLink(item.link);
   }
 
+  function confirmUnsubscribeTopic(topicId: string, topicName: string) {
+    Alert.alert('Silence Topic?', `You won't see new posts in "${topicName}" until you re-subscribe.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Silence', style: 'destructive', onPress: () => unsubscribeTopic(topicId) },
+    ]);
+  }
+
   async function unsubscribeTopic(topicId: string) {
     try {
       await setTopicSubscription(topicId, false);
@@ -391,18 +398,20 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         </TouchableOpacity>
                         <View style={styles.topicHeaderRight}>
                           {topicHasUnread && (
-                            <TouchableOpacity onPress={async () => {
-                              await markTopicAsRead(topicSection.topic.id);
-                              // Collapse the topic
-                              if (topicSection.expanded) {
-                                toggleTopic(topicSection.topic.id);
-                              }
-                            }}>
+                            <TouchableOpacity
+                              hitSlop={{ top: 12, bottom: 12, left: 12, right: 0 }}
+                              onPress={async () => {
+                                await markTopicAsRead(topicSection.topic.id);
+                                // Collapse the topic
+                                if (topicSection.expanded) {
+                                  toggleTopic(topicSection.topic.id);
+                                }
+                              }}>
                               <Text style={[styles.newIndicator, { color: c.newBadge }]}>[new]</Text>
                             </TouchableOpacity>
                           )}
                           <TouchableOpacity
-                            onPress={() => unsubscribeTopic(topicSection.topic.id)}
+                            onPress={() => confirmUnsubscribeTopic(topicSection.topic.id, topicSection.topic.name)}
                             style={styles.unsubscribeButton}
                           >
                             <Text style={[styles.unsubscribeText, { color: c.textMuted }]}>✕</Text>
