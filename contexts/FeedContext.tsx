@@ -28,6 +28,13 @@ const FeedContext = createContext<FeedContextType | undefined>(undefined);
 // markRead storage writes complete before we re-fetch and recompute badges.
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
+// accessible alone isn't sufficient — Stock/Options Insights return accessible:true with 0 items
+// when the user isn't subscribed (Members Area is the one exception, always returning items
+// regardless of token validity, so it never fails this check).
+function isSubscribed(result: FeedResult | undefined): boolean {
+  return !!result?.accessible && (result?.items.length ?? 0) > 0;
+}
+
 export function FeedProvider({ children }: { children: React.ReactNode }) {
   const { authed } = useAuth();
   const [feedResults, setFeedResults] = useState<FeedResults>({});
@@ -100,7 +107,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     await Promise.all(keys.map(async (k) => {
       if (!FEEDS[k].isVisible(visibility)) return;
       const result = next[k]!;
-      if (!result.accessible) { setFeedUnread(k, false); return; }
+      if (!isSubscribed(result)) { setFeedUnread(k, false); return; }
 
       if (!FEEDS[k].hasSubFeeds) {
         await markFlatFeedSeen(k, result.items);
@@ -116,11 +123,9 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     const feedToken = await getToken();
     if (feedToken) {
       for (const k of keys) {
+        if (!FEEDS[k].isVisible(visibility)) continue;
         const channel = FEEDKEY_TO_CHANNEL[k];
-        // Optional feeds (Stock/Options Insights) return accessible:true with 0 items
-        // when the user isn't subscribed — require actual items too, so we don't
-        // register push for a forum the user can't read.
-        if (next[k]?.accessible && (next[k]?.items.length ?? 0) > 0 && !pushRegisteredRef.current.has(channel)) {
+        if (isSubscribed(next[k]) && !pushRegisteredRef.current.has(channel)) {
           // Only mark registered once the server confirms — an unconfirmed
           // channel is retried on the next refresh instead of silently stuck.
           if (await registerPushChannel(k, feedToken)) {
