@@ -28,8 +28,6 @@ const FeedContext = createContext<FeedContextType | undefined>(undefined);
 // markRead storage writes complete before we re-fetch and recompute badges.
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
-// Only checks item count — feedService's fetchFeed() only ever returns accessible:false
-// alongside items:[], so accessible can't independently change this result.
 function isSubscribed(result: FeedResult | undefined): boolean {
   return (result?.items.length ?? 0) > 0;
 }

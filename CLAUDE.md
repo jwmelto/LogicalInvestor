@@ -198,10 +198,10 @@ const parser = new XMLParser({
 ```
 Parse path: `parsed?.rss?.channel?.item`. Handle both single items and arrays (wrap single item in array).
 
-**Error Handling**: The `response.status === 401/403 → accessible: false` branch in `fetchSingleFeed()` is defensive code, not the real mechanism — verified against the live server, all four feed URLs return HTTP 200 regardless of token validity (invalid/missing `feed_token` never triggers a 401/403 on this WordPress install). The actual signal for "no access" is **zero items returned**: Members Forum, Stock Insights, and Options Insights all return `<item>`-less RSS with a bad or missing token. Members Area is the exception — it always returns items (only the content snippet is paywalled) — so it's structurally incapable of signaling a dead token; this is also why Stock/Options Insights returning 0 items is treated as "not subscribed" rather than an error (see below). Non-200 responses (network errors, 5xx) still return `accessible: true` with an optional `error` message.
+**Error Handling**: The real "no access" signal is **zero items returned**: Members Forum, Stock Insights, and Options Insights all return `<item>`-less RSS with a bad or missing token. Members Area is the exception — it always returns items (only the content snippet is paywalled) — so it's structurally incapable of signaling a dead token; this is also why Stock/Options Insights returning 0 items is treated as "not subscribed" rather than an error (see below). `fetchSingleFeed()` previously also tracked a separate `accessible` flag off `response.status === 401/403`, but that branch was dead code — verified against the live server, all four feed URLs return HTTP 200 regardless of token validity — and was removed; `FeedResult` now carries only `items` and an optional `error` (set for non-200 responses and network failures).
 
 **Key Functions**: `fetchAllFeeds()`, `fetchSingleFeed()`, `fetchTopicFeed()`  
-**Return Shape**: `FeedResult` with items array, accessibility flag, optional error
+**Return Shape**: `FeedResult` with items array, optional error
 
 **Note on REST API**: bbPress intentionally does not set `show_in_rest: true`. REST API is useless for forum topic discovery.
 
@@ -464,7 +464,7 @@ Run on a physical device before each TestFlight submission.
 - **ESLint**: Uses expo config, ignores `/dist/*` directory
 - **Token Management**: Feed token is app-level state, not synced per-feed
 - **XML Parsing**: Handles both single items and arrays in RSS channels
-- **Error States**: FeedService checks HTTP 401/403 defensively, but the live server never returns them — the real "no access" signal is zero items in the response (see Feed Aggregation → Error Handling above). Non-200 responses return `error`.
+- **Error States**: The real "no access" signal is zero items in the response (see Feed Aggregation → Error Handling above) — FeedService no longer tracks a separate accessibility flag. Non-200 responses return `error`.
 - **Async Storage**: All storage operations are async; no synchronous access patterns
 - **Batch writes**: When marking multiple items read, always use `markAllRead()` — concurrent `markRead()` calls race on the same storage key
 - **Read State**: Tracked via `readStateService`'s unified `scope_guids` store; `hasUnread` is boolean everywhere (no counts) and updates in real time as posts are viewed
