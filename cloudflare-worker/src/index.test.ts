@@ -335,10 +335,10 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: 7 * 60 * 60 * 24 });
   });
 
-  it('lowercases authors before storing', async () => {
+  it('lowercases and trims authors before storing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['Sean Hyman'], minLength: 0, feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });

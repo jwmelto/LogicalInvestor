@@ -58,8 +58,7 @@ device's own `authors` whitelist.
 
 ## Author matching
 
-Each author is trimmed of leading/trailing whitespace when added to a device's whitelist.
-The Worker lowercases the whole whitelist when the device registers.
+The Worker trims and lowercases each author when the device registers, regardless of what the client already did.
 A whitelist entry matches when the post's author contains it as a substring, not an exact match or regex.
 An empty whitelist is a wildcard — it matches every author.
 

@@ -186,9 +186,7 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// actionableAuthors is asserted to be lowercase. A negative-pattern match disqualifies this
-// regardless of tier — 'length' doesn't get actionable-quality content through this path, it
-// gets it through TIER_MATCHERS.length's own separate isActionablePost() call below.
+// actionableAuthors is asserted to be lowercase.
 function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
   const text = item.content ?? '';
   const author = (item.author ?? '').toLowerCase();
