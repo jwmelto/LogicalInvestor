@@ -28,10 +28,6 @@ const FeedContext = createContext<FeedContextType | undefined>(undefined);
 // markRead storage writes complete before we re-fetch and recompute badges.
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
-function isSubscribed(result: FeedResult | undefined): boolean {
-  return (result?.items.length ?? 0) > 0;
-}
-
 export function FeedProvider({ children }: { children: React.ReactNode }) {
   const { authed } = useAuth();
   const [feedResults, setFeedResults] = useState<FeedResults>({});
@@ -104,7 +100,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     await Promise.all(keys.map(async (k) => {
       if (!FEEDS[k].isVisible(visibility)) return;
       const result = next[k]!;
-      if (!isSubscribed(result)) { setFeedUnread(k, false); return; }
+      if (!result.isSubscribed()) { setFeedUnread(k, false); return; }
 
       if (!FEEDS[k].hasSubFeeds) {
         await markFlatFeedSeen(k, result.items);
@@ -122,7 +118,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       for (const k of keys) {
         if (!FEEDS[k].isVisible(visibility)) continue;
         const channel = FEEDKEY_TO_CHANNEL[k];
-        if (isSubscribed(next[k]) && !pushRegisteredRef.current.has(channel)) {
+        if ((next[k]?.isSubscribed() ?? false) && !pushRegisteredRef.current.has(channel)) {
           // Only mark registered once the server confirms — an unconfirmed
           // channel is retried on the next refresh instead of silently stuck.
           if (await registerPushChannel(k, feedToken)) {

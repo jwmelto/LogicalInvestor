@@ -57,6 +57,13 @@ export interface FeedResult {
   feedKey: FeedKey;
   items: RssItem[];
   error?: string;
+  // Zero items with no fetch error is unconditional proof of no access — the site's RSS always
+  // returns a forum's last 25 posts to anyone with real access.
+  isSubscribed(): boolean;
+}
+
+function feedResult(feedKey: FeedKey, items: RssItem[], error?: string): FeedResult {
+  return { feedKey, items, error, isSubscribed: () => items.length > 0 };
 }
 
 async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
@@ -68,7 +75,7 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
     const response = await fetch(url);
 
     if (!response.ok) {
-      return { feedKey, items: [], error: `HTTP ${response.status}` };
+      return feedResult(feedKey, [], `HTTP ${response.status}`);
     }
 
     const xml = await response.text();
@@ -83,9 +90,9 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
       }
     }
 
-    return { feedKey, items };
+    return feedResult(feedKey, items);
   } catch (e: any) {
-    return { feedKey, items: [], error: e.message };
+    return feedResult(feedKey, [], e.message);
   }
 }
 

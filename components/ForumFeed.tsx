@@ -40,6 +40,7 @@ interface SectionState {
   topics: TopicSection[];
   loading: boolean;
   error?: string;
+  isSubscribed(): boolean;
 }
 
 async function getTopicExpandedStates(feedKey: FeedKey): Promise<Record<string, boolean>> {
@@ -97,6 +98,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       topics: topicSections,
       loading: false,
       error: result.error,
+      isSubscribed: result.isSubscribed,
     };
   }
 
@@ -342,9 +344,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
-  // Zero items with no fetch error is unconditional proof of no access — the site's RSS always
-  // returns the last 25 posts to anyone with real access.
-  if (section.items.length === 0 && !section.error) {
+  if (!section.isSubscribed() && !section.error) {
     return (
       <View style={[styles.center, { backgroundColor: c.bg }]}>
         <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>
