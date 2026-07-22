@@ -91,6 +91,11 @@ describe('matchesFilter', () => {
       expect(matchesFilter(post, 'actionable', [], MIN, ['joe blow'])).toBe(true);
     });
 
+    it("a device's personal author whitelist does not restrict the actionable tier", () => {
+      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longWithSignal });
+      expect(matchesFilter(post, 'actionable', ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
+
     it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
       const starred = item(feedKey, { title: '*AAPL Trade', description: longWithSignal });
       const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });

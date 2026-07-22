@@ -56,16 +56,18 @@ author list or tier — a narrow `authors` whitelist (e.g. `['herman']`) never
 silences it. The only way to stop Members Area alerts is to unregister the
 device (`/unregister`); there is no separate "off" setting.
 
-## `minVisibleTier`
+## `TIER_MATCHERS`
+
+Each tier owns its own matcher, keyed by `ContentFilter` — the same pattern
+`FEEDS[k].isVisible()` uses per feed, rather than one function
+special-casing every tier by name:
 
 ```
-minVisibleTier(item, minLength, actionableAuthors):
-  if feedKey === membersArea: return 0
-  isActionableAuthor = item.author in actionableAuthors
-  topicPass = (stock/options) ? title.startsWith('*') : true
-  actionable = isActionableAuthor && topicPass && !negativePatternMatch && positivePatternMatch
-  if actionable: return 1
-  return (length >= minLength) ? 2 : Infinity
+members:    () => false   // non-Members-Area content never qualifies; Members Area itself
+                           // is handled unconditionally in matchesFilter, before tier dispatch
+actionable: isActionablePost(item, actionableAuthors)
+length:     authorMatches(item.author, authors)
+              && (isActionablePost(item, actionableAuthors) || content.length >= minLength)
 ```
 
 `actionableAuthors` is who can trigger the `actionable` tier at all — a
@@ -73,17 +75,18 @@ pattern match from anyone else (e.g. a reply repeating or joking about
 Sean's language) isn't a real trade call. It's a parameter, not a hardcoded
 constant: the Worker reads it from `env.ACTIONABLE_AUTHORS` (comma-separated,
 default `"Sean Hyman"`, same pattern as its other tunables) and passes it
-into `matchesFilter`/`minVisibleTier`. It's shared by every device, not a
-per-device value — independent of a device's own `authors` whitelist, which
-`matchesFilter` applies separately on top of every tier: a Sean actionable
-post still needs to pass a device's whitelist like anything else, and a
-non-Sean post that a device does want to hear from can still surface at
-`length` if it's long enough — it just never reaches `actionable`.
+into `matchesFilter`. It's shared by every device, not a per-device value.
+
+**The `actionable` tier is gated solely by `actionableAuthors` — a device's
+own `authors` whitelist does not additionally restrict it.** This was
+interactively designed out after an earlier version applied both; a device's
+whitelist only matters at the `length` tier. A non-Sean post that a device's
+whitelist does want to hear from can still surface at `length` if it's long
+enough — it just never reaches `actionable`, regardless of whitelist.
 
 A negative-pattern match disqualifies `actionable` only — a long-enough
-negative-pattern post still surfaces at `length`. `Infinity` means "not
-visible at any tier, at this device's minLength"; it's parameterized per
-device, not a fixed veto on the content.
+negative-pattern post still surfaces at `length` (via the plain length
+check, since `isActionablePost` fails it there too).
 
 ## Author matching
 

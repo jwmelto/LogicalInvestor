@@ -11,8 +11,6 @@ export const FILTER_TIERS = ['members', 'actionable', 'length'] as const;
 
 export type ContentFilter = typeof FILTER_TIERS[number];
 
-const FILTER_TIER_RANK = Object.fromEntries(FILTER_TIERS.map((tier, rank) => [tier, rank])) as Record<ContentFilter, number>;
-
 export const FeedKeys = {
   membersArea:     'membersArea',
   membersForum:    'membersForum',
@@ -188,21 +186,16 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// Ordinal "how loose a device's tier needs to be to see this item." A negative-pattern match
-// only disqualifies 'actionable', not 'length'. Infinity = not visible at any tier, at this
-// minLength.
-//
-// actionableAuthors is asserted to be lowercase.
-export function minVisibleTier(item: FilterItem, minLength: number, actionableAuthors: string[]): number {
-  if (item.feedKey === FeedKeys.membersArea) return FILTER_TIER_RANK.members;
+// actionableAuthors is asserted to be lowercase. A negative-pattern match disqualifies this
+// regardless of tier — 'length' doesn't get actionable-quality content through this path, it
+// gets it through TIER_MATCHERS.length's own separate isActionablePost() call below.
+function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
   const text = item.content ?? '';
   const author = (item.author ?? '').toLowerCase();
   const isActionableAuthor = actionableAuthors.some((a) => author.includes(a));
   const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
   const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
-  const actionable = isActionableAuthor && topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
-  if (actionable) return FILTER_TIER_RANK.actionable;
-  return text.length >= minLength ? FILTER_TIER_RANK.length : Infinity;
+  return isActionableAuthor && topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
 }
 
 // Empty authors list = no author restriction. `authors` is asserted to be lowercase.
@@ -212,8 +205,23 @@ export function authorMatches(author: string | undefined, authors: string[]): bo
   return authors.some((f) => a.includes(f));
 }
 
-// Members Area is unconditional — no author or content check.
+type TierMatcher = (item: FilterItem, authors: string[], minLength: number, actionableAuthors: string[]) => boolean;
+
+// Each tier owns its own answer to "does this item qualify," the same way FEEDS[k].isVisible()
+// answers visibility per feed rather than one function special-casing every key. Members Area
+// itself is handled once, in matchesFilter's bypass below, before any of these run.
+const TIER_MATCHERS: Record<ContentFilter, TierMatcher> = {
+  members: () => false,
+  actionable: (item, _authors, _minLength, actionableAuthors) => isActionablePost(item, actionableAuthors),
+  // 'length' is a strict superset of 'actionable': anything actionable also qualifies here, in
+  // addition to merely-long content. The personal whitelist applies only at this tier.
+  length: (item, authors, minLength, actionableAuthors) =>
+    authorMatches(item.author, authors) && (isActionablePost(item, actionableAuthors) || (item.content ?? '').length >= minLength),
+};
+
+// Members Area is unconditional — no author or content check. Every other tier delegates to its
+// own matcher in TIER_MATCHERS.
 export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, actionableAuthors: string[]): boolean {
   if (item.feedKey === FeedKeys.membersArea) return true;
-  return authorMatches(item.author, authors) && FILTER_TIER_RANK[filter] >= minVisibleTier(item, minLength, actionableAuthors);
+  return TIER_MATCHERS[filter](item, authors, minLength, actionableAuthors);
 }

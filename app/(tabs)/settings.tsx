@@ -50,7 +50,7 @@ export default function SettingsScreen() {
   const { triggerRefresh } = useFeed();
   const { setAuthed } = useAuth();
 
-  // minLength only affects delivery under the 'length' tier (see minVisibleTier in @li/core).
+  // minLength only affects delivery under the 'length' tier (see TIER_MATCHERS in @li/core).
   const pushSettingsDirty =
     pushFilter !== appliedPush.filter ||
     (pushFilter === 'length' && pushMinLength !== appliedPush.minLength) ||

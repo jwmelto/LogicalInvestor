@@ -582,4 +582,4 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
 }
 
-export { matchesFilter, minVisibleTier, stripReplyPrefix } from '@li/core';
+export { matchesFilter, stripReplyPrefix } from '@li/core';
