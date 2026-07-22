@@ -20,7 +20,6 @@ import { getAllTopicSubscriptions, setTopicSubscription } from '../services/subs
 import { useFeed } from '../contexts/FeedContext';
 import { getToken } from '../services/authService';
 import { addPushAuthor } from '../services/pushService';
-import { reportMissedAlert, type ReportableItem } from '../services/reportService';
 import { useColorScheme } from '../hooks/use-color-scheme';
 import { Palette } from '../constants/theme';
 
@@ -302,12 +301,11 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     }
   }
 
-  function showPostMenu(item: ReportableItem) {
+  function showPostMenu(item: { title: string; author: string }) {
     const name = item.author;
     Alert.alert(name, item.title, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Add author to alerts', onPress: () => addPushAuthor(name) },
-      { text: 'Report: missed alert', onPress: () => reportMissedAlert(item) },
     ]);
   }
 
@@ -426,7 +424,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                             await markTopicAsRead(topicSection.topic.id);
                             openPostLink(topicSection.topic.latestItemLink);
                           }}
-                          onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor, link: topicSection.topic.latestItemLink, description: topicSection.topic.latestExcerpt })}
+                          onLongPress={() => showPostMenu({ title: topicSection.topic.name, author: topicSection.topic.latestAuthor })}
                         >
                           <Text style={[styles.topicPreviewMeta, { color: c.textMuted }]}>
                             {topicSection.topic.latestAuthor} · {new Date(topicSection.topic.lastUpdatedAt).toLocaleDateString('en-US', {
