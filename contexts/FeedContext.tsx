@@ -28,11 +28,10 @@ const FeedContext = createContext<FeedContextType | undefined>(undefined);
 // markRead storage writes complete before we re-fetch and recompute badges.
 const FOREGROUND_REFRESH_DELAY_MS = 1500;
 
-// accessible alone isn't sufficient — Stock/Options Insights return accessible:true with 0 items
-// when the user isn't subscribed (Members Area is the one exception, always returning items
-// regardless of token validity, so it never fails this check).
+// Only checks item count — feedService's fetchFeed() only ever returns accessible:false
+// alongside items:[], so accessible can't independently change this result.
 function isSubscribed(result: FeedResult | undefined): boolean {
-  return !!result?.accessible && (result?.items.length ?? 0) > 0;
+  return (result?.items.length ?? 0) > 0;
 }
 
 export function FeedProvider({ children }: { children: React.ReactNode }) {
