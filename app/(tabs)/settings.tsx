@@ -50,9 +50,14 @@ export default function SettingsScreen() {
   const { triggerRefresh } = useFeed();
   const { setAuthed } = useAuth();
 
+  // minLength only affects delivery when filter is 'length' (see minVisibleTier in @li/core —
+  // the length-threshold branch can never produce a rank the 'members'/'actionable' tiers can
+  // reach), so a minLength edit only counts as dirty while that tier is actually selected.
+  // Otherwise switching to 'Length', nudging the slider, then switching back to the original
+  // tier would demand an Apply that changes nothing about what gets delivered.
   const pushSettingsDirty =
     pushFilter !== appliedPush.filter ||
-    pushMinLength !== appliedPush.minLength ||
+    (pushFilter === 'length' && pushMinLength !== appliedPush.minLength) ||
     JSON.stringify(pushAuthors) !== JSON.stringify(appliedPush.authors);
   const refreshIntervalDirty = refreshInterval !== appliedRefreshInterval;
 
