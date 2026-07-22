@@ -14,7 +14,7 @@ jest.mock('../storageService', () => ({
 // config; cut the chain before it gets there.
 jest.mock('../authService', () => ({ getToken: jest.fn() }));
 
-import { registerPushChannel, getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, addPushAuthor } from '../pushService';
+import { registerPushChannel, getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, addPushAuthor, addAuthorToList } from '../pushService';
 import { getToken } from '../authService';
 
 describe('registerPushChannel', () => {
@@ -109,6 +109,41 @@ describe('updatePushSettings', () => {
     expect(global.fetch).not.toHaveBeenCalled();
     expect(stored['push_filter']).toBeUndefined();
   });
+
+  it('does not persist and reports failure when any channel fails to confirm', async () => {
+    stored['push_channels'] = JSON.stringify(['members', 'stock']);
+    (global.fetch as jest.Mock).mockImplementation((_url: string, init: RequestInit) => {
+      const channel = JSON.parse(init.body as string).channel;
+      return Promise.resolve({ ok: channel === 'members' });
+    });
+
+    const confirmed = await updatePushSettings({ filter: 'length', authors: ['herman'], minLength: 0 });
+
+    expect(confirmed).toBe(false);
+    expect(stored['push_filter']).toBeUndefined();
+  });
+
+  it('reports success only once every channel confirms', async () => {
+    stored['push_channels'] = JSON.stringify(['members', 'stock']);
+    const confirmed = await updatePushSettings({ filter: 'length', authors: ['herman'], minLength: 0 });
+    expect(confirmed).toBe(true);
+  });
+});
+
+describe('addAuthorToList', () => {
+  it('appends a trimmed new author', () => {
+    expect(addAuthorToList(['Sean'], '  herman  ')).toEqual(['Sean', 'herman']);
+  });
+
+  it('returns the same array reference for empty/whitespace-only input', () => {
+    const authors = ['Sean'];
+    expect(addAuthorToList(authors, '   ')).toBe(authors);
+  });
+
+  it('returns the same array reference for a case-insensitive duplicate', () => {
+    const authors = ['Sean'];
+    expect(addAuthorToList(authors, 'sean')).toBe(authors);
+  });
 });
 
 describe('addPushAuthor', () => {
@@ -129,6 +164,13 @@ describe('addPushAuthor', () => {
     await addPushAuthor('herman');
     expect(JSON.parse(stored['push_authors'])).toEqual(['Sean', 'herman']);
     expect(global.fetch).not.toHaveBeenCalled(); // no change, no re-registration needed
+  });
+
+  it('does not duplicate an author already present under a different case', async () => {
+    stored['push_authors'] = JSON.stringify(['Sean']);
+    await addPushAuthor('sean');
+    expect(JSON.parse(stored['push_authors'])).toEqual(['Sean']);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 

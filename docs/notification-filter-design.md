@@ -35,64 +35,32 @@ alert on — it is not a completeness guarantee.
 
 ## Filter tiers
 
-Three tiers, narrow to broad, each a strict superset of the previous:
+Three tiers, narrow to broad: `members`, `actionable`, `length`. Each
+matches everything the tier before it does, plus one more thing.
 
-```
-members → actionable → length
-```
+`members` matches all Members Area posts. Nothing else.
+Unregistering the device (`/unregister`) is the only way to stop Members Area alerts.
 
-- `members`: Members Area posts — unconditional (see below).
-- `actionable`: keyword pattern match (buy/sell/tranche/urgency phrases);
-  Stock/Options Insights additionally require a `*`-prefixed title.
-- `length`: at least `minLength` characters, matched or not.
+`actionable` matches all Members Area posts. It also matches a post that
+meets every one of these conditions:
 
-`filter: 'length', minLength: 0` covers "everything" — no separate `any`
-value exists.
+1. The author is in `actionableAuthors` — shared server config,
+   `env.ACTIONABLE_AUTHORS`.
+2. The content matches an actionable pattern: buy, sell, tranche, or
+   urgency phrasing.
+3. The content does not match a negative pattern: hedging, personal
+   opinion, or a historical reference.
+4. For Stock/Options Insights posts, the title starts with `*`.
 
-## Members Area is unconditional
-
-`matchesFilter` returns `true` for Members Area regardless of a device's
-author list or tier — a narrow `authors` whitelist (e.g. `['herman']`) never
-silences it. The only way to stop Members Area alerts is to unregister the
-device (`/unregister`); there is no separate "off" setting.
-
-## `minVisibleTier`
-
-```
-minVisibleTier(item, minLength, actionableAuthors):
-  if feedKey === membersArea: return 0
-  isActionableAuthor = item.author in actionableAuthors
-  topicPass = (stock/options) ? title.startsWith('*') : true
-  actionable = isActionableAuthor && topicPass && !negativePatternMatch && positivePatternMatch
-  if actionable: return 1
-  return (length >= minLength) ? 2 : Infinity
-```
-
-`actionableAuthors` is who can trigger the `actionable` tier at all — a
-pattern match from anyone else (e.g. a reply repeating or joking about
-Sean's language) isn't a real trade call. It's a parameter, not a hardcoded
-constant: the Worker reads it from `env.ACTIONABLE_AUTHORS` (comma-separated,
-default `"Sean Hyman"`, same pattern as its other tunables) and passes it
-into `matchesFilter`/`minVisibleTier`. It's shared by every device, not a
-per-device value — independent of a device's own `authors` whitelist, which
-`matchesFilter` applies separately on top of every tier: a Sean actionable
-post still needs to pass a device's whitelist like anything else, and a
-non-Sean post that a device does want to hear from can still surface at
-`length` if it's long enough — it just never reaches `actionable`.
-
-A negative-pattern match disqualifies `actionable` only — a long-enough
-negative-pattern post still surfaces at `length`. `Infinity` means "not
-visible at any tier, at this device's minLength"; it's parameterized per
-device, not a fixed veto on the content.
+`length` matches everything `actionable` matches. It also matches any post
+that is at least `minLength` characters long and whose author is on the
+device's own `authors` whitelist.
 
 ## Author matching
 
-`authors: string[]`, lowercased, stored per device at registration. Empty
-list = no author restriction. There is no global fallback for this value —
-`filter`, `authors`, and `minLength` are required on every registration.
-(Separate from `actionableAuthors` above, which is shared Worker
-configuration gating the `actionable` tier itself, not any one device's
-preferences.)
+The Worker trims and lowercases each author when the device registers.
+A whitelist entry matches when the post's author contains it as a substring, not an exact match or regex.
+An empty whitelist is a wildcard — it matches every author.
 
 ## `TokenMeta`
 
@@ -131,8 +99,5 @@ never applied to server push — it's a local-only concept and remains one.
 
 - Issue #32: KV write-budget headroom (cron polling interval tuning, or
   reducing writes per poll).
-- Issue #56: `FeedContext.tsx` double-registers the `members` channel (once
-  for `membersArea`, once for `membersForum`) — should dedupe by resolved
-  channel, not by feed key.
 - Issue #58: Members Area returning items regardless of token validity can
   mask a stale token for the `members` channel specifically.

@@ -23,7 +23,6 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
     // or cache here. Hidden forums are skipped — no point spending a bounded deep-dive fetch on a
     // tab nobody can currently see.
     await Promise.all(results.map(async (result) => {
-      if (!result.accessible) return;
       if (!FEEDS[result.feedKey].isVisible(visibility)) return;
       if (FEEDS[result.feedKey].hasSubFeeds) {
         await detectForumUnread(result.feedKey, result.items);

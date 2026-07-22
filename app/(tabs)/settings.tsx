@@ -7,7 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
-import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken } from '../../services/pushService';
+import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken, addAuthorToList, type PushFilterSettings } from '../../services/pushService';
 import { FILTER_TIERS, type ContentFilter } from '@li/core';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { useFeed } from '../../contexts/FeedContext';
@@ -34,6 +34,14 @@ export default function SettingsScreen() {
   const [pushFilter, setPushFilterState] = useState<ContentFilter>('actionable');
   const [pushAuthors, setPushAuthorsState] = useState<string[]>(['Sean']);
   const [pushMinLength, setPushMinLengthState] = useState(200);
+  // Last known-applied values, for comparison against the (possibly edited but not yet applied)
+  // state above — every push-setting control below only edits local state; nothing round-trips to
+  // the Worker until the user taps Apply. Any control that can trigger a registration (tier
+  // buttons, author add/remove, the min-length slider) shares this same gate, not just sliders —
+  // a single tier-button tap is just as capable of firing an immediate registration as a drag.
+  const [appliedPush, setAppliedPush] = useState<PushFilterSettings>({ filter: 'actionable', authors: ['Sean'], minLength: 200 });
+  const [applyStatus, setApplyStatus] = useState<'idle' | 'applying' | 'error'>('idle');
+  const [appliedRefreshInterval, setAppliedRefreshInterval] = useState(30);
   const [newAuthor, setNewAuthor] = useState('');
   const [expandedNotifications, setExpandedNotifications] = useState(true);
   const [silencedTopics, setSilencedTopics] = useState<Topic[]>([]);
@@ -41,6 +49,13 @@ export default function SettingsScreen() {
   const { visibility: forumVisibility, updateVisibility } = useForumVisibility();
   const { triggerRefresh } = useFeed();
   const { setAuthed } = useAuth();
+
+  // minLength only affects delivery under the 'length' tier (see TIER_MATCHERS in @li/core).
+  const pushSettingsDirty =
+    pushFilter !== appliedPush.filter ||
+    (pushFilter === 'length' && pushMinLength !== appliedPush.minLength) ||
+    JSON.stringify(pushAuthors) !== JSON.stringify(appliedPush.authors);
+  const refreshIntervalDirty = refreshInterval !== appliedRefreshInterval;
 
   useEffect(() => {
     loadPreferences();
@@ -60,9 +75,12 @@ export default function SettingsScreen() {
     setPushFilterState(filter);
     setPushAuthorsState(authors);
     setPushMinLengthState(minLength);
+    setAppliedPush({ filter, authors, minLength });
+    setApplyStatus('idle');
 
     const interval = await getRefreshInterval();
     setRefreshIntervalState(interval);
+    setAppliedRefreshInterval(interval);
 
     const allTopics = await getTopics();
     const subscriptions = await getAllTopicSubscriptions();
@@ -72,19 +90,30 @@ export default function SettingsScreen() {
     setLoading(false);
   }
 
-  async function handlePushFilterChange(filter: ContentFilter) {
+  // These three only touch local state — nothing round-trips to the Worker until Apply is
+  // pressed (handleApplyPushSettings below).
+  function handlePushFilterChange(filter: ContentFilter) {
     setPushFilterState(filter);
-    await updatePushSettings({ filter, authors: pushAuthors, minLength: pushMinLength });
   }
 
-  async function handlePushAuthorsChange(authors: string[]) {
+  function handlePushAuthorsChange(authors: string[]) {
     setPushAuthorsState(authors);
-    await updatePushSettings({ filter: pushFilter, authors, minLength: pushMinLength });
   }
 
-  async function handlePushMinLengthChange(minLength: number) {
+  function handlePushMinLengthChange(minLength: number) {
     setPushMinLengthState(minLength);
-    await updatePushSettings({ filter: pushFilter, authors: pushAuthors, minLength });
+  }
+
+  async function handleApplyPushSettings() {
+    setApplyStatus('applying');
+    const settings: PushFilterSettings = { filter: pushFilter, authors: pushAuthors, minLength: pushMinLength };
+    const confirmed = await updatePushSettings(settings);
+    if (confirmed) {
+      setAppliedPush(settings);
+      setApplyStatus('idle');
+    } else {
+      setApplyStatus('error');
+    }
   }
 
   async function handleToggleHideSnippet(value: boolean) {
@@ -92,9 +121,13 @@ export default function SettingsScreen() {
     await setHideSnippetOnRead(value);
   }
 
-  async function handleChangeRefreshInterval(minutes: number) {
+  function handleChangeRefreshInterval(minutes: number) {
     setRefreshIntervalState(minutes);
-    await setRefreshInterval(minutes);
+  }
+
+  async function handleApplyRefreshInterval() {
+    await setRefreshInterval(refreshInterval);
+    setAppliedRefreshInterval(refreshInterval);
   }
 
   async function handleToggleForumVisibility(forum: 'stockInsights' | 'optionsInsights', value: boolean) {
@@ -208,6 +241,14 @@ export default function SettingsScreen() {
               minimumTrackTintColor={c.tint}
               maximumTrackTintColor={c.border}
             />
+            {refreshIntervalDirty && (
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: c.tint, marginTop: 12 }]}
+                onPress={handleApplyRefreshInterval}
+              >
+                <Text style={styles.buttonText}>Apply</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -293,10 +334,8 @@ export default function SettingsScreen() {
                       <TouchableOpacity
                         style={[styles.addAuthorButton, { backgroundColor: c.tint }]}
                         onPress={() => {
-                          const trimmed = newAuthor.trim();
-                          if (trimmed && !pushAuthors.includes(trimmed)) {
-                            handlePushAuthorsChange([...pushAuthors, trimmed]);
-                          }
+                          const updated = addAuthorToList(pushAuthors, newAuthor);
+                          if (updated !== pushAuthors) handlePushAuthorsChange(updated);
                           setNewAuthor('');
                         }}
                       >
@@ -305,6 +344,22 @@ export default function SettingsScreen() {
                     </View>
                   </View>
                 </>
+              )}
+              {(pushSettingsDirty || applyStatus === 'error') && (
+                <View style={[styles.preferenceColumn, { borderTopColor: c.border }]}>
+                  <TouchableOpacity
+                    style={[styles.button, { backgroundColor: c.tint, marginTop: 0, opacity: applyStatus === 'applying' ? 0.6 : 1 }]}
+                    onPress={handleApplyPushSettings}
+                    disabled={applyStatus === 'applying'}
+                  >
+                    <Text style={styles.buttonText}>{applyStatus === 'applying' ? 'Applying…' : 'Apply'}</Text>
+                  </TouchableOpacity>
+                  {applyStatus === 'error' && (
+                    <Text style={[styles.levelHint, { color: '#cc3333', marginTop: 6 }]}>
+                      Couldn&apos;t save — check your connection and try again.
+                    </Text>
+                  )}
+                </View>
               )}
             </>
           )}

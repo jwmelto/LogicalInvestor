@@ -339,7 +339,7 @@ export async function registerDevice(
   }
   await env.STATE.put(`poll:${channel}`, feedToken);
 
-  const meta: TokenMeta = { feedToken, filter, authors: authors.map((a) => a.toLowerCase()), minLength };
+  const meta: TokenMeta = { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength };
   await env.TOKENS.put(`${channel}:${pushToken}`, '1', { metadata: meta, expirationTtl: tokensTtlSeconds(env) });
   return new Response('ok');
 }
@@ -582,4 +582,4 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
 }
 
-export { matchesFilter, minVisibleTier, stripReplyPrefix } from '@li/core';
+export { matchesFilter, stripReplyPrefix } from '@li/core';

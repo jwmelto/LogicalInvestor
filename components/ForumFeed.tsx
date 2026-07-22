@@ -38,9 +38,9 @@ interface TopicSection {
 interface SectionState {
   items: RssItem[];
   topics: TopicSection[];
-  accessible: boolean;
   loading: boolean;
   error?: string;
+  isSubscribed(): boolean;
 }
 
 async function getTopicExpandedStates(feedKey: FeedKey): Promise<Record<string, boolean>> {
@@ -66,7 +66,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     const feed = FEEDS[feedKey];
     let topicSections: TopicSection[] = []; // Always initialize
 
-    if (feed.hasSubFeeds && result.accessible) {
+    if (feed.hasSubFeeds) {
       const allTopics = await getTopicsForForum(feedKey);
       const topicExpandedStates = await getTopicExpandedStates(feedKey);
       const subs = await getAllTopicSubscriptions(); // one read, not one per topic
@@ -96,9 +96,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     return {
       items: result.items || [],
       topics: topicSections,
-      accessible: result.accessible,
       loading: false,
       error: result.error,
+      isSubscribed: result.isSubscribed,
     };
   }
 
@@ -344,7 +344,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
-  if (!section.accessible) {
+  if (!section.isSubscribed() && !section.error) {
     return (
       <View style={[styles.center, { backgroundColor: c.bg }]}>
         <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>

@@ -11,9 +11,8 @@ const parser = new XMLParser({
   attributeNamePrefix: '@_',
 });
 
-// isVisible answers "is this feed's tab currently shown at all" — distinct from `.accessible`
-// (which, per fetchFeed's Error Handling note below, is essentially always true) and from having
-// zero items (which just means "not subscribed"). Members Area/Members Forum aren't togglable, so
+// isVisible answers "is this feed's tab currently shown at all" — distinct from having zero
+// items (which just means "not subscribed"). Members Area/Members Forum aren't togglable, so
 // their isVisible ignores the argument entirely; Stock/Options Insights defer to the user's
 // stored preference. Each feed owns the answer to its own question rather than a shared function
 // having to special-case every key.
@@ -57,8 +56,14 @@ export const FEEDS = {
 export interface FeedResult {
   feedKey: FeedKey;
   items: RssItem[];
-  accessible: boolean;
   error?: string;
+  // Zero items with no fetch error is unconditional proof of no access — the site's RSS always
+  // returns a forum's last 25 posts to anyone with real access.
+  isSubscribed(): boolean;
+}
+
+function feedResult(feedKey: FeedKey, items: RssItem[], error?: string): FeedResult {
+  return { feedKey, items, error, isSubscribed: () => items.length > 0 };
 }
 
 async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
@@ -69,12 +74,8 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
   try {
     const response = await fetch(url);
 
-    if (response.status === 403 || response.status === 401) {
-      return { feedKey, items: [], accessible: false };
-    }
-
     if (!response.ok) {
-      return { feedKey, items: [], accessible: true, error: `HTTP ${response.status}` };
+      return feedResult(feedKey, [], `HTTP ${response.status}`);
     }
 
     const xml = await response.text();
@@ -89,9 +90,9 @@ async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
       }
     }
 
-    return { feedKey, items, accessible: true };
+    return feedResult(feedKey, items);
   } catch (e: any) {
-    return { feedKey, items: [], accessible: true, error: e.message };
+    return feedResult(feedKey, [], e.message);
   }
 }
 

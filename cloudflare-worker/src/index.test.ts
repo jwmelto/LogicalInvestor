@@ -6,17 +6,17 @@ import type { FeedKey, FilterItem } from '@li/core';
 const FK = FeedKeys;
 const DEFAULT_TOKENS_TTL_SECONDS = DEFAULT_TOKENS_TTL_DAYS * 60 * 60 * 24;
 
+const ACTIONABLE_AUTHORS = ['sean hyman'];
+
 function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
     feedKey,
-    author: overrides.author ?? 'Sean Hyman',
+    author: overrides.author ?? ACTIONABLE_AUTHORS[0],
     title: overrides.title ?? '',
     content: overrides.description ?? '',
   };
 }
 
-const AUTHOR = 'sean hyman';
-const ACTIONABLE_AUTHORS = ['sean hyman'];
 const MIN = 200;
 const long = 'x'.repeat(210);
 const longWithSignal = 'new pick — ' + 'x'.repeat(200);
@@ -65,13 +65,13 @@ describe('matchesFilter', () => {
     });
 
     it('a post outside Members Area does not alert', () => {
-      expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'members', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'members', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
     });
   });
 
   describe('actionable tier', () => {
     it('an actionable-signal post by an ACTIONABLE_AUTHORS author alerts', () => {
-      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longWithSignal });
+      const post = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: longWithSignal });
       expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
     });
 
@@ -81,25 +81,25 @@ describe('matchesFilter', () => {
     });
 
     it('a non-actionable post does not alert, regardless of author', () => {
-      expect(matchesFilter(item(FK.membersForum, { author: 'Sean Hyman', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
       expect(matchesFilter(item(FK.membersForum, { author: 'Joe Blow', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
     });
 
     it('ACTIONABLE_AUTHORS is a live parameter: changing it changes who can alert', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
-      expect(matchesFilter(post, 'actionable', [], MIN, ['sean hyman'])).toBe(false);
+      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
       expect(matchesFilter(post, 'actionable', [], MIN, ['joe blow'])).toBe(true);
     });
 
     it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
       const starred = item(feedKey, { title: '*AAPL Trade', description: longWithSignal });
       const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
-      expect(matchesFilter(starred, 'actionable', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(true);
-      expect(matchesFilter(unstarred, 'actionable', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
     });
 
     it('a negative-pattern post does not alert at the actionable tier, but can still alert at the length tier', () => {
-      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longNegative });
+      const post = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: longNegative });
       expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
       expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
     });
@@ -113,7 +113,7 @@ describe('matchesFilter', () => {
 
     it('a long-enough post by a non-whitelisted author does not alert', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
-      expect(matchesFilter(post, 'length', [AUTHOR], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(post, 'length', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
     });
 
     it('an empty author whitelist means no author restriction', () => {
@@ -126,6 +126,29 @@ describe('matchesFilter', () => {
       expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(false);
     });
   });
+
+  // Spans both tiers deliberately: each verifies a different formula (TIER_MATCHERS.actionable
+  // vs. TIER_MATCHERS.length) independently, so parameterizing doesn't drop coverage — it removes
+  // what would otherwise be two byte-for-byte-identical test bodies.
+  it.each(['actionable', 'length'] as const)(
+    "a device's personal author whitelist does not restrict an actionable post at the %s tier",
+    (filter) => {
+      const post = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: longWithSignal });
+      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    }
+  );
+
+  // matchesFilter's Members Area bypass runs unconditionally, before any tier is even consulted
+  // — structurally immune to the boolean-distribution mistake the test above guards against, but
+  // only if that bypass stays a hard early return. A future refactor moving it inside tier
+  // dispatch would break this silently without a test spanning all three tiers explicitly.
+  it.each(['members', 'actionable', 'length'] as const)(
+    'a Members Area post alerts at the %s tier, regardless of author or content',
+    (filter) => {
+      const post = item(FK.membersArea, { author: 'nobody in particular', description: '' });
+      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    }
+  );
 });
 
 describe('stripReplyPrefix', () => {
@@ -312,10 +335,10 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: 7 * 60 * 60 * 24 });
   });
 
-  it('lowercases authors before storing', async () => {
+  it('lowercases and trims authors before storing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['Sean Hyman'], minLength: 0, feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
