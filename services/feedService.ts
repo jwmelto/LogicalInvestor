@@ -16,9 +16,10 @@ const parser = new XMLParser({
 // their isVisible ignores the argument entirely; Stock/Options Insights defer to the user's
 // stored preference. Each feed owns the answer to its own question rather than a shared function
 // having to special-case every key.
-// optional marks a feed as subscription-gated — zero items means "not subscribed" for these,
-// distinct from a forum that's genuinely empty. Members Area/Members Forum come with every
-// membership; Stock/Options Insights are separate paid add-ons.
+// optional marks a feed as subscription-gated. The site's RSS always returns the forum's last 25
+// posts to anyone with access — there's no such thing as a legitimately empty feed — so for these,
+// zero items (with no fetch error) is unconditional proof the user isn't subscribed, not a guess.
+// Members Area/Members Forum come with every membership; Stock/Options Insights are paid add-ons.
 export const FEEDS = {
   membersArea: {
     name: 'Members Area',
