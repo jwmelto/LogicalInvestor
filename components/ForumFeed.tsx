@@ -508,7 +508,11 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
               {section.topics.length === 0 && section.items.length === 0 && (
                 <Text style={[styles.empty, { color: c.textMuted }]}>
-                  {section.error ? `Failed to load: ${section.error}` : 'No posts found.'}
+                  {section.error
+                    ? `Failed to load: ${section.error}`
+                    : FEEDS[feedKey].optional
+                      ? "You don't have access to this feed"
+                      : 'No posts found.'}
                 </Text>
               )}
             </View>

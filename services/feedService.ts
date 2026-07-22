@@ -16,12 +16,16 @@ const parser = new XMLParser({
 // their isVisible ignores the argument entirely; Stock/Options Insights defer to the user's
 // stored preference. Each feed owns the answer to its own question rather than a shared function
 // having to special-case every key.
+// optional marks a feed as subscription-gated — zero items means "not subscribed" for these,
+// distinct from a forum that's genuinely empty. Members Area/Members Forum come with every
+// membership; Stock/Options Insights are separate paid add-ons.
 export const FEEDS = {
   membersArea: {
     name: 'Members Area',
     route: 'members-area',
     url: 'https://logicalinvestor.net/feed/',
     hasSubFeeds: false,
+    optional: false,
     isVisible: (_visibility: ForumVisibility) => true,
   },
   membersForum: {
@@ -29,6 +33,7 @@ export const FEEDS = {
     route: 'members-forum',
     url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/',
     hasSubFeeds: true,
+    optional: false,
     isVisible: (_visibility: ForumVisibility) => true,
   },
   stockInsights: {
@@ -36,6 +41,7 @@ export const FEEDS = {
     route: 'stock-insights',
     url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/',
     hasSubFeeds: true,
+    optional: true,
     isVisible: (visibility: ForumVisibility) => visibility.stockInsights,
   },
   optionsInsights: {
@@ -43,6 +49,7 @@ export const FEEDS = {
     route: 'options-insights',
     url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/',
     hasSubFeeds: true,
+    optional: true,
     isVisible: (visibility: ForumVisibility) => visibility.optionsInsights,
   },
 } as const satisfies Record<FeedKey, {
@@ -50,6 +57,7 @@ export const FEEDS = {
   route: string;
   url: string;
   hasSubFeeds: boolean;
+  optional: boolean;
   isVisible: (visibility: ForumVisibility) => boolean;
 }>;
 
