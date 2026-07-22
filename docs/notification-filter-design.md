@@ -35,37 +35,37 @@ alert on — it is not a completeness guarantee.
 
 ## Filter tiers
 
-Each tier matches everything the tier before it does, plus one more thing:
+Three tiers, narrow to broad: `members`, `actionable`, `length`. Each
+matches everything the tier before it does, plus one more thing.
 
-- **`members`** matches all Members Area posts. Nothing else.
-- **`actionable`** matches all Members Area posts, plus posts by
-  `actionableAuthors` (shared server config, `env.ACTIONABLE_AUTHORS`) that
-  pass the actionable-signal pattern check — for Stock/Options Insights,
-  also requiring a `*`-prefixed title.
-- **`length`** matches everything `actionable` matches, plus any post at
-  least `minLength` characters long from an author on the device's own
-  `authors` whitelist.
+`members` matches all Members Area posts. Nothing else.
+
+`actionable` matches all Members Area posts. It also matches a post that
+meets every one of these conditions:
+
+1. The author is in `actionableAuthors` — shared server config,
+   `env.ACTIONABLE_AUTHORS`.
+2. The content matches an actionable pattern: buy, sell, tranche, or
+   urgency phrasing.
+3. The content does not match a negative pattern: hedging, personal
+   opinion, or a historical reference.
+4. For Stock/Options Insights posts, the title starts with `*`.
+
+`length` matches everything `actionable` matches. It also matches any post
+that is at least `minLength` characters long and whose author is on the
+device's own `authors` whitelist.
 
 `filter: 'length', minLength: 0` covers "everything" — no separate `any`
 tier exists.
 
-Two rules protect that cumulative structure, both enforced in
-`matchesFilter`/`TIER_MATCHERS` (`packages/core/src/index.ts`, one matcher
-function per `ContentFilter` — the same pattern `FEEDS[k].isVisible()` uses
-per feed):
-
-- **Members Area is unconditional.** The check runs before any tier logic
-  at all — no device whitelist, author, or content check can silence it,
-  regardless of tier. The only way to stop Members Area alerts is
-  unregistering the device (`/unregister`).
-- **The device's own `authors` whitelist gates only `length`'s own added
-  clause, never the `actionable` posts it inherits.** If the whitelist also
-  gated the inherited half, `length` could reject a post `actionable` alone
-  would have allowed — the opposite of "matches everything actionable
-  matches, plus more."
-
-A negative-pattern match disqualifies `actionable` only; the same post can
-still surface at `length` via the plain length check.
+Both tiers' rules are enforced in `matchesFilter`/`TIER_MATCHERS`
+(`packages/core/src/index.ts`, one matcher function per `ContentFilter` —
+the same pattern `FEEDS[k].isVisible()` uses per feed). The Members Area
+check is a hard bypass before any tier is dispatched; unregistering the
+device (`/unregister`) is the only way to stop its alerts. The whitelist
+must gate only `length`'s own added clause. If it also gated the
+`actionable` posts `length` inherits, `length` could reject a post
+`actionable` alone would have allowed, breaking the superset relationship.
 
 ## Author matching
 
