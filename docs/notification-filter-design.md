@@ -35,64 +35,37 @@ alert on — it is not a completeness guarantee.
 
 ## Filter tiers
 
-Three tiers, narrow to broad, each a strict superset of the previous:
+Each tier matches everything the tier before it does, plus one more thing:
 
-```
-members → actionable → length
-```
-
-- `members`: Members Area posts — unconditional (see below).
-- `actionable`: keyword pattern match (buy/sell/tranche/urgency phrases);
-  Stock/Options Insights additionally require a `*`-prefixed title.
-- `length`: at least `minLength` characters, matched or not.
+- **`members`** matches all Members Area posts. Nothing else.
+- **`actionable`** matches all Members Area posts, plus posts by
+  `actionableAuthors` (shared server config, `env.ACTIONABLE_AUTHORS`) that
+  pass the actionable-signal pattern check — for Stock/Options Insights,
+  also requiring a `*`-prefixed title.
+- **`length`** matches everything `actionable` matches, plus any post at
+  least `minLength` characters long from an author on the device's own
+  `authors` whitelist.
 
 `filter: 'length', minLength: 0` covers "everything" — no separate `any`
-value exists.
+tier exists.
 
-## Members Area is unconditional
+Two rules protect that cumulative structure, both enforced in
+`matchesFilter`/`TIER_MATCHERS` (`packages/core/src/index.ts`, one matcher
+function per `ContentFilter` — the same pattern `FEEDS[k].isVisible()` uses
+per feed):
 
-`matchesFilter` returns `true` for Members Area regardless of a device's
-author list or tier — a narrow `authors` whitelist (e.g. `['herman']`) never
-silences it. The only way to stop Members Area alerts is to unregister the
-device (`/unregister`); there is no separate "off" setting.
+- **Members Area is unconditional.** The check runs before any tier logic
+  at all — no device whitelist, author, or content check can silence it,
+  regardless of tier. The only way to stop Members Area alerts is
+  unregistering the device (`/unregister`).
+- **The device's own `authors` whitelist gates only `length`'s own added
+  clause, never the `actionable` posts it inherits.** If the whitelist also
+  gated the inherited half, `length` could reject a post `actionable` alone
+  would have allowed — the opposite of "matches everything actionable
+  matches, plus more."
 
-## `TIER_MATCHERS`
-
-Each tier owns its own matcher, keyed by `ContentFilter` — the same pattern
-`FEEDS[k].isVisible()` uses per feed, rather than one function
-special-casing every tier by name:
-
-```
-members:    () => false   // non-Members-Area content never qualifies; Members Area itself
-                           // is handled unconditionally in matchesFilter, before tier dispatch
-actionable: isActionablePost(item, actionableAuthors)
-length:     isActionablePost(item, actionableAuthors)
-              || (authorMatches(item.author, authors) && content.length >= minLength)
-```
-
-Each tier matches everything the previous one does, plus more — `length`'s
-first disjunct is exactly `actionable`'s rule, unconditional on the personal
-whitelist just like at the `actionable` tier itself. The whitelist only
-gates the second disjunct (merely-long, non-actionable content) — it must
-not also gate the first, or `length` would be able to reject a post that
-`actionable` alone would have allowed, breaking the superset property.
-
-`actionableAuthors` is who can trigger the `actionable` tier at all — a
-pattern match from anyone else (e.g. a reply repeating or joking about
-Sean's language) isn't a real trade call. It's a parameter, not a hardcoded
-constant: the Worker reads it from `env.ACTIONABLE_AUTHORS` (comma-separated,
-default `"Sean Hyman"`, same pattern as its other tunables) and passes it
-into `matchesFilter`. It's shared by every device, not a per-device value.
-
-**The `actionable` tier is gated solely by `actionableAuthors` — a device's
-own `authors` whitelist does not additionally restrict it.** A device's
-whitelist only matters at the `length` tier. A non-Sean post that a device's
-whitelist does want to hear from can still surface at `length` if it's long
-enough — it just never reaches `actionable`, regardless of whitelist.
-
-A negative-pattern match disqualifies `actionable` only — a long-enough
-negative-pattern post still surfaces at `length` (via the plain length
-check, since `isActionablePost` fails it there too).
+A negative-pattern match disqualifies `actionable` only; the same post can
+still surface at `length` via the plain length check.
 
 ## Author matching
 
