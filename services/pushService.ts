@@ -132,11 +132,23 @@ export async function updatePushSettings(settings: PushFilterSettings): Promise<
   } catch { return false; }
 }
 
+// Encapsulates every constraint on adding an author to a whitelist: trims whitespace, drops
+// empty input, and dedupes case-insensitively (author matching is case-insensitive server-side —
+// the Worker lowercases on registration — so "Sean" and "sean" would otherwise both end up as
+// separate, functionally-redundant entries). Returns the same array reference when nothing
+// should change, so callers can cheaply skip a wasted network call or state update.
+export function addAuthorToList(authors: string[], candidate: string): string[] {
+  const trimmed = candidate.trim();
+  if (!trimmed || authors.some((a) => a.toLowerCase() === trimmed.toLowerCase())) return authors;
+  return [...authors, trimmed];
+}
+
 // Called from ForumFeed's long-press "Add author to alerts" gesture.
 export async function addPushAuthor(author: string): Promise<void> {
   const settings = await currentPushSettings();
-  if (!settings.authors.includes(author)) {
-    await updatePushSettings({ ...settings, authors: [...settings.authors, author] });
+  const authors = addAuthorToList(settings.authors, author);
+  if (authors !== settings.authors) {
+    await updatePushSettings({ ...settings, authors });
   }
 }
 

@@ -7,7 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { logout } from '../../services/authService';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHideSnippetOnRead, setHideSnippetOnRead, getRefreshInterval, setRefreshInterval } from '../../services/storageService';
-import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken, type PushFilterSettings } from '../../services/pushService';
+import { getPushFilter, getPushAuthors, getPushMinLength, updatePushSettings, unregisterPushToken, addAuthorToList, type PushFilterSettings } from '../../services/pushService';
 import { FILTER_TIERS, type ContentFilter } from '@li/core';
 import { useForumVisibility } from '../../contexts/ForumVisibilityContext';
 import { useFeed } from '../../contexts/FeedContext';
@@ -333,10 +333,8 @@ export default function SettingsScreen() {
                       <TouchableOpacity
                         style={[styles.addAuthorButton, { backgroundColor: c.tint }]}
                         onPress={() => {
-                          const trimmed = newAuthor.trim();
-                          if (trimmed && !pushAuthors.includes(trimmed)) {
-                            handlePushAuthorsChange([...pushAuthors, trimmed]);
-                          }
+                          const updated = addAuthorToList(pushAuthors, newAuthor);
+                          if (updated !== pushAuthors) handlePushAuthorsChange(updated);
                           setNewAuthor('');
                         }}
                       >
