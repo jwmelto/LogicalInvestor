@@ -78,8 +78,7 @@ default `"Sean Hyman"`, same pattern as its other tunables) and passes it
 into `matchesFilter`. It's shared by every device, not a per-device value.
 
 **The `actionable` tier is gated solely by `actionableAuthors` — a device's
-own `authors` whitelist does not additionally restrict it.** This was
-interactively designed out after an earlier version applied both; a device's
+own `authors` whitelist does not additionally restrict it.** A device's
 whitelist only matters at the `length` tier. A non-Sean post that a device's
 whitelist does want to hear from can still surface at `length` if it's long
 enough — it just never reaches `actionable`, regardless of whitelist.
