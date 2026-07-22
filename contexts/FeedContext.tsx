@@ -37,9 +37,8 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   const foregroundDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastRefreshAtRef = useRef<number>(Date.now());
-  // Keyed by Channel: membersArea and membersForum both map to the 'members' channel (see
-  // FEEDKEY_TO_CHANNEL), and the server-side access check (feedTokenHasAccess) validates
-  // against Members Forum regardless of which FeedKey triggered the call.
+  // membersArea and membersForum both map to the 'members' channel (FEEDKEY_TO_CHANNEL) — dedupe
+  // by Channel so a shared channel isn't registered twice.
   const pushRegisteredRef = useRef<Set<Channel>>(new Set());
 
   const setFeedUnread = useCallback((feedKey: FeedKey, hasUnreadFlag: boolean) => {
