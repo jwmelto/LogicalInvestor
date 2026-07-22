@@ -8,6 +8,8 @@
 - Fixed: the "Length" alert tier could reject a post that the "Actionable" tier alone would have allowed, for the same reason
 - Hiding a forum (Stock Insights, Options Insights) in Settings now also stops push notifications for it, instead of continuing to alert on content you've hidden
 - Fixed the "you don't have access to this feed" message not appearing correctly for an unsubscribed optional forum
+- Silencing a topic now asks for confirmation first, and the "[new]" badge next to it is easier to tap without hitting the silence button by mistake
+- Increased base text size across the app for readability
 
 ## 0.10.1 — July 2026
 

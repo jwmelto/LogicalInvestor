@@ -249,6 +249,13 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     openPostLink(item.link);
   }
 
+  function confirmUnsubscribeTopic(topicId: string, topicName: string) {
+    Alert.alert('Silence Topic?', `You won't see new posts in "${topicName}" until you re-subscribe.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Silence', style: 'destructive', onPress: () => unsubscribeTopic(topicId) },
+    ]);
+  }
+
   async function unsubscribeTopic(topicId: string) {
     try {
       await setTopicSubscription(topicId, false);
@@ -391,18 +398,20 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                         </TouchableOpacity>
                         <View style={styles.topicHeaderRight}>
                           {topicHasUnread && (
-                            <TouchableOpacity onPress={async () => {
-                              await markTopicAsRead(topicSection.topic.id);
-                              // Collapse the topic
-                              if (topicSection.expanded) {
-                                toggleTopic(topicSection.topic.id);
-                              }
-                            }}>
+                            <TouchableOpacity
+                              hitSlop={{ top: 12, bottom: 12, left: 12, right: 0 }}
+                              onPress={async () => {
+                                await markTopicAsRead(topicSection.topic.id);
+                                // Collapse the topic
+                                if (topicSection.expanded) {
+                                  toggleTopic(topicSection.topic.id);
+                                }
+                              }}>
                               <Text style={[styles.newIndicator, { color: c.newBadge }]}>[new]</Text>
                             </TouchableOpacity>
                           )}
                           <TouchableOpacity
-                            onPress={() => unsubscribeTopic(topicSection.topic.id)}
+                            onPress={() => confirmUnsubscribeTopic(topicSection.topic.id, topicSection.topic.name)}
                             style={styles.unsubscribeButton}
                           >
                             <Text style={[styles.unsubscribeText, { color: c.textMuted }]}>✕</Text>
@@ -535,8 +544,8 @@ const styles = StyleSheet.create({
   feedHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1 },
   forumTitle: { fontSize: 18, fontWeight: '600', paddingHorizontal: 16, paddingVertical: 12 },
   markAllButton: { paddingHorizontal: 16, paddingVertical: 12 },
-  markAllText: { fontSize: 13, fontWeight: '500' },
-  newIndicator: { fontSize: 11, fontWeight: '600' },
+  markAllText: { fontSize: 15, fontWeight: '500' },
+  newIndicator: { fontSize: 13, fontWeight: '600' },
   item: { padding: 16 },
   topicHeader: {
     flexDirection: 'row',
@@ -546,20 +555,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   topicTitleButton: { flex: 1 },
-  topicTitle: { fontSize: 13, fontWeight: '600' },
+  topicTitle: { fontSize: 15, fontWeight: '600' },
   topicHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   unsubscribeButton: { padding: 4 },
   unsubscribeText: { fontSize: 16, fontWeight: '600' },
   topicPreview: { paddingVertical: 8, paddingHorizontal: 32, borderBottomWidth: 1 },
-  topicPreviewMeta: { fontSize: 11, marginBottom: 4 },
-  topicPreviewExcerpt: { fontSize: 12, lineHeight: 16 },
+  topicPreviewMeta: { fontSize: 13, marginBottom: 4 },
+  topicPreviewExcerpt: { fontSize: 14, lineHeight: 18 },
   topicItem: { paddingVertical: 12, paddingHorizontal: 32 },
   topicLoading: { paddingVertical: 12, paddingHorizontal: 32, alignItems: 'center' },
   itemMeta: { marginBottom: 8 },
-  itemMetaText: { fontSize: 12 },
+  itemMetaText: { fontSize: 14 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  itemTitle: { fontSize: 15, fontWeight: '500', flex: 1 },
-  newBadge: { fontSize: 11, fontWeight: '600', marginLeft: 8 },
-  itemExcerpt: { fontSize: 13, marginBottom: 4, lineHeight: 18 },
+  itemTitle: { fontSize: 17, fontWeight: '500', flex: 1 },
+  newBadge: { fontSize: 13, fontWeight: '600', marginLeft: 8 },
+  itemExcerpt: { fontSize: 15, marginBottom: 4, lineHeight: 20 },
   empty: { padding: 16, fontStyle: 'italic' },
 });
