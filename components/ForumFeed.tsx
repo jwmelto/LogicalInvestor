@@ -342,9 +342,9 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
-  // Zero items with no fetch error is unconditional proof of no access for an optional feed —
-  // the site's RSS always returns the last 25 posts to anyone with real access.
-  if (FEEDS[feedKey].optional && section.items.length === 0 && !section.error) {
+  // Zero items with no fetch error is unconditional proof of no access — the site's RSS always
+  // returns the last 25 posts to anyone with real access.
+  if (section.items.length === 0 && !section.error) {
     return (
       <View style={[styles.center, { backgroundColor: c.bg }]}>
         <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>
