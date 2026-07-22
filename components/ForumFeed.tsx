@@ -342,6 +342,16 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
+  // Zero items with no fetch error is unconditional proof of no access for an optional feed —
+  // the site's RSS always returns the last 25 posts to anyone with real access.
+  if (FEEDS[feedKey].optional && section.items.length === 0 && !section.error) {
+    return (
+      <View style={[styles.center, { backgroundColor: c.bg }]}>
+        <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>
+      </View>
+    );
+  }
+
   const flatHasUnread = unread[feedKey] ?? false;
   const anyTopicUnread = section.topics.some((t) => topicUnread[feedKey]?.[t.topic.id] ?? false);
   const showMarkAllRead = anyTopicUnread || flatHasUnread;
@@ -508,11 +518,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
 
               {section.topics.length === 0 && section.items.length === 0 && (
                 <Text style={[styles.empty, { color: c.textMuted }]}>
-                  {section.error
-                    ? `Failed to load: ${section.error}`
-                    : FEEDS[feedKey].optional
-                      ? "You don't have access to this feed"
-                      : 'No posts found.'}
+                  {section.error ? `Failed to load: ${section.error}` : 'No posts found.'}
                 </Text>
               )}
             </View>
