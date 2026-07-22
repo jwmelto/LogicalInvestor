@@ -39,6 +39,7 @@ Three tiers, narrow to broad: `members`, `actionable`, `length`. Each
 matches everything the tier before it does, plus one more thing.
 
 `members` matches all Members Area posts. Nothing else.
+Unregistering the device (`/unregister`) is the only way to stop Members Area alerts.
 
 `actionable` matches all Members Area posts. It also matches a post that
 meets every one of these conditions:
@@ -55,26 +56,12 @@ meets every one of these conditions:
 that is at least `minLength` characters long and whose author is on the
 device's own `authors` whitelist.
 
-`filter: 'length', minLength: 0` covers "everything" — no separate `any`
-tier exists.
-
-Both tiers' rules are enforced in `matchesFilter`/`TIER_MATCHERS`
-(`packages/core/src/index.ts`, one matcher function per `ContentFilter` —
-the same pattern `FEEDS[k].isVisible()` uses per feed). The Members Area
-check is a hard bypass before any tier is dispatched; unregistering the
-device (`/unregister`) is the only way to stop its alerts. The whitelist
-must gate only `length`'s own added clause. If it also gated the
-`actionable` posts `length` inherits, `length` could reject a post
-`actionable` alone would have allowed, breaking the superset relationship.
-
 ## Author matching
 
-`authors: string[]`, lowercased, stored per device at registration. Empty
-list = no author restriction. There is no global fallback for this value —
-`filter`, `authors`, and `minLength` are required on every registration.
-(Separate from `actionableAuthors` above, which is shared Worker
-configuration gating the `actionable` tier itself, not any one device's
-preferences.)
+Each author is trimmed of leading/trailing whitespace when added to a device's whitelist.
+The Worker lowercases the whole whitelist when the device registers.
+A whitelist entry matches when the post's author contains it as a substring, not an exact match or regex.
+An empty whitelist is a wildcard — it matches every author.
 
 ## `TokenMeta`
 
@@ -113,8 +100,5 @@ never applied to server push — it's a local-only concept and remains one.
 
 - Issue #32: KV write-budget headroom (cron polling interval tuning, or
   reducing writes per poll).
-- Issue #56: `FeedContext.tsx` double-registers the `members` channel (once
-  for `membersArea`, once for `membersForum`) — should dedupe by resolved
-  channel, not by feed key.
 - Issue #58: Members Area returning items regardless of token validity can
   mask a stale token for the `members` channel specifically.
