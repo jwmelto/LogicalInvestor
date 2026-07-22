@@ -137,6 +137,18 @@ describe('matchesFilter', () => {
       expect(matchesFilter(post, filter, ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
     }
   );
+
+  // matchesFilter's Members Area bypass runs unconditionally, before any tier is even consulted
+  // — structurally immune to the boolean-distribution mistake the test above guards against, but
+  // only if that bypass stays a hard early return. A future refactor moving it inside tier
+  // dispatch would break this silently without a test spanning all three tiers explicitly.
+  it.each(['members', 'actionable', 'length'] as const)(
+    'a Members Area post alerts at the %s tier, regardless of author or content',
+    (filter) => {
+      const post = item(FK.membersArea, { author: 'nobody in particular', description: '' });
+      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    }
+  );
 });
 
 describe('stripReplyPrefix', () => {
