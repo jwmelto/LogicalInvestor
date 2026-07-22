@@ -66,9 +66,16 @@ special-casing every tier by name:
 members:    () => false   // non-Members-Area content never qualifies; Members Area itself
                            // is handled unconditionally in matchesFilter, before tier dispatch
 actionable: isActionablePost(item, actionableAuthors)
-length:     authorMatches(item.author, authors)
-              && (isActionablePost(item, actionableAuthors) || content.length >= minLength)
+length:     isActionablePost(item, actionableAuthors)
+              || (authorMatches(item.author, authors) && content.length >= minLength)
 ```
+
+Each tier matches everything the previous one does, plus more — `length`'s
+first disjunct is exactly `actionable`'s rule, unconditional on the personal
+whitelist just like at the `actionable` tier itself. The whitelist only
+gates the second disjunct (merely-long, non-actionable content) — it must
+not also gate the first, or `length` would be able to reject a post that
+`actionable` alone would have allowed, breaking the superset property.
 
 `actionableAuthors` is who can trigger the `actionable` tier at all — a
 pattern match from anyone else (e.g. a reply repeating or joking about

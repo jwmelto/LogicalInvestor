@@ -213,10 +213,12 @@ type TierMatcher = (item: FilterItem, authors: string[], minLength: number, acti
 const TIER_MATCHERS: Record<ContentFilter, TierMatcher> = {
   members: () => false,
   actionable: (item, _authors, _minLength, actionableAuthors) => isActionablePost(item, actionableAuthors),
-  // 'length' is a strict superset of 'actionable': anything actionable also qualifies here, in
-  // addition to merely-long content. The personal whitelist applies only at this tier.
+  // 'length' is a strict superset of 'actionable': an actionable post qualifies unconditionally,
+  // same as at the 'actionable' tier itself (no whitelist check). The personal whitelist only
+  // gates the other way in — merely-long content from a whitelisted author.
   length: (item, authors, minLength, actionableAuthors) =>
-    authorMatches(item.author, authors) && (isActionablePost(item, actionableAuthors) || (item.content ?? '').length >= minLength),
+    isActionablePost(item, actionableAuthors) ||
+    (authorMatches(item.author, authors) && (item.content ?? '').length >= minLength),
 };
 
 // Members Area is unconditional — no author or content check. Every other tier delegates to its

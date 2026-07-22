@@ -130,6 +130,11 @@ describe('matchesFilter', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: 'short' });
       expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(false);
     });
+
+    it('length is a strict superset of actionable: an actionable post alerts even if the whitelist would otherwise exclude its author', () => {
+      const post = item(FK.membersForum, { author: 'Sean Hyman', description: longWithSignal });
+      expect(matchesFilter(post, 'length', ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+    });
   });
 });
 
