@@ -1,5 +1,10 @@
 # Release History
 
+## 1.0.0 — July 2026
+
+- First 1.0 release
+- Removed the "Report: missed alert" option from the post long-press menu
+
 ## 0.10.2 — July 2026
 
 - Fixed the notification settings sliders (min content length, feed refresh interval) sending a server update on every drag frame instead of once the value settles — could flood the server with requests during a single adjustment
