@@ -3,6 +3,11 @@
 ## 0.10.2 — July 2026
 
 - Fixed the notification settings sliders (min content length, feed refresh interval) sending a server update on every drag frame instead of once the value settles — could flood the server with requests during a single adjustment
+- Notification settings now use an "Apply" button — changes to the alert tier, author whitelist, or minimum length take effect when you tap Apply, instead of each edit sending its own update immediately
+- Fixed: the "Actionable" alert tier could be silently suppressed by your author whitelist even though that tier isn't supposed to use it — if you'd customized your whitelist, you may have been missing genuine actionable alerts
+- Fixed: the "Length" alert tier could reject a post that the "Actionable" tier alone would have allowed, for the same reason
+- Hiding a forum (Stock Insights, Options Insights) in Settings now also stops push notifications for it, instead of continuing to alert on content you've hidden
+- Fixed the "you don't have access to this feed" message not appearing correctly for an unsubscribed optional forum
 
 ## 0.10.1 — July 2026
 
