@@ -163,8 +163,15 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\b(1st|2nd|3rd|4th|first|second|third|fourth)\s+tranche:\s*\$/i,            'pass-tranche-price'],
   [/\bget\s+in\b[\s\S]{0,30}\btranche\b/i,                                       'pass-get-in-tranche'],
   // #73: bidirectional — a re-entry price mentioned before the buy/enter verb ("$41ish again,
-  // you can enter") is just as much a signal as the verb-then-price order.
-  [/\$\d+[\s\S]{0,60}\b(buy|enter)\b|\b(buy|enter)\b[\s\S]{0,60}\$\d+/i,          'pass-buy-with-price'],
+  // you can enter") is just as much a signal as the verb-then-price order. Gap is bounded by
+  // sentence, not a raw char count: a fixed window like {0,60} breaks the moment a company name
+  // or hedge phrase is a few characters longer, which is length-fragility, not a real signal
+  // (found via a longer fictitious company name in classifySignal.test.ts breaking this exact
+  // pattern). `(?!\.\s|!\s|\?\s)` stops the gap at a sentence-ending punctuation mark followed by
+  // whitespace — a decimal price like "$66.50" doesn't trip it, since the period there isn't
+  // followed by whitespace. 200 is a sanity backstop against pathological run-on sentences, not
+  // the primary boundary.
+  [/\$\d+(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\b(buy|enter)\b|\b(buy|enter)\b(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\$\d+/i, 'pass-buy-with-price'],
   [/\bsell(?:ing)?\s+(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,             'pass-sell-fraction'],
   [/\baveraging?\s+down\b/i,                                                       'pass-averaging-down'],
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],

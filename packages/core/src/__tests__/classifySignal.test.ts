@@ -85,7 +85,21 @@ describe('classifySignal — positive patterns', () => {
   });
 
   test('pass-buy-with-price', () => {
-    expect(classifySignal(pad('Buy QTPZ at the market as long as the stock is at $66 per share or LOWER'), MIN)).toBe('pass-buy-with-price');
+    expect(classifySignal(pad('Buy Quixtol (QTPZ) at the market as long as the stock is at $66 per share or LOWER'), MIN)).toBe('pass-buy-with-price');
+  });
+
+  // A longer company name shouldn't change the result — the gap between the verb and the price is
+  // bounded by sentence, not a fixed character count, so this must match exactly like the shorter
+  // "Quixtol" case above despite the extra ~20 characters before reaching the price.
+  test('pass-buy-with-price: still matches with a longer company name in between', () => {
+    expect(classifySignal(pad('Buy Quantum Tech Parts Zone (QTPZ) at the market as long as the stock is at $66 per share or LOWER'), MIN)).toBe('pass-buy-with-price');
+  });
+
+  // The verb and the price sitting in different sentences should NOT match, even though an
+  // unbounded character window would happily bridge them — this is what actually motivates
+  // "same sentence" over "N characters" as the real discriminator.
+  test('fail-no-signal: buy/enter and a price in unrelated sentences do not combine', () => {
+    expect(classifySignal(pad("I was chatting about the ask/buy quote mechanics earlier today. Completely unrelated topic: our rent is $1200 this month."), MIN)).toBe('fail-no-signal');
   });
 
   test('pass-sell-fraction', () => {
