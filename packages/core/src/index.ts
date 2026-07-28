@@ -130,6 +130,8 @@ export type ActionableResult =
   | 'fail-personal-advice'
   | 'fail-historical'
   | 'fail-hypothetical'
+  | 'fail-generic-practice'
+  | 'fail-negated-instruction'
   | 'fail-too-short'
   | 'fail-no-signal';
 
@@ -144,13 +146,25 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // "buy either at $50 or $52" instruction would false-negative here too — narrow further
   // (e.g. require both sides to end in a parenthetical) if that shows up in practice.
   [/\b(could|might|may)\s+either\b[\s\S]{0,80}\bor\b/i,       'fail-hypothetical'],
+  // #72/#75: habitual/generic framing ("just a good practice to get into", "I always say to put
+  // in...") restates general order-management philosophy rather than issuing a fresh directive —
+  // a distinct category from fail-historical (past-tense reference to a prior, specific call).
+  [/\b(good|standard|common|best)\s+practice\b/i,             'fail-generic-practice'],
+  [/\bI always (say|recommend|tell|advise|urge)\b/i,          'fail-generic-practice'],
+  // #79: negation attached directly to the buy/enter verb ("not buy anything more") — narrow
+  // fix for negation adjacent to the verb, not every possible negative framing further away.
+  // Window kept tight (4 chars) so it doesn't also catch unrelated "ask/buy quote" market-mechanics
+  // phrasing (e.g. "not the ask/buy quote"), which has ~9 chars between "not" and "buy".
+  [/\b(not|n't|never|don'?t|doesn'?t|didn'?t)\b[\s\S]{0,4}\b(buy|enter)\b/i, 'fail-negated-instruction'],
 ];
 
 const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bnew pick\b/i,                                                               'pass-new-pick'],
   [/\b(1st|2nd|3rd|4th|first|second|third|fourth)\s+tranche:\s*\$/i,            'pass-tranche-price'],
   [/\bget\s+in\b[\s\S]{0,30}\btranche\b/i,                                       'pass-get-in-tranche'],
-  [/\b(buy|enter)\b[\s\S]{0,60}\$\d+/i,                                          'pass-buy-with-price'],
+  // #73: bidirectional — a re-entry price mentioned before the buy/enter verb ("$41ish again,
+  // you can enter") is just as much a signal as the verb-then-price order.
+  [/\$\d+[\s\S]{0,60}\b(buy|enter)\b|\b(buy|enter)\b[\s\S]{0,60}\$\d+/i,          'pass-buy-with-price'],
   [/\bsell(?:ing)?\s+(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,             'pass-sell-fraction'],
   [/\baveraging?\s+down\b/i,                                                       'pass-averaging-down'],
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],

@@ -35,6 +35,21 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad('Yep, could either tank to an averaging down level (good) or rally after the earnings report with our present tranche (good)'), MIN)).toBe('fail-hypothetical');
   });
 
+  // #72
+  test('fail-generic-practice: "good practice" habitual framing', () => {
+    expect(classifySignal(pad("Glad you're in. Yeah, it's good to have both averaging down orders in from the very beginning, after your 1st tranche fills. Just a good practice to get into."), MIN)).toBe('fail-generic-practice');
+  });
+
+  // #75
+  test('fail-generic-practice: "I always say" habitual framing', () => {
+    expect(classifySignal(pad("That's why I always say to put in both averaging down orders after your 1st tranche fills. Then you don't have to worry about missing it."), MIN)).toBe('fail-generic-practice');
+  });
+
+  // #79
+  test('fail-negated-instruction: "not buy" negation', () => {
+    expect(classifySignal(pad("I'd not encourage entries this high up above 200-day and 200-week moving averages. I'd either hold what you've got or sell some more but not buy anything more. We're ultimately looking to exit at $18ish."), MIN)).toBe('fail-negated-instruction');
+  });
+
   test('fail-too-short: no pattern match and below minLength', () => {
     expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });
@@ -81,8 +96,32 @@ describe('classifySignal — positive patterns', () => {
     expect(classifySignal(pad('If FXY dips anywhere into the $81ish area, that\'s close enough to get your averaging down'), MIN)).toBe('pass-averaging-down');
   });
 
+  // #76: a clearer broadcast-framed anchor alongside the existing, more ambiguous case above
+  // (that one reads equally well as addressed to one replied-to subscriber or to anyone holding
+  // the stock — see #76 for the open "individual vs. broadcast" design question, not resolved here).
+  test('pass-averaging-down: explicit broadcast framing', () => {
+    expect(classifySignal(pad('Everyone, if it dips into the $81ish area again, that is close enough to get your averaging down orders in.'), MIN)).toBe('pass-averaging-down');
+  });
+
   test('pass-immediately', () => {
     expect(classifySignal(pad('You need to get into this position IMMEDIATELY and not delay.'), MIN)).toBe('pass-immediately');
+  });
+
+  // #73: price mentioned before the buy/enter verb (re-entry phrasing) now matches too
+  test('pass-buy-with-price: price-then-enter re-entry phrasing', () => {
+    expect(classifySignal(pad("LVS hit $41 for a split second but that was probably on the bid/sell quote and not the ask/buy quote, would be my assumption. If it gets back fairly close to $41ish again, you can enter if you didn't get filled already."), MIN)).toBe('pass-buy-with-price');
+  });
+
+  // #78 case 2: true-positive anchor, kept passing so future NEG_PATTERNS tightening doesn't
+  // start suppressing it — only 70 chars, correctly fires because 'actionable' never checks length.
+  test('pass-sell-fraction: #78 anchor — "close enough now" immediacy', () => {
+    expect(classifySignal("In fact, it's close enough now to $28ish, that I'd SELL HALF here/now.", MIN)).toBe('pass-sell-fraction');
+  });
+
+  // #78 case 5: true-positive anchor — a genuine present-tense directive up front, even though
+  // followed by retrospective color commentary in the same style as #78's case-4 false positive.
+  test('pass-sell-fraction: #78 anchor — directive followed by retrospective color', () => {
+    expect(classifySignal(pad("You can sell half now. We'll eye it a lot closer between $90ish and $100ish. Also, its got earnings coming out on 8/05 before the bell."), MIN)).toBe('pass-sell-fraction');
   });
 
   test('fail-no-signal: general discussion', () => {
