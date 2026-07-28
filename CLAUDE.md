@@ -59,9 +59,15 @@ npm run ios         # Build and run on iOS simulator
 
 ## Development Workflow
 
-Use feature branches for all work (e.g., `feature/push-notifications`). Merge to `main` when complete. This keeps history clean and provides safe rollback.
+Feature branches merge to `main`: `feature/<slug>` (e.g. `feature/push-notifications`), `fix/<slug>`, `docs/<slug>`, `chore/<slug>`. This repo squash-merges every PR — see the global git workflow notes (`~/.claude/CLAUDE.md`) for what that implies for branch stacking and issue-number tagging.
 
-Track planned work, bugs, and open questions as GitHub Issues — not in this file. A roadmap list here goes stale the moment work lands and nobody remembers to edit it back out.
+Track planned work, bugs, and open questions as GitHub Issues — not in this file. A roadmap list here goes stale the moment work lands and nobody remembers to edit it back out. Before committing a fix for a bug reported conversationally (no issue number given), check `gh issue list --search "<keyword>"` — it may already be filed.
+
+Never run `wrangler deploy`, or ask about deploying the Cloudflare Worker — the user always deploys it themselves.
+
+Never run `npx expo prebuild` or delete `ios/`/`android/` without asking first: an incremental prebuild usually preserves Xcode signing config, but a full regen from a missing `ios/` wipes it (no `ios.appleTeamId` in `app.json`).
+
+Don't probe the live logicalinvestor.net site with curl to test a hypothesis about URL/routing/feed behavior — ask the user directly; they have first-hand knowledge of how the site works.
 
 ## Tech Stack
 
@@ -88,6 +94,14 @@ npm run android     # Run on Android emulator
 npm run web         # Run web version
 npm run lint        # Run ESLint
 ```
+
+### Testing
+```bash
+npm test                              # Run app test suite
+npm test -- <path>                    # Run a specific test file
+npm test --prefix cloudflare-worker   # Run Worker test suite (no cd needed)
+```
+Typecheck the Worker without `cd`: `tsc -p cloudflare-worker/tsconfig.json`.
 
 ### Project Setup
 ```bash
@@ -119,6 +133,8 @@ Both calls also pass `--non-interactive`, which skips the "Do you want to log in
 - Requires Apple Developer Program membership ($99/year) to submit to App Store
 - Free Expo account supported; paid plans offer priority build queue
 - See [Expo EAS Build docs](https://docs.expo.dev/build/setup/) for details
+
+**Version bump timing**: Bump `package.json`'s `version` as the first commit on a release branch, not right before the build (see `~/.claude/CLAUDE.md` for the general version-bump-timing principle). `app.config.js` reads `version` directly from `package.json` at build time; `app.json` has no `version` field, so there's nothing to sync there manually. The build *number* (distinct from version) auto-increments separately via `eas.json`'s `autoIncrement: true` on the `production` profile.
 
 ## Architecture
 
@@ -471,6 +487,7 @@ Run on a physical device before each TestFlight submission.
 - **Feed Organization**: Uses `FeedKey` type to ensure type-safe feed references throughout app
 - **Post Link Auth**: RSS `<link>` values never carry `feed_token` — `ForumFeed.tsx`'s `openPostLink()` appends it via `URL.searchParams.set('feed_token', token)` before opening the link with `Linking.openURL()` in the system browser (not an in-app WebView)
 - **State updaters**: Do not perform async side effects (e.g. storage writes) inside React `setState` updater functions — run them before the state update and await completion
+- **No warnings tolerated**: lint/build warnings in `app/`, `components/`, `services/`, `contexts/`, `hooks/`, or `cloudflare-worker/src/` are never acceptable, including ones that pre-date a given change (see `~/.claude/CLAUDE.md`'s engineering defaults). Only warnings originating upstream (a dependency, generated code) may stand.
 
 ## File Structure
 
