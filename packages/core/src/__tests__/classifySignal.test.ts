@@ -73,7 +73,7 @@ describe('classifySignal — positive patterns', () => {
   });
 
   test('pass-tranche-price: 1st tranche', () => {
-    expect(classifySignal(pad('1st Tranche: $210 or below. ACN is trading in the $198s right now.'), MIN)).toBe('pass-tranche-price');
+    expect(classifySignal(pad('1st Tranche: $210 or below. FQ is trading in the $198s right now.'), MIN)).toBe('pass-tranche-price');
   });
 
   test('pass-tranche-price: 3rd tranche', () => {
@@ -81,11 +81,11 @@ describe('classifySignal — positive patterns', () => {
   });
 
   test('pass-get-in-tranche', () => {
-    expect(classifySignal(pad("ACN is SO stretched below its 200-week MA, let's go ahead and ensure we get in our 3rd tranche NOW"), MIN)).toBe('pass-get-in-tranche');
+    expect(classifySignal(pad("FQ is SO stretched below its 200-week MA, let's go ahead and ensure we get in our 3rd tranche NOW"), MIN)).toBe('pass-get-in-tranche');
   });
 
   test('pass-buy-with-price', () => {
-    expect(classifySignal(pad('Buy Best Buy (BBY) at the market as long as the stock is at $66 per share or LOWER'), MIN)).toBe('pass-buy-with-price');
+    expect(classifySignal(pad('Buy QTPZ at the market as long as the stock is at $66 per share or LOWER'), MIN)).toBe('pass-buy-with-price');
   });
 
   test('pass-sell-fraction', () => {
@@ -93,7 +93,7 @@ describe('classifySignal — positive patterns', () => {
   });
 
   test('pass-averaging-down', () => {
-    expect(classifySignal(pad('If FXY dips anywhere into the $81ish area, that\'s close enough to get your averaging down'), MIN)).toBe('pass-averaging-down');
+    expect(classifySignal(pad('If GHK dips anywhere into the $81ish area, that\'s close enough to get your averaging down'), MIN)).toBe('pass-averaging-down');
   });
 
   // #76: a clearer broadcast-framed anchor alongside the existing, more ambiguous case above
@@ -109,7 +109,7 @@ describe('classifySignal — positive patterns', () => {
 
   // #73: price mentioned before the buy/enter verb (re-entry phrasing) now matches too
   test('pass-buy-with-price: price-then-enter re-entry phrasing', () => {
-    expect(classifySignal(pad("LVS hit $41 for a split second but that was probably on the bid/sell quote and not the ask/buy quote, would be my assumption. If it gets back fairly close to $41ish again, you can enter if you didn't get filled already."), MIN)).toBe('pass-buy-with-price');
+    expect(classifySignal(pad("MNP hit $41 for a split second but that was probably on the bid/sell quote and not the ask/buy quote, would be my assumption. If it gets back fairly close to $41ish again, you can enter if you didn't get filled already."), MIN)).toBe('pass-buy-with-price');
   });
 
   // #78 case 2: true-positive anchor, kept passing so future NEG_PATTERNS tightening doesn't

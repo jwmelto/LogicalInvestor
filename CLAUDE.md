@@ -187,7 +187,7 @@ Each entry in `FEEDS` includes a `hasSubFeeds` boolean. Feeds with `hasSubFeeds:
 
 Each entry also owns its own `isVisible(visibility: ForumVisibility): boolean` method — Members Area/Members Forum always return `true`; Stock/Options Insights defer to the user's stored Settings toggle. A feed answers its own visibility question directly rather than a shared function special-casing every key by name.
 
-**Topic Sub-feeds**: For a topic URL like `https://logicalinvestor.net/forums/topic/nvo/`, the sub-feed is `https://logicalinvestor.net/forums/topic/nvo/feed/`. Derived dynamically in `fetchTopicFeed()` — no hardcoding needed.
+**Topic Sub-feeds**: For a topic URL like `https://logicalinvestor.net/forums/topic/zqr/`, the sub-feed is `https://logicalinvestor.net/forums/topic/zqr/feed/`. Derived dynamically in `fetchTopicFeed()` — no hardcoding needed.
 
 **Parsing**: Uses `fast-xml-parser` with config:
 ```typescript

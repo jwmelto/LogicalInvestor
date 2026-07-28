@@ -23,8 +23,8 @@ describe('topicService', () => {
   describe('extractTopicSlugFromLink', () => {
     it('should extract slug from standard topic link', () => {
       expect(
-        extractTopicSlugFromLink('https://logicalinvestor.net/forums/topic/nvo/')
-      ).toBe('nvo');
+        extractTopicSlugFromLink('https://logicalinvestor.net/forums/topic/zqr/')
+      ).toBe('zqr');
     });
 
     it('should extract slug from link with post anchor', () => {
@@ -37,8 +37,8 @@ describe('topicService', () => {
 
     it('should handle links with trailing slash', () => {
       expect(
-        extractTopicSlugFromLink('https://logicalinvestor.net/forums/topic/tsla/')
-      ).toBe('tsla');
+        extractTopicSlugFromLink('https://logicalinvestor.net/forums/topic/plmk/')
+      ).toBe('plmk');
     });
 
     it('should return null for invalid URLs', () => {
@@ -54,20 +54,20 @@ describe('topicService', () => {
 
   describe('generateTopicId', () => {
     it('should build the id from forum key and slug, not title', () => {
-      expect(generateTopicId(FK.membersForum, 'nvo')).toBe('membersForum:nvo');
+      expect(generateTopicId(FK.membersForum, 'zqr')).toBe('membersForum:zqr');
     });
 
     it('should produce different ids for different forums with the same slug', () => {
-      expect(generateTopicId(FK.membersForum, 'nvo')).not.toBe(
-        generateTopicId(FK.stockInsights, 'nvo')
+      expect(generateTopicId(FK.membersForum, 'zqr')).not.toBe(
+        generateTopicId(FK.stockInsights, 'zqr')
       );
     });
   });
 
   describe('generateTopicUrl', () => {
     it('should generate the bare topic URL from slug', () => {
-      expect(generateTopicUrl('nvo')).toBe(
-        'https://logicalinvestor.net/forums/topic/nvo/'
+      expect(generateTopicUrl('zqr')).toBe(
+        'https://logicalinvestor.net/forums/topic/zqr/'
       );
     });
 
@@ -108,48 +108,48 @@ describe('topicService', () => {
 
     it('should discover topics from feed items', async () => {
       const items = [
-        createFeedItem('NVO', 'nvo'),
-        createFeedItem('TSLA', 'tsla'),
-        createFeedItem('NVO', 'nvo'), // Duplicate
+        createFeedItem('ZQR', 'zqr'),
+        createFeedItem('PLMK', 'plmk'),
+        createFeedItem('ZQR', 'zqr'), // Duplicate
       ];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(2);
-      expect(discovered.map(t => t.name)).toContain('NVO');
-      expect(discovered.map(t => t.name)).toContain('TSLA');
-      expect(discovered.map(t => t.slug)).toContain('nvo');
-      expect(discovered.map(t => t.slug)).toContain('tsla');
+      expect(discovered.map(t => t.name)).toContain('ZQR');
+      expect(discovered.map(t => t.name)).toContain('PLMK');
+      expect(discovered.map(t => t.slug)).toContain('zqr');
+      expect(discovered.map(t => t.slug)).toContain('plmk');
     });
 
     it('should deduplicate topics by slug', async () => {
       const items = [
-        createFeedItem('NVO', 'nvo'),
-        createFeedItem('NVO', 'nvo'),
-        createFeedItem('NVO', 'nvo'),
+        createFeedItem('ZQR', 'zqr'),
+        createFeedItem('ZQR', 'zqr'),
+        createFeedItem('ZQR', 'zqr'),
       ];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(1);
-      expect(discovered[0].name).toBe('NVO');
-      expect(discovered[0].slug).toBe('nvo');
+      expect(discovered[0].name).toBe('ZQR');
+      expect(discovered[0].slug).toBe('zqr');
     });
 
     it('should treat the same title with two different slugs as two distinct topics', async () => {
       // Title alone is not a stable identity — a moderator edit or an unrelated topic reusing a
       // title must not collide. Slug (from the URL) is what actually distinguishes them.
       const items = [
-        createFeedItem('NVO', 'nvo-original'),
-        createFeedItem('NVO', 'nvo-relaunch'),
+        createFeedItem('ZQR', 'zqr-original'),
+        createFeedItem('ZQR', 'zqr-relaunch'),
       ];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(2);
       expect(discovered.map(t => t.id).sort()).toEqual([
-        'membersForum:nvo-original',
-        'membersForum:nvo-relaunch',
+        'membersForum:zqr-original',
+        'membersForum:zqr-relaunch',
       ]);
     });
 
@@ -157,44 +157,44 @@ describe('topicService', () => {
       // The first item encountered for a topicId sets the record (RSS lists items newest-first);
       // a later item with the same slug but a different title doesn't create a second record.
       const items = [
-        createFeedItem('NVO', 'nvo'),
-        createFeedItem('NVO (renamed)', 'nvo'),
+        createFeedItem('ZQR', 'zqr'),
+        createFeedItem('ZQR (renamed)', 'zqr'),
       ];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(1);
-      expect(discovered[0].id).toBe('membersForum:nvo');
-      expect(discovered[0].name).toBe('NVO');
+      expect(discovered[0].id).toBe('membersForum:zqr');
+      expect(discovered[0].name).toBe('ZQR');
       expect(discovered[0].itemCount).toBe(2);
     });
 
     it('should count items per topic', async () => {
       const items = [
-        createFeedItem('NVO', 'nvo'),
-        createFeedItem('NVO', 'nvo'),
-        createFeedItem('TSLA', 'tsla'),
+        createFeedItem('ZQR', 'zqr'),
+        createFeedItem('ZQR', 'zqr'),
+        createFeedItem('PLMK', 'plmk'),
       ];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
-      const nvoTopic = discovered.find(t => t.name === 'NVO');
-      const tslaTopic = discovered.find(t => t.name === 'TSLA');
+      const zqrTopic = discovered.find(t => t.name === 'ZQR');
+      const plmkTopic = discovered.find(t => t.name === 'PLMK');
 
-      expect(nvoTopic?.itemCount).toBe(2);
-      expect(tslaTopic?.itemCount).toBe(1);
+      expect(zqrTopic?.itemCount).toBe(2);
+      expect(plmkTopic?.itemCount).toBe(1);
     });
 
     it('should generate unique topic IDs by forum and slug', async () => {
-      const items = [createFeedItem('NVO', 'nvo')];
+      const items = [createFeedItem('ZQR', 'zqr')];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
-      expect(discovered[0].id).toBe('membersForum:nvo');
+      expect(discovered[0].id).toBe('membersForum:zqr');
     });
 
     it('should set discoveredAt to current time', async () => {
-      const items = [createFeedItem('NVO')];
+      const items = [createFeedItem('ZQR')];
       const beforeTime = Date.now();
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
@@ -205,7 +205,7 @@ describe('topicService', () => {
     });
 
     it('should assign forumKey to each topic', async () => {
-      const items = [createFeedItem('NVO')];
+      const items = [createFeedItem('ZQR')];
 
       const discovered = await discoverTopicsFromFeedItems(items, FK.stockInsights);
 
@@ -220,7 +220,7 @@ describe('topicService', () => {
 
     it('should skip items with invalid links', async () => {
       const items = [
-        createFeedItem('NVO', 'nvo'),
+        createFeedItem('ZQR', 'zqr'),
         {
           guid: 'invalid-item',
           title: 'Invalid Post',
@@ -236,7 +236,7 @@ describe('topicService', () => {
       const discovered = await discoverTopicsFromFeedItems(items, FK.membersForum);
 
       expect(discovered).toHaveLength(1);
-      expect(discovered[0].name).toBe('NVO');
+      expect(discovered[0].name).toBe('ZQR');
     });
   });
 });

@@ -41,7 +41,7 @@ describe('stripHtml', () => {
 // spec) — this feed's title/description are CDATA-wrapped, so extractRssItems must decode itself.
 describe('fast-xml-parser does not decode entities inside CDATA (why extractRssItems must)', () => {
   const xml = `<?xml version="1.0"?><rss><channel><item>
-    <title><![CDATA[Reply To: HPQ]]></title>
+    <title><![CDATA[Reply To: WKD]]></title>
     <description><![CDATA[<p>I&#8217;m up &amp; running &nbsp; here</p>]]></description>
   </item></channel></rss>`;
 
