@@ -173,7 +173,17 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   // the primary boundary.
   [/\$\d+(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\b(buy|enter)\b|\b(buy|enter)\b(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\$\d+/i, 'pass-buy-with-price'],
   [/\bsell(?:ing)?\s+(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,             'pass-sell-fraction'],
-  [/\baveraging?\s+down\b/i,                                                       'pass-averaging-down'],
+  // Bare "averaging down" is discussed constantly as general market commentary — a live false
+  // positive ("in some cases, that'll give us averaging down opportunities...") had no directive
+  // verb anywhere near it, just abstract description. Unlike every other POS_PATTERN, the old
+  // bare-noun-phrase match had no verb/directive component at all, which is why this single
+  // pattern accounted for 4 independent false positives (#72, #75, #78 case 3, and this one).
+  // Requiring "get your" (the only directive verb seen in real true-positive reports so far)
+  // immediately before it fixes all four without a price requirement — a nearby price isn't the
+  // actual discriminator either, since "get your averaging down now" has no price at all. Narrow
+  // on purpose: extend the verb alternation (e.g. "put in your", "add your") only when a real
+  // report uses different directive phrasing, same as the rest of this pattern list.
+  [/\bget\s+your\b[\s\S]{0,20}\baveraging?\s+down\b/i,                           'pass-averaging-down'],
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
 ];
 

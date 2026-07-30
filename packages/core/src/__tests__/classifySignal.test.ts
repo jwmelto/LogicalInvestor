@@ -62,8 +62,8 @@ describe('classifySignal — negative patterns override positive matches', () =>
   });
 
   test('historical suppresses averaging-down match', () => {
-    // "averaging down" would match pass-averaging-down, but historical reference takes priority
-    expect(classifySignal(pad("Yeah, I was urging everyone to get it because of averaging down near $80"), MIN)).toBe('fail-historical');
+    // "get your averaging down" would match pass-averaging-down, but historical reference takes priority
+    expect(classifySignal(pad("Yeah, I was urging you to get your averaging down orders in near $80"), MIN)).toBe('fail-historical');
   });
 });
 
@@ -115,6 +115,18 @@ describe('classifySignal — positive patterns', () => {
   // the stock — see #76 for the open "individual vs. broadcast" design question, not resolved here).
   test('pass-averaging-down: explicit broadcast framing', () => {
     expect(classifySignal(pad('Everyone, if it dips into the $81ish area again, that is close enough to get your averaging down orders in.'), MIN)).toBe('pass-averaging-down');
+  });
+
+  // #78 case 3: abstract description of a downturn's general effects, no directive verb anywhere
+  // near "averaging down" — the fourth independent real-world false positive on this one pattern.
+  test('fail-no-signal: "averaging down" as abstract market commentary, no directive', () => {
+    expect(classifySignal(pad("Yep, love those times too, y'all. There will be times when the market downturn gets so strong that it affects most all stocks (including ours). But in some cases, that'll give us averaging down opportunities and higher blended dividend yields while we wait. The good thing is that institutions have to remain mostly invested at all times. Therefore, they've got to look for safer places to hide out. And our type of stocks meet that criteria."), MIN)).toBe('fail-no-signal');
+  });
+
+  // #78 case 3's other gap: "leave ... in place" describes the status quo, no change, and still
+  // has no directive verb near "averaging down" — now also fixed by the same tightened pattern.
+  test('fail-no-signal: "averaging down" describing an unchanged status quo', () => {
+    expect(classifySignal(pad("Yes, if it goes back to $22ish, you can put back on what you sold. Correct. And we'd leave present averaging down orders in place."), MIN)).toBe('fail-no-signal');
   });
 
   test('pass-immediately', () => {
