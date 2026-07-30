@@ -40,6 +40,7 @@ interface SectionState {
   loading: boolean;
   error?: string;
   isSubscribed(): boolean;
+  hasConfirmedNoAccess(): boolean;
 }
 
 async function getTopicExpandedStates(feedKey: FeedKey): Promise<Record<string, boolean>> {
@@ -98,6 +99,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       loading: false,
       error: result.error,
       isSubscribed: result.isSubscribed,
+      hasConfirmedNoAccess: result.hasConfirmedNoAccess,
     };
   }
 
@@ -349,7 +351,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
-  if (!section.isSubscribed() && !section.error) {
+  if (section.hasConfirmedNoAccess()) {
     return (
       <View style={[styles.center, { backgroundColor: c.bg }]}>
         <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>

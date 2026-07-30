@@ -100,7 +100,8 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     await Promise.all(keys.map(async (k) => {
       if (!FEEDS[k].isVisible(visibility)) return;
       const result = next[k]!;
-      if (!result.isSubscribed()) { setFeedUnread(k, false); return; }
+      if (result.hasConfirmedNoAccess()) { setFeedUnread(k, false); return; }
+      if (result.error) return; // fetch failed — leave existing badge state alone; retried next cycle
 
       if (!FEEDS[k].hasSubFeeds) {
         await markFlatFeedSeen(k, result.items);

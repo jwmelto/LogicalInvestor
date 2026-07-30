@@ -60,10 +60,22 @@ export interface FeedResult {
   // Zero items with no fetch error is unconditional proof of no access — the site's RSS always
   // returns a forum's last 25 posts to anyone with real access.
   isSubscribed(): boolean;
+  // True only when the fetch actually succeeded and confirmed zero items — the one case that
+  // legitimately means "no access." A fetch error also leaves items empty, so callers that would
+  // otherwise treat "isSubscribed() === false" as reason to clear stored state (a badge, a "no
+  // access" UI) must use this instead — a transient network failure must never look identical to
+  // a real access check.
+  hasConfirmedNoAccess(): boolean;
 }
 
 function feedResult(feedKey: FeedKey, items: RssItem[], error?: string): FeedResult {
-  return { feedKey, items, error, isSubscribed: () => items.length > 0 };
+  return {
+    feedKey,
+    items,
+    error,
+    isSubscribed: () => items.length > 0,
+    hasConfirmedNoAccess: () => !error && items.length === 0,
+  };
 }
 
 async function fetchFeed(feedKey: FeedKey): Promise<FeedResult> {
