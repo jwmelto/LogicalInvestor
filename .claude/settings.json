@@ -7,6 +7,23 @@
           {
             "type": "command",
             "command": "python3 -c \"\nimport sys, json, re\ndata = json.load(sys.stdin)\ncmd = data.get('tool_input', {}).get('command', '')\nif re.search(r'(?:^|&&|;)\\s*cd\\s', cmd) and '(cd ' not in cmd:\n    print(json.dumps({'decision': 'block', 'reason': 'Use (cd /path && cmd) subshell syntax, not bare cd'}))\n    sys.exit(0)\n\""
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, re\ndata = json.load(sys.stdin)\ncmd = data.get('tool_input', {}).get('command', '')\nfor seg in re.split(r'&&|\\|\\||;|\\|', cmd):\n    if re.search(r'\\bgit\\s+add\\b', seg):\n        tokens = seg.split()\n        if '-A' in tokens or '--all' in tokens or '.' in tokens or './' in tokens:\n            print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'Stage files explicitly by name (git add <file>) -- never git add -A/--all or a bare git add . or ./'}}))\n            sys.exit(0)\n\""
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, re\ndata = json.load(sys.stdin)\ncmd = data.get('tool_input', {}).get('command', '')\nif re.search(r'\\bwrangler\\s+deploy\\b', cmd):\n    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'Never deploy the Cloudflare Worker -- the user always deploys it themselves.'}}))\n    sys.exit(0)\nif re.search(r'\\bexpo\\s+prebuild\\b', cmd) or re.search(r'\\brm\\s+-rf\\s+(ios|android)\\b', cmd):\n    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'ask', 'permissionDecisionReason': 'expo prebuild / deleting ios or android needs explicit confirmation first -- an incremental prebuild is usually safe but a full regen wipes Xcode signing config.'}}))\n    sys.exit(0)\n\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport sys, json, subprocess, os\ndata = json.load(sys.stdin)\nfile_path = data.get('tool_input', {}).get('file_path', '')\nif not file_path:\n    sys.exit(0)\ndirectory = os.path.dirname(os.path.abspath(file_path))\ntry:\n    branch = subprocess.run(['git', '-C', directory, 'branch', '--show-current'], capture_output=True, text=True, check=True).stdout.strip()\nexcept Exception:\n    sys.exit(0)\nif branch == 'main':\n    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': 'On main -- create/checkout a feature branch before editing tracked files (git checkout -b feature/<slug>).'}}))\n    sys.exit(0)\n\""
           }
         ]
       }
