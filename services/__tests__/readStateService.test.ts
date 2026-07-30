@@ -47,7 +47,7 @@ const mockGetTopicsForForum = getTopicsForForum as jest.Mock;
 const mockGetAllTopicSubscriptions = getAllTopicSubscriptions as jest.Mock;
 const mockStorageGetObject = storageGetObject as jest.Mock;
 
-const item = (guid: string, slug = 'nvo'): RssItem => ({
+const item = (guid: string, slug = 'zqr'): RssItem => ({
   guid,
   title: 'Post',
   author: 'Author',
@@ -103,68 +103,68 @@ describe('viewScope', () => {
 
 describe('markScopesSeen / markGuidsRead', () => {
   it('inserts new guids as unread, never resurrecting an already-read guid', async () => {
-    await markGuidsRead({ 'membersForum:nvo': ['guid-1'] }); // guid-1 starts out read
-    await markScopesSeen({ 'membersForum:nvo': ['guid-1', 'guid-2'] }); // resurfaces + one new
+    await markGuidsRead({ 'membersForum:zqr': ['guid-1'] }); // guid-1 starts out read
+    await markScopesSeen({ 'membersForum:zqr': ['guid-1', 'guid-2'] }); // resurfaces + one new
 
     const scopes = await getAllScopes();
-    expect(scopes['membersForum:nvo']).toEqual({ 'guid-1': true, 'guid-2': false });
+    expect(scopes['membersForum:zqr']).toEqual({ 'guid-1': true, 'guid-2': false });
   });
 
   it('keeps two scopes independent even when guids are identical strings', async () => {
     await markScopesSeen({
       [FK.membersArea]: ['shared-guid'],
-      'membersForum:nvo': ['shared-guid'],
+      'membersForum:zqr': ['shared-guid'],
     });
     await markGuidsRead({ [FK.membersArea]: ['shared-guid'] });
 
     const scopes = await getAllScopes();
     expect(scopes[FK.membersArea]).toEqual({ 'shared-guid': true });
-    expect(scopes['membersForum:nvo']).toEqual({ 'shared-guid': false });
+    expect(scopes['membersForum:zqr']).toEqual({ 'shared-guid': false });
   });
 
   it('writes a multi-scope markGuidsRead call in a single storage write', async () => {
     await markScopesSeen({
-      'membersForum:nvo': ['g1'],
-      'membersForum:tsla': ['g2'],
+      'membersForum:zqr': ['g1'],
+      'membersForum:plmk': ['g2'],
     });
     (storageSetObject as jest.Mock).mockClear();
 
     await markGuidsRead({
-      'membersForum:nvo': ['g1'],
-      'membersForum:tsla': ['g2'],
+      'membersForum:zqr': ['g1'],
+      'membersForum:plmk': ['g2'],
     });
 
     expect(storageSetObject).toHaveBeenCalledTimes(1);
     const scopes = await getAllScopes();
-    expect(scopes['membersForum:nvo']).toEqual({ g1: true });
-    expect(scopes['membersForum:tsla']).toEqual({ g2: true });
+    expect(scopes['membersForum:zqr']).toEqual({ g1: true });
+    expect(scopes['membersForum:plmk']).toEqual({ g2: true });
   });
 
   it('is a no-op when every update list is empty', async () => {
-    await markScopesSeen({ 'membersForum:nvo': [] });
+    await markScopesSeen({ 'membersForum:zqr': [] });
     expect(storageSetObject).not.toHaveBeenCalled();
   });
 });
 
 describe('hasUnread / isRead / markRead / markAllRead (single-scope wrappers)', () => {
   it('hasUnread is false for a scope that has never been seen', async () => {
-    expect(await hasUnread('membersForum:nvo')).toBe(false);
+    expect(await hasUnread('membersForum:zqr')).toBe(false);
   });
 
   it('hasUnread flips to false once every known guid is read', async () => {
-    await markScopesSeen({ 'membersForum:nvo': ['g1', 'g2'] });
-    expect(await hasUnread('membersForum:nvo')).toBe(true);
+    await markScopesSeen({ 'membersForum:zqr': ['g1', 'g2'] });
+    expect(await hasUnread('membersForum:zqr')).toBe(true);
 
-    await markAllRead('membersForum:nvo', ['g1', 'g2']);
-    expect(await hasUnread('membersForum:nvo')).toBe(false);
+    await markAllRead('membersForum:zqr', ['g1', 'g2']);
+    expect(await hasUnread('membersForum:zqr')).toBe(false);
   });
 
   it('isRead reflects a single guid without affecting others in the same scope', async () => {
-    await markScopesSeen({ 'membersForum:nvo': ['g1', 'g2'] });
-    await markRead('membersForum:nvo', 'g1');
+    await markScopesSeen({ 'membersForum:zqr': ['g1', 'g2'] });
+    await markRead('membersForum:zqr', 'g1');
 
-    expect(await isRead('membersForum:nvo', 'g1')).toBe(true);
-    expect(await isRead('membersForum:nvo', 'g2')).toBe(false);
+    expect(await isRead('membersForum:zqr', 'g1')).toBe(true);
+    expect(await isRead('membersForum:zqr', 'g2')).toBe(false);
   });
 });
 
@@ -179,31 +179,31 @@ describe('markFlatFeedSeen', () => {
 describe('topicUnreadForForum', () => {
   it('includes only topics whose id is prefixed with this forum key', () => {
     const scopes = {
-      'membersForum:nvo': { g1: false },
-      'stockInsights:tsla': { g2: false },
+      'membersForum:zqr': { g1: false },
+      'stockInsights:plmk': { g2: false },
     };
     expect(topicUnreadForForum(FK.membersForum, scopes, {})).toEqual({
-      'membersForum:nvo': true,
+      'membersForum:zqr': true,
     });
   });
 
   it('excludes a silenced topic entirely, not just as false', () => {
-    const scopes = { 'membersForum:nvo': { g1: false } };
-    const subs = { 'membersForum:nvo': false };
+    const scopes = { 'membersForum:zqr': { g1: false } };
+    const subs = { 'membersForum:zqr': false };
     expect(topicUnreadForForum(FK.membersForum, scopes, subs)).toEqual({});
   });
 
   it('defaults an unlisted topic to subscribed (included), not silenced', () => {
-    const scopes = { 'membersForum:nvo': { g1: false } };
+    const scopes = { 'membersForum:zqr': { g1: false } };
     expect(topicUnreadForForum(FK.membersForum, scopes, {})).toEqual({
-      'membersForum:nvo': true,
+      'membersForum:zqr': true,
     });
   });
 
   it('reports false for a topic whose known guids are all read', () => {
-    const scopes = { 'membersForum:nvo': { g1: true } };
+    const scopes = { 'membersForum:zqr': { g1: true } };
     expect(topicUnreadForForum(FK.membersForum, scopes, {})).toEqual({
-      'membersForum:nvo': false,
+      'membersForum:zqr': false,
     });
   });
 
@@ -214,9 +214,9 @@ describe('topicUnreadForForum', () => {
 
 describe('detectForumUnread', () => {
   it('fast path: newest considered item already known — zero fetchTopicFeed calls, zero touched topics', async () => {
-    await markScopesSeen({ 'membersForum:nvo': ['g1'] });
+    await markScopesSeen({ 'membersForum:zqr': ['g1'] });
 
-    const result = await detectForumUnread(FK.membersForum, [item('g1', 'nvo')]);
+    const result = await detectForumUnread(FK.membersForum, [item('g1', 'zqr')]);
 
     expect(result).toEqual({});
     expect(mockFetchTopicFeed).not.toHaveBeenCalled();
@@ -224,38 +224,38 @@ describe('detectForumUnread', () => {
   });
 
   it('complete window: a known item partway through the list bounds the new set — zero fetchTopicFeed calls', async () => {
-    await markScopesSeen({ 'membersForum:nvo': ['g-old'] });
+    await markScopesSeen({ 'membersForum:zqr': ['g-old'] });
 
     // Newest-first: g-new-2, g-new-1, g-old (known) — g-old proves completeness.
-    const items = [item('g-new-2', 'tsla'), item('g-new-1', 'nvo'), item('g-old', 'nvo')];
+    const items = [item('g-new-2', 'plmk'), item('g-new-1', 'zqr'), item('g-old', 'zqr')];
     const result = await detectForumUnread(FK.membersForum, items);
 
-    expect(result).toEqual({ 'membersForum:tsla': true, 'membersForum:nvo': true });
+    expect(result).toEqual({ 'membersForum:plmk': true, 'membersForum:zqr': true });
     expect(mockFetchTopicFeed).not.toHaveBeenCalled();
     expect(mockGetTopicsForForum).not.toHaveBeenCalled();
 
     const scopes = await getAllScopes();
-    expect(scopes['membersForum:nvo']).toEqual({ 'g-old': false, 'g-new-1': false });
-    expect(scopes['membersForum:tsla']).toEqual({ 'g-new-2': false });
+    expect(scopes['membersForum:zqr']).toEqual({ 'g-old': false, 'g-new-1': false });
+    expect(scopes['membersForum:plmk']).toEqual({ 'g-new-2': false });
   });
 
   it('incomplete window: nothing known in the whole window — bounded fallback deep-dive, restricted to subscribed topics', async () => {
     mockGetTopicsForForum.mockResolvedValue([
-      topic('nvo', 3),
-      topic('tsla', 2),
+      topic('zqr', 3),
+      topic('plmk', 2),
       topic('silenced-topic', 1),
     ]);
     mockGetAllTopicSubscriptions.mockResolvedValue({ 'membersForum:silenced-topic': false });
     mockFetchTopicFeed.mockImplementation(async (url: string) =>
-      url.includes('/nvo/') ? [item('deep-g1', 'nvo')] : [item('deep-g2', 'tsla')]
+      url.includes('/zqr/') ? [item('deep-g1', 'zqr')] : [item('deep-g2', 'plmk')]
     );
 
-    const items = [item('g-new', 'nvo')]; // never-before-seen, window exhausted with no boundary
+    const items = [item('g-new', 'zqr')]; // never-before-seen, window exhausted with no boundary
     const result = await detectForumUnread(FK.membersForum, items);
 
-    expect(mockFetchTopicFeed).toHaveBeenCalledTimes(2); // nvo + tsla, not the silenced topic
-    expect(result['membersForum:nvo']).toBe(true);
-    expect(result['membersForum:tsla']).toBe(true);
+    expect(mockFetchTopicFeed).toHaveBeenCalledTimes(2); // zqr + plmk, not the silenced topic
+    expect(result['membersForum:zqr']).toBe(true);
+    expect(result['membersForum:plmk']).toBe(true);
     expect(result['membersForum:silenced-topic']).toBeUndefined();
   });
 

@@ -92,7 +92,7 @@ describe('matchesFilter', () => {
     });
 
     it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
-      const starred = item(feedKey, { title: '*AAPL Trade', description: longWithSignal });
+      const starred = item(feedKey, { title: '*VUTS Trade', description: longWithSignal });
       const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
       expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(true);
       expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
@@ -153,10 +153,10 @@ describe('matchesFilter', () => {
 
 describe('stripReplyPrefix', () => {
   it('strips "Reply To: " from the start', () => {
-    expect(stripReplyPrefix('Reply To: *AAPL Trade')).toBe('*AAPL Trade');
+    expect(stripReplyPrefix('Reply To: *VUTS Trade')).toBe('*VUTS Trade');
   });
   it('leaves titles without the prefix unchanged', () => {
-    expect(stripReplyPrefix('*AAPL Trade')).toBe('*AAPL Trade');
+    expect(stripReplyPrefix('*VUTS Trade')).toBe('*VUTS Trade');
     expect(stripReplyPrefix('Market update')).toBe('Market update');
   });
   it('trims whitespace', () => {
