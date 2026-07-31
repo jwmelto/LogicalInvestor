@@ -13,9 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { fetchTopicFeed, RssItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
-import { getAllScopes, viewScope, markRead, markAllRead, markGuidsRead, markScopesSeen } from '../services/readStateService';
+import { getAllScopes, viewScope, markRead, markAllRead, markGuidsRead, markScopesSeen, clearScope } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
-import { getTopicsForForum, generateTopicUrl, Topic } from '../services/topicService';
+import { getTopicsForForum, Topic } from '../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
 import { getToken } from '../services/authService';
@@ -72,15 +72,22 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       const subs = await getAllTopicSubscriptions(); // one read, not one per topic
       const isSubscribed = (topicId: string) => subs[topicId] ?? true;
 
-      topicSections = await Promise.all(
+      topicSections = (await Promise.all(
         allTopics
           .filter((topic) => isSubscribed(topic.id))
-          .map(async (topic) => {
+          .map(async (topic): Promise<TopicSection | null> => {
             const isExpanded = topicExpandedStates[topic.id] ?? false;
             let items: RssItem[] = [];
 
             if (isExpanded) {
-              items = await fetchTopicFeed(generateTopicUrl(topic.slug), feedKey);
+              const fetched = await fetchTopicFeed(topic, feedKey);
+              // Confirmed deleted by this very fetch — drop it now rather than waiting for the
+              // next refresh; there's no cached content to fall back to showing anyway.
+              if (fetched.deleted) {
+                await clearScope(topic.id);
+                return null;
+              }
+              items = fetched.items;
             }
 
             return {
@@ -90,7 +97,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
               loading: false,
             };
           })
-      );
+      )).filter((section): section is TopicSection => section !== null);
     }
 
     return {
@@ -195,26 +202,36 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
 
     try {
-      const posts = await fetchTopicFeed(generateTopicUrl(topic.slug), feedKey);
-      // Write-through to the same store detection uses, so a manual expand short-circuits the
-      // next detection pass for this topic.
-      await markScopesSeen({ [topic.id]: posts.map((p) => p.guid) });
+      const { items: posts, deleted } = await fetchTopicFeed(topic, feedKey);
 
-      const scopes = await getAllScopes();
-      const view = viewScope(scopes[topic.id] ?? {});
-      setItemReadStates((prev) => {
-        const updated = { ...prev };
-        posts.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
-        return updated;
-      });
+      if (deleted) {
+        // No lingering read-state for a topic that no longer exists — clean, not just absent.
+        await clearScope(topic.id);
+      } else {
+        // Write-through to the same store detection uses, so a manual expand short-circuits the
+        // next detection pass for this topic.
+        await markScopesSeen({ [topic.id]: posts.map((p) => p.guid) });
+
+        const scopes = await getAllScopes();
+        const view = viewScope(scopes[topic.id] ?? {});
+        setItemReadStates((prev) => {
+          const updated = { ...prev };
+          posts.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
+          return updated;
+        });
+      }
 
       setSection((prev) =>
         prev
           ? {
               ...prev,
-              topics: prev.topics.map((t) =>
-                t.topic.id === topic.id ? { ...t, items: posts, loading: false } : t
-              ),
+              // A topic confirmed deleted by this fetch has no value staying in the list — there's
+              // no cached post history to fall back to displaying, only whatever came back just now.
+              topics: deleted
+                ? prev.topics.filter((t) => t.topic.id !== topic.id)
+                : prev.topics.map((t) =>
+                    t.topic.id === topic.id ? { ...t, items: posts, loading: false } : t
+                  ),
             }
           : prev
       );

@@ -33,6 +33,7 @@ import {
   detectForumUnread,
   getAllScopes,
   topicUnreadForForum,
+  clearScope,
 } from '../readStateService';
 import { FeedKeys } from '@li/core';
 import { fetchTopicFeed, RssItem } from '../feedService';
@@ -74,7 +75,7 @@ const topic = (slug: string, lastUpdatedAt = 1): Topic => ({
 
 beforeEach(() => {
   store = {};
-  mockFetchTopicFeed.mockReset().mockResolvedValue([]);
+  mockFetchTopicFeed.mockReset().mockResolvedValue({ items: [], deleted: false });
   mockGetTopicsForForum.mockReset().mockResolvedValue([]);
   mockGetAllTopicSubscriptions.mockReset().mockResolvedValue({});
   mockStorageGetObject.mockClear();
@@ -142,6 +143,30 @@ describe('markScopesSeen / markGuidsRead', () => {
 
   it('is a no-op when every update list is empty', async () => {
     await markScopesSeen({ 'membersForum:zqr': [] });
+    expect(storageSetObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('clearScope', () => {
+  it('removes the scope entirely, leaving other scopes untouched', async () => {
+    await markScopesSeen({
+      'membersForum:zqr': ['g1', 'g2'],
+      'membersForum:plmk': ['g3'],
+    });
+
+    await clearScope('membersForum:zqr');
+
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:zqr']).toBeUndefined();
+    expect(scopes['membersForum:plmk']).toEqual({ g3: false });
+  });
+
+  it('is a no-op when the scope does not exist', async () => {
+    await markScopesSeen({ 'membersForum:plmk': ['g1'] });
+    (storageSetObject as jest.Mock).mockClear();
+
+    await clearScope('membersForum:does-not-exist');
+
     expect(storageSetObject).not.toHaveBeenCalled();
   });
 });
@@ -239,16 +264,17 @@ describe('detectForumUnread', () => {
     expect(scopes['membersForum:plmk']).toEqual({ 'g-new-2': false });
   });
 
-  it('incomplete window: nothing known in the whole window — bounded fallback deep-dive, restricted to subscribed topics', async () => {
+  it('incomplete window: nothing known in the whole window — deep-dive restricted to subscribed topics', async () => {
     mockGetTopicsForForum.mockResolvedValue([
       topic('zqr', 3),
       topic('plmk', 2),
       topic('silenced-topic', 1),
     ]);
     mockGetAllTopicSubscriptions.mockResolvedValue({ 'membersForum:silenced-topic': false });
-    mockFetchTopicFeed.mockImplementation(async (url: string) =>
-      url.includes('/zqr/') ? [item('deep-g1', 'zqr')] : [item('deep-g2', 'plmk')]
-    );
+    mockFetchTopicFeed.mockImplementation(async (t: Topic) => ({
+      items: t.slug === 'zqr' ? [item('deep-g1', 'zqr')] : [item('deep-g2', 'plmk')],
+      deleted: false,
+    }));
 
     const items = [item('g-new', 'zqr')]; // never-before-seen, window exhausted with no boundary
     const result = await detectForumUnread(FK.membersForum, items);
@@ -259,7 +285,27 @@ describe('detectForumUnread', () => {
     expect(result['membersForum:silenced-topic']).toBeUndefined();
   });
 
-  it('bounds the fallback deep-dive to at most 10 topics', async () => {
+  // A topic whose item is in the top-level window is demonstrably alive at fetch time, so this
+  // combination (staged by the main walk, then found deleted by the dive) only happens if the
+  // topic was deleted in the narrow gap between the two fetches — not worth preventing, but
+  // recovery from it must still be clean, not leave a resurrected guid behind.
+  it('gracefully recovers when a topic is deleted between the top-level fetch and its own deep-dive', async () => {
+    await markScopesSeen({ 'membersForum:gone': ['stale-guid'] }); // leftover from before it was deleted
+    mockGetTopicsForForum.mockResolvedValue([topic('gone', 5)]);
+    mockGetAllTopicSubscriptions.mockResolvedValue({});
+    mockFetchTopicFeed.mockResolvedValue({ items: [], deleted: true });
+
+    const result = await detectForumUnread(FK.membersForum, [item('g-new', 'gone')]);
+
+    expect(result['membersForum:gone']).toBeUndefined();
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:gone']).toBeUndefined();
+  });
+
+  it('dives every subscribed topic when the window is incomplete — no arbitrary cap', async () => {
+    // A cap here previously meant a cold/inactive topic ranked below the cutoff could never be
+    // checked. Concurrent (Promise.all) dives cost latency once, not per topic, so there's no
+    // reason to bound the count.
     mockGetTopicsForForum.mockResolvedValue(
       Array.from({ length: 15 }, (_, i) => topic(`topic-${i}`, 15 - i))
     );
@@ -267,7 +313,7 @@ describe('detectForumUnread', () => {
 
     await detectForumUnread(FK.membersForum, [item('g-new', 'topic-0')]);
 
-    expect(mockFetchTopicFeed).toHaveBeenCalledTimes(10);
+    expect(mockFetchTopicFeed).toHaveBeenCalledTimes(15);
   });
 
   it('reads the scope store a constant number of times, not once per item in the window', async () => {

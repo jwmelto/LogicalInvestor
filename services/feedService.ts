@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { extractRssItems, type RssItem, type FeedKey } from '@li/core';
 import { getToken } from './authService';
-import { updateTopicsFromFeedItems } from './topicService';
+import { updateTopicsFromFeedItems, extractTopicSlugFromLink, generateTopicUrl, deleteTopic, type Topic } from './topicService';
 import type { ForumVisibility } from './storageService';
 
 export type { RssItem, FeedKey };
@@ -119,17 +119,42 @@ export async function fetchSingleFeed(feedKey: FeedKey): Promise<FeedResult> {
   return fetchFeed(feedKey);
 }
 
-export async function fetchTopicFeed(topicUrl: string, feedKey: FeedKey): Promise<RssItem[]> {
+export interface TopicFeedResult {
+  items: RssItem[];
+  // True when this call detected the topic's own feed URL no longer returns this topic's content
+  // and removed it (see deleteTopic). Callers rendering their own copy of this topic need this
+  // signal in the same round trip — nothing else tells them storage just changed.
+  deleted: boolean;
+}
+
+// A dead/deleted topic's permalink doesn't reliably 404 on the /feed/ suffix — confirmed live:
+// the bare page 404s (rendering the store page), but appending /feed/ to that same dead URL
+// returns 200 with the *Members Forum* feed instead of erroring — not even this topic's own
+// parent forum, e.g. a dead Stock Insights topic's /feed/ still comes back as Members Forum.
+// A genuine topic feed's items always link back to that same topic, so checking just the first
+// returned item is enough proof this isn't topic.slug's feed at all — not a bad item, a wrong
+// feed. Delete it outright rather than trusting (even partially) content that isn't this topic's
+// — the site itself stops listing a genuinely deleted topic in RSS, so there's no expectation it
+// needs to be remembered as dead to avoid rediscovering it; if its id resurfaces, that's just a
+// fresh discovery.
+export async function fetchTopicFeed(topic: Topic, feedKey: FeedKey): Promise<TopicFeedResult> {
   const token = await getToken();
-  const feedUrl = `${topicUrl.replace(/\/?$/, '/')  }feed/?feed_token=${token}`;
+  const feedUrl = `${generateTopicUrl(topic.slug)}feed/?feed_token=${token}`;
 
   try {
     const response = await fetch(feedUrl);
-    if (!response.ok) return [];
+    if (!response.ok) return { items: [], deleted: false };
 
     const xml = await response.text();
-    return extractRssItems(parser.parse(xml)).map((rssItem) => ({ ...rssItem, feedKey }));
+    const items = extractRssItems(parser.parse(xml)).map((rssItem) => ({ ...rssItem, feedKey }));
+
+    if (items.length > 0 && extractTopicSlugFromLink(items[0].link) !== topic.slug) {
+      await deleteTopic(topic.id);
+      return { items: [], deleted: true };
+    }
+
+    return { items, deleted: false };
   } catch {
-    return [];
+    return { items: [], deleted: false };
   }
 }

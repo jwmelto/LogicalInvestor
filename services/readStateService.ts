@@ -1,6 +1,6 @@
 import { storageGetObject, storageSetObject } from './storageService';
 import { FeedKey, RssItem, fetchTopicFeed } from './feedService';
-import { Topic, getTopicsForForum, generateTopicId, generateTopicUrl, extractTopicSlugFromLink } from './topicService';
+import { Topic, getTopicsForForum, generateTopicId, extractTopicSlugFromLink } from './topicService';
 import { getAllTopicSubscriptions } from './subscriptionService';
 
 // Single store for all "have I seen this / have I read this" state, keyed by the tuple
@@ -31,6 +31,17 @@ export async function markScopesSeen(updates: Record<string, string[]>): Promise
     next[scopeId] = scope;
   }
   await storageSetObject(SCOPE_KEY, next);
+}
+
+// Removes a scope entirely — called when a topic is confirmed deleted (see feedService's
+// fetchTopicFeed), so no read-state, legitimate or contaminated, carries forward if that topic id
+// is ever seen again (whether a genuine new topic reusing the slug, or the same record resurfacing
+// via a storage-sync issue). A no-op if the scope doesn't exist.
+export async function clearScope(scopeId: string): Promise<void> {
+  const all = await getAllScopes();
+  if (!(scopeId in all)) return;
+  const { [scopeId]: _removed, ...rest } = all;
+  await storageSetObject(SCOPE_KEY, rest);
 }
 
 // Flip existing guids to read=true. Multi-scope so "mark this whole forum read" (spanning
@@ -114,10 +125,6 @@ export function topicUnreadForForum(
   return result;
 }
 
-// ponytail: plain constant; promote to a stored setting (mirroring getRefreshInterval()) only if
-// it ever needs to be user-tunable — nothing so far suggests it does.
-const DEEP_DIVE_TOPIC_LIMIT = 10;
-
 function itemTopicId(forumKey: FeedKey, item: RssItem): string | null {
   const slug = extractTopicSlugFromLink(item.link);
   return slug ? generateTopicId(forumKey, slug) : null;
@@ -133,9 +140,11 @@ function itemTopicId(forumKey: FeedKey, item: RssItem): string | null {
 //     provably the complete set of new posts across the forum — attribute directly via slug, no
 //     per-topic fetch needed;
 //   - if the whole window is exhausted without hitting a known item, completeness can't be
-//     proven (the app was closed a long time, or a silenced topic dominated the window), so a
-//     bounded deep-dive of the most-recently-active subscribed topics runs instead of every
-//     subscribed topic — real forum activity concentrates in a couple of topics at a time.
+//     proven (the app was closed a long time, or a silenced topic dominated the window), so every
+//     subscribed topic gets its own feed fetched directly instead. All concurrently (Promise.all),
+//     so this costs one round-trip's worth of wall-clock time regardless of topic count, not one
+//     per topic — an earlier cap at the 10 most-recently-active topics saved nothing in latency
+//     and only meant a cold/inactive topic could go undetected indefinitely.
 // Returns hasUnread for every topic touched this pass; a topic absent from the result provably
 // didn't change and keeps whatever value the caller already has for it.
 export async function detectForumUnread(
@@ -165,18 +174,29 @@ export async function detectForumUnread(
   const touchedTopicIds = new Set(Object.keys(seenUpdates));
 
   if (!complete) {
-    // Window exhausted without a known boundary — can't prove nothing was missed. Bounded
-    // fallback: the most recently active subscribed topics, not every subscribed topic.
-    // getTopicsForForum already returns topics sorted by lastUpdatedAt descending.
+    // Window exhausted without a known boundary — can't prove nothing was missed. Fall back to
+    // every subscribed topic (see comment above on why this isn't bounded). A topic confirmed
+    // deleted by fetchTopicFeed is removed from storage outright, so it's already absent from
+    // getTopicsForForum's results — no separate filter needed here for that case.
     const candidates = (await getTopicsForForum(forumKey))
-      .filter((t: Topic) => isSubscribed(t.id))
-      .slice(0, DEEP_DIVE_TOPIC_LIMIT);
+      .filter((t: Topic) => isSubscribed(t.id));
 
-    const dives = await Promise.all(candidates.map(async (topic) => ({
-      topicId: topic.id,
-      guids: (await fetchTopicFeed(generateTopicUrl(topic.slug), forumKey)).map((i) => i.guid),
-    })));
-    for (const { topicId, guids } of dives) {
+    const dives = await Promise.all(candidates.map(async (topic) => {
+      const fetched = await fetchTopicFeed(topic, forumKey);
+      return { topicId: topic.id, guids: fetched.items.map((i) => i.guid), deleted: fetched.deleted };
+    }));
+    for (const { topicId, guids, deleted } of dives) {
+      if (deleted) {
+        // The dive runs after the top-level fetch, so the main walk can only have speculatively
+        // staged this exact topicId if the topic was deleted for real in the gap before the dive
+        // — a narrow race, not worth preventing, but recovery must still be clean: undo the
+        // staging, not just skip adding to it, or the closing markScopesSeen call below would
+        // immediately resurrect a guid into the scope clearScope just wiped.
+        await clearScope(topicId);
+        delete seenUpdates[topicId];
+        touchedTopicIds.delete(topicId);
+        continue;
+      }
       seenUpdates[topicId] = [...(seenUpdates[topicId] ?? []), ...guids];
       touchedTopicIds.add(topicId);
     }
