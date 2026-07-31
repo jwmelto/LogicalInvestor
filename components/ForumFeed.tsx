@@ -202,21 +202,21 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
 
     try {
-      const { items: posts, deleted } = await fetchTopicFeed(topic, feedKey);
+      const fetched = await fetchTopicFeed(topic, feedKey);
 
-      if (deleted) {
+      if (fetched.deleted) {
         // No lingering read-state for a topic that no longer exists — clean, not just absent.
         await clearScope(topic.id);
       } else {
         // Write-through to the same store detection uses, so a manual expand short-circuits the
         // next detection pass for this topic.
-        await markScopesSeen({ [topic.id]: posts.map((p) => p.guid) });
+        await markScopesSeen({ [topic.id]: fetched.items.map((p) => p.guid) });
 
         const scopes = await getAllScopes();
         const view = viewScope(scopes[topic.id] ?? {});
         setItemReadStates((prev) => {
           const updated = { ...prev };
-          posts.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
+          fetched.items.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
           return updated;
         });
       }
@@ -227,10 +227,10 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
               ...prev,
               // A topic confirmed deleted by this fetch has no value staying in the list — there's
               // no cached post history to fall back to displaying, only whatever came back just now.
-              topics: deleted
+              topics: fetched.deleted
                 ? prev.topics.filter((t) => t.topic.id !== topic.id)
                 : prev.topics.map((t) =>
-                    t.topic.id === topic.id ? { ...t, items: posts, loading: false } : t
+                    t.topic.id === topic.id ? { ...t, items: fetched.items, loading: false } : t
                   ),
             }
           : prev
