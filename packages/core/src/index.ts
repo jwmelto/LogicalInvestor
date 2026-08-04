@@ -156,6 +156,16 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // Window kept tight (4 chars) so it doesn't also catch unrelated "ask/buy quote" market-mechanics
   // phrasing (e.g. "not the ask/buy quote"), which has ~9 chars between "not" and "buy".
   [/\b(not|n't|never|don'?t|doesn'?t|didn'?t)\b[\s\S]{0,4}\b(buy|enter)\b/i, 'fail-negated-instruction'],
+  // #82: "it can still take any one of these paths, you might sell half..." — scenario-branching
+  // hedge language, same spirit as the #66 "could either...or" two-sided hedge but a different
+  // construction. ponytail: narrow to "paths/scenarios/outcomes" nouns actually seen in reports;
+  // a genuine directive that also happens to use this phrasing ("any one of these paths, sell
+  // half now regardless") would false-negative too — widen the noun alternation if that shows up.
+  [/\bany one of (these|those|the)\s+(paths|scenarios|outcomes)\b/i,          'fail-hypothetical'],
+  // #82: "we've already sold half, we're officially still holding" — a retrospective status
+  // report of action already taken, not a new call, distinct from #66's "I was urging" (a past
+  // reference to a specific prior recommendation vs. this being a statement of current position).
+  [/\bwe'?ve already (sold|bought|entered|exited)\b/i,                         'fail-historical'],
 ];
 
 const POS_PATTERNS: [RegExp, ActionableResult][] = [
@@ -172,7 +182,9 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   // followed by whitespace. 200 is a sanity backstop against pathological run-on sentences, not
   // the primary boundary.
   [/\$\d+(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\b(buy|enter)\b|\b(buy|enter)\b(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\$\d+/i, 'pass-buy-with-price'],
-  [/\bsell(?:ing)?\s+(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,             'pass-sell-fraction'],
+  // #82: "sell it all" — the fraction word doesn't always sit directly after the verb; an
+  // intervening pronoun is common, natural phrasing missed by the original bare-adjacency regex.
+  [/\bsell(?:ing)?\s+(?:it\s+)?(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,   'pass-sell-fraction'],
   // Bare "averaging down" is discussed constantly as general market commentary — a live false
   // positive ("in some cases, that'll give us averaging down opportunities...") had no directive
   // verb anywhere near it, just abstract description. Unlike every other POS_PATTERN, the old

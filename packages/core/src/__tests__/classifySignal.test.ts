@@ -53,6 +53,16 @@ describe('classifySignal — negative patterns (checked first)', () => {
   test('fail-too-short: no pattern match and below minLength', () => {
     expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });
+
+  // #82
+  test('fail-hypothetical: "any one of these paths" scenario-branching hedge', () => {
+    expect(classifySignal(pad("Because it can still take any one of these paths, you might sell half (since you're up 30%) and keep the rest and that sets you up better in case the lower scenarios unfold."), MIN)).toBe('fail-hypothetical');
+  });
+
+  // #82
+  test('fail-historical: "we\'ve already sold half" retrospective status report', () => {
+    expect(classifySignal(pad("Glad you did well, but here's our official stance on it: Since we've already sold half, we're officially still holding what we've got. If it continues higher, great, we'll reap more profits. If it pulls back, great, we can re-establish our half sold around $22ish and if it drops further, great, we can get in averaging downs at $20 and $15. So, we're poised to do well if it rockets higher from here or pulls back, because of how we allocate capital to it and because of how we've managed risks (by selling half)."), MIN)).toBe('fail-historical');
+  });
 });
 
 describe('classifySignal — negative patterns override positive matches', () => {
@@ -152,5 +162,17 @@ describe('classifySignal — positive patterns', () => {
 
   test('fail-no-signal: general discussion', () => {
     expect(classifySignal(pad('Warren Buffett talks about how the world is yours if you can keep your head about you when others lose theirs'), MIN)).toBe('fail-no-signal');
+  });
+
+  // #82: true-positive anchor — direct "sell half" instruction, kept passing so future
+  // NEG_PATTERNS tightening doesn't start suppressing it.
+  test('pass-sell-fraction: #82 anchor — "sell half" ahead of an earnings date', () => {
+    expect(classifySignal(pad("If you've not done a \"sell half\" on VNP yet and you're up 20%+, I'd go ahead and do that now, with them reporting earnings tomorrow before the bell and we don't know if it'll rally or sell-off, near-term."), MIN)).toBe('pass-sell-fraction');
+  });
+
+  // #82: missed alert — "sell it all" has a pronoun between the verb and the fraction word,
+  // which the original bare-adjacency regex missed entirely (fail-no-signal).
+  test('pass-sell-fraction: "sell it all" with an intervening pronoun', () => {
+    expect(classifySignal(pad("No prob. Also, if VNP gets to $90-$91ish, I'm fine for us to officially sell it all, We'd be up minimally 30%, for those who only got in one tranche. For those who got in two tranches, it's even more."), MIN)).toBe('pass-sell-fraction');
   });
 });
