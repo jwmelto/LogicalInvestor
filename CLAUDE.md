@@ -214,7 +214,15 @@ const parser = new XMLParser({
 ```
 Parse path: `parsed?.rss?.channel?.item`. Handle both single items and arrays (wrap single item in array).
 
-**Error Handling**: The real "no access" signal is **zero items returned**: Members Forum, Stock Insights, and Options Insights all return `<item>`-less RSS with a bad or missing token. Members Area is the exception — it always returns items (only the content snippet is paywalled) — so it's structurally incapable of signaling a dead token; this is also why Stock/Options Insights returning 0 items is treated as "not subscribed" rather than an error (see below). `fetchSingleFeed()` previously also tracked a separate `accessible` flag off `response.status === 401/403`, but that branch was dead code — verified against the live server, all four feed URLs return HTTP 200 regardless of token validity — and was removed; `FeedResult` now carries only `items` and an optional `error` (set for non-200 responses and network failures).
+**Error Handling**: The real "no access" signal is **zero items returned**:
+Members Forum, Stock Insights, and Options Insights all return `<item>`-less RSS with a bad or missing token.
+Members Area is the exception.
+It always returns items (only the content snippet is paywalled),
+so it's structurally incapable of signaling a dead token.
+This is also why Stock/Options Insights returning 0 items is treated as "not subscribed" rather than an error (see below).
+All four feed URLs return HTTP 200 regardless of token validity (verified against the live server).
+A dead token never surfaces as a 401/403,
+so `FeedResult` carries only `items` and an optional `error` (set for non-200 responses and network failures).
 
 **Key Functions**: `fetchAllFeeds()`, `fetchSingleFeed()`, `fetchTopicFeed()`  
 **Return Shape**: `FeedResult` with items array, optional error
@@ -250,17 +258,91 @@ Full iCloud sync requires a physical device; Simulator uses AsyncStorage fallbac
 
 Single store, `scope_guids` (`Record<scopeId, Record<guid, boolean>>`), answers both "is this guid known" (key present) and "is this guid read" (boolean value) for every feed and every topic. `scopeId` is either a `FeedKey` (the flat Members Area feed) or a topic id (`"{forumKey}:{slug}"`, see `topicService.ts`) — the two namespaces never collide, since a topic id always contains `:` and a feed key never does. There is no separate "unread count" anywhere — every consumer only ever needs `hasUnread: boolean`.
 
-**Mutation is always multi-scope and batched**: `markScopesSeen(updates)` inserts newly-seen guids as unread (never resurrecting an already-read guid that resurfaces in a refetch); `markGuidsRead(updates)` flips guids to read. Both take `Record<scopeId, guid[]>` so "mark this whole forum read" (spanning several topics) is one read-modify-write, not one per topic — concurrent individual writes to the same storage key race and overwrite each other. `markRead(scopeId, guid)`/`markAllRead(scopeId, guids)` are single-scope convenience wrappers over `markGuidsRead`, fine for one-off calls but never to be called in a loop over many items — batch-load `getAllScopes()` once and use `viewScope()` instead (see `detectForumUnread`'s implementation for the pattern; calling the single-scope wrappers per item was a real, since-fixed inefficiency).
+**Mutation is always multi-scope and batched**: `markScopesSeen(updates)` inserts newly-seen guids as unread.
+It never resurrects an already-read guid that resurfaces in a refetch.
+`markGuidsRead(updates)` flips guids to read.
+Both take `Record<scopeId, guid[]>` so "mark this whole forum read" (spanning several topics) is one read-modify-write, not one per topic.
+Concurrent individual writes to the same storage key race and overwrite each other.
+`markScopesRead(scopeIds)` is the higher-level "mark everything currently known in these scopes as read" operation built on `markGuidsRead`.
+A scope is a scope regardless of whether it's a flat feed key or a topic id.
+So this is the one function both `ForumFeed.tsx`'s "mark all read" and its per-topic "mark read" use,
+just with a different-length scope id list.
+It returns what it marked so the caller can reflect it locally without re-deriving.
+`markRead(scopeId, guid)`/`markAllRead(scopeId, guids)` are single-scope convenience wrappers over `markGuidsRead`.
+They're fine for one-off calls, but never call them in a loop over many items.
+Batch-load `getAllScopes()` once and use `viewScope()` instead.
+See `detectForumUnread`'s implementation for the pattern.
+`clearScope(scopeId)` removes a scope entirely.
+It's called when a topic is confirmed deleted, so no leftover read-state carries forward if that topic id is ever seen again.
 
-**`viewScope(guids)`**: a pure, synchronous, read-only view (`{ hasUnread, isRead(guid) }`) over an already-loaded scope. No I/O, no stored mutable state — two independently-loaded views of the same scope each mutating and saving on their own would race, so all mutation goes through the batch functions above.
+**`viewScope(guids)`**: a pure, synchronous, read-only view (`{ hasUnread, isRead(guid) }`) over an already-loaded scope.
+No I/O, no stored mutable state.
+Two independently-loaded views of the same scope would race if each saved its own mutations,
+so all mutation goes through the batch functions above instead.
 
-**`detectForumUnread(forumKey, topLevelItems)`**: the per-topic detection algorithm. Relies on a completeness proof rather than a schedule — the bbPress RSS feed reliably returns items newest-first. Walking newest→oldest, skipping silenced topics entirely: if the newest considered item is already known, nothing changed; if a known item is hit before the window is exhausted, everything before it is provably the complete set of new posts (attributed via `extractTopicSlugFromLink`, never by title); if the whole window is exhausted with nothing known, a bounded deep-dive of the 10 most-recently-active *subscribed* topics runs instead of every topic. Returns `hasUnread` for every topic touched this pass; an untouched topic provably didn't change.
+**`detectForumUnread(forumKey, topLevelItems)`**: the per-topic detection algorithm.
+It relies on a completeness proof rather than a schedule.
+The bbPress RSS feed reliably returns items newest-first.
+Walking newest→oldest, skipping silenced topics entirely:
+1. If the newest considered item is already known, nothing changed.
+2. If a known item is hit before the window is exhausted, everything before it is provably the complete set of new posts.
+   Attribution is via `extractTopicSlugFromLink`, never by title.
+3. If the whole window is exhausted with nothing known,
+   every subscribed topic gets its own feed fetched directly via `feedService.fetchTopicFeed`.
+   These fetches run concurrently (`Promise.all`),
+   so this costs one round-trip's worth of latency regardless of topic count.
+   There's no cap on topic count, since a cap here would only mean a cold/inactive topic could go unchecked indefinitely.
+   See `topicService.ts` for how a topic confirmed deleted by one of these fetches gets removed rather than tracked.
 
-**`markFlatFeedSeen(feedKey, items)`**: the flat-feed equivalent — no boundary-walk needed, since there's no per-item fetch cost to save, so every fetch just records its whole window as seen.
+Returns `hasUnread` for every topic touched this pass.
+An untouched topic provably didn't change.
 
-**`topicUnreadForForum(forumKey, scopes, subs)`**: a pure, synchronous helper deriving every subscribed topic's `hasUnread` for a forum directly from an already-loaded `scopes`/`subs` snapshot — no I/O, no topic-registry read. Which topics belong to a forum is derived from scanning `scopes`' own keys for the `"{forumKey}:"` prefix, not a separate `getTopicsForForum()` lookup. Shared by both `FeedContext.tsx`'s cold-start seed and `app/(tabs)/index.tsx`'s landing-tab decision, so the same derivation isn't duplicated across the two.
+**`markFlatFeedSeen(feedKey, items)`**: the flat-feed equivalent.
+No boundary-walk is needed, since there's no per-item fetch cost to save.
+Every fetch just records its whole window as seen.
 
-**Key Functions**: `hasUnread()`, `isRead()`, `markRead()`, `markAllRead()`, `markScopesSeen()`, `markGuidsRead()`, `markFlatFeedSeen()`, `detectForumUnread()`, `topicUnreadForForum()`, `viewScope()`, `getAllScopes()`
+**`topicUnreadForForum(forumKey, scopes, subs)`**: a pure, synchronous helper deriving every subscribed topic's `hasUnread` for a forum
+directly from an already-loaded `scopes`/`subs` snapshot.
+No I/O, no topic-registry read.
+Which topics belong to a forum is derived from scanning `scopes`' own keys for the `"{forumKey}:"` prefix.
+Shared by both `FeedContext.tsx`'s cold-start seed and `app/(tabs)/index.tsx`'s landing-tab decision,
+so the same derivation isn't duplicated across the two.
+
+**`feedHasUnread(feedKey, hasSubFeeds, scopes, subs)`**: a pure, synchronous predicate for whether a feed has any unread content at all.
+A flat feed's answer comes from its own scope.
+A topic-based forum's answer comes from every one of its topics' scopes, via `topicUnreadForForum`.
+The one definition of "unread" for a whole feed,
+so callers don't each compute it differently depending on which kind of feed they happen to be looking at.
+
+**`updateTopic(topic, feedKey)`**: the single entry point `ForumFeed.tsx` uses to refresh one topic's content.
+It fetches via `feedService.fetchTopicFeed`.
+It then performs whichever scope update the result implies: `clearScope` on deletion, `markScopesSeen` otherwise.
+It returns the fetch result unchanged.
+The view never calls `fetchTopicFeed`, `markScopesSeen`, or `clearScope` directly for this.
+It only reacts to what `updateTopic` returns.
+`detectForumUnread`'s own deep-dive calls `fetchTopicFeed` directly instead,
+batching many topics' scope writes into one call for efficiency.
+`updateTopic` is for `ForumFeed`'s two single-topic call sites:
+an already-expanded topic's own fetch in `buildSection`,
+and a manual expand via `loadTopicPosts`.
+
+**`pruneOrphanedScopes(validScopeIds)` / `pruneOrphanedScopesForAllFeeds()`**: removes any `scope_guids` entry not in a given valid set.
+An orphan is a topic id with a scope entry but no matching topic record.
+It's invisible everywhere a topic would normally render.
+But `topicUnreadForForum` trusts `scope_guids`' own keys as the current topic list,
+so an orphan would silently keep propping up its forum's badge forever.
+The `ForAllFeeds` wrapper builds the valid set from the topic/feed registry,
+not from `scope_guids` itself:
+every flat feed key, plus every topic id `getTopicsForForum` currently returns for each forum.
+It then calls `pruneOrphanedScopes` with that set, which removes anything present in `scope_guids` but absent from it.
+Run by `FeedContext.tsx` at cold start and on every `fetchAllFeeds` pass.
+Cheap enough that any future regression of this class self-heals on the next poll, rather than needing an app restart.
+
+**Key Functions**: `hasUnread()`, `isRead()`, `markRead()`, `markAllRead()`, `markScopesSeen()`,
+`markGuidsRead()`, `markScopesRead()`, `clearScope()`,
+`pruneOrphanedScopes()`, `pruneOrphanedScopesForAllFeeds()`,
+`markFlatFeedSeen()`, `detectForumUnread()`, `topicUnreadForForum()`, `feedHasUnread()`,
+`updateTopic()`, `viewScope()`, `getAllScopes()`
 
 #### `subscriptionService.ts` - Topic Subscriptions
 
@@ -272,44 +354,71 @@ Discovers forum topics from RSS feed items, persists them across sessions. Topic
 
 **Identity is slug-based, not title-based**: `generateTopicId(forumKey, slug)` builds a topic's id from its (mostly immutable) URL slug, not its title — a moderator editing a title, or an unrelated new topic reusing an old one, would otherwise break identity. `discoverTopicsFromFeedItems` groups by slug; `name` (display) still comes from whichever item's title first created the record.
 
-**Key Functions**: `updateTopicsFromFeedItems()`, `getTopicsForForum()`, `generateTopicId()`, `generateTopicUrl()`, `extractTopicSlugFromLink()`
+**Deleted-topic detection**: a deleted topic's permalink doesn't reliably 404 on this site.
+The bare page 404s.
+Its `/feed/` suffix 200s with the *Members Forum feed* instead of erroring.
+`feedService.fetchTopicFeed` detects this by checking whether the first returned item's own link still re-derives the slug it asked for.
+A mismatch means the whole response is the wrong feed, not just a bad item, so it calls `deleteTopic()` and returns no items.
+The record is removed outright rather than flagged.
+The site itself stops listing a genuinely deleted topic in RSS, so there's no expectation of it resurfacing.
+The app caches no post content locally.
+It keeps only guid read-state and one preview snippet (see the `latest*` fields),
+so there's nothing left worth showing once a topic is confirmed gone.
+`ForumFeed.tsx` removes it from the rendered list immediately, the moment a fetch confirms it instead of displaying an empty shell.
+
+**Key Functions**: `updateTopicsFromFeedItems()`, `getTopicsForForum()`, `generateTopicId()`, `generateTopicUrl()`, `extractTopicSlugFromLink()`, `deleteTopic()`
 
 #### `backgroundFetchService.ts` - Background Refresh
 
 Registers an `expo-background-task` task that fetches all feeds while the app is closed, then writes straight into the same `scope_guids` store `readStateService.ts` owns (`markFlatFeedSeen` for the flat feed, `detectForumUnread` per topic-based forum) — there's no separate cached badge snapshot; the next foreground open's cold-start seed (`FeedContext.tsx`) reads `scope_guids` directly. This task is a best-effort supplement only, not load-bearing — `expo-background-task`'s 15-minute minimum is non-deterministic on iOS, and the primary detection trigger is `FeedContext.tsx`'s foreground refresh cycle.
 
-Skips detection entirely for a forum currently hidden in Settings (`FEEDS[k].isVisible(visibility)`) — no point spending a bounded per-topic deep-dive fetch on a badge nobody can see. The top-level fetch itself still runs for every feed regardless, so a re-enabled forum's data isn't stale.
+Skips detection entirely for a forum currently hidden in Settings (`FEEDS[k].isVisible(visibility)`) — no point spending per-topic deep-dive fetches on a badge nobody can see. The top-level fetch itself still runs for every feed regardless, so a re-enabled forum's data isn't stale.
 
 **Note**: Background tasks only run on physical devices. Simulator always uses AsyncStorage fallback and background tasks do not fire.
 
-#### `notificationService.ts` - Local Notifications
+#### `pushService.ts` - Push Notification Registration & Filters
 
-> **Stale section** — this file was deleted in commit `56abc3d`; local notification generation no longer exists client-side. All "which posts to alert on" logic now lives server-side in the Cloudflare Worker (the "Filter sync with Cloudflare Worker" and Worker-behavior details below describe the Worker side and may still be accurate, but everything above them describing app-side `notificationService.ts` behavior is not). Needs a follow-up doc pass — not corrected here.
+All notification generation is server-side, in the Cloudflare Worker.
+`pushService.ts`'s job is registering the device with the Worker and managing the filter settings sent at registration time.
 
-Filters incoming feed items and schedules local notifications via `expo-notifications`.
+**Registration**: `registerPushChannel(feedKey, feedToken, overrides?)` is called by `FeedContext.tsx`
+after a feed's first successful, accessible fetch.
+It resolves the Expo push token,
+maps `feedKey` to a `Channel` (`FEEDKEY_TO_CHANNEL`),
+and POSTs to the Worker's `/register` with the current filter settings plus `feed_token`.
+It returns whether the server confirmed registration.
+`FeedContext.tsx` only marks a channel registered when this returns `true`.
+A `false` leaves the channel eligible to try again on the next `fetchAllFeeds` cycle, instead of getting stuck unregistered.
 
-**Settings** (`NotificationSettings`): `enabled`, `authorFilters` (string whitelist, substring match), `minContentLength` (stripped HTML char count, default 200).
+**Filter settings** (`PushFilterSettings`):
+- `filter`: the alert tier (`ContentFilter`, see `FILTER_TIERS` in `@li/core`)
+- `authors`: string whitelist
+- `minLength`: stripped-content char threshold, default 200, only meaningful under the `length` tier
 
-**Key logic**:
-- First run: seeds all current item IDs as "seen" without notifying (flood prevention)
-- Subsequent runs: notifies only for truly new items that pass filters, max 5 per cycle
-- Notification title format: `"Sean Hyman in EWZ:"` (strips `Reply To:` prefix). No delivery-channel tag — server push (Worker) is the only channel now, local generation was removed in `56abc3d`
-- Local notification is skipped whenever `wouldServerPush()` predicts the Worker's server push already covers that item — one alert per item, not two, on either platform
-- `fireTestNotification()` bypasses seen-ID tracking for dev testing (`__DEV__` gated button in Settings)
-- `addNotificationAuthor(name)` — called from long-press gesture in ForumFeed
+`updatePushSettings()` persists locally only after every registered channel confirms the update.
+The Worker's `/register` writes to KV before responding `ok`,
+so `response.ok` is the strongest confirmation the client has.
+No separate read-back endpoint exists.
+Settings screen's Apply button (a deliberate, explicit save, not on every field edit)
+and `ForumFeed`'s long-press "Add author to alerts" gesture (`addPushAuthor`) both go through this same function.
 
-**Storage keys**: `notification_settings`, `notification_seen_ids`
+**Key Functions**: `registerPushChannel()`, `updatePushSettings()`, `addPushAuthor()`, `addAuthorToList()`,
+`unregisterPushToken()`, `getPushFilter()`, `getPushAuthors()`, `getPushMinLength()`
 
-**Filter sync with Cloudflare Worker**: The app's local notification filters (`authorFilters`, `minContentLength`) and the Worker's server-side filters are **independent and not synchronized**. Both must be kept in sync manually when filter logic changes:
-- App filters live in `notificationService.ts` (`processNewItemsForNotifications`)
-- Worker filters live in `cloudflare-worker/src/index.ts` (the cron handler)
-- The Worker suppresses pushes for items the app's local filter would catch anyway; if the Worker's filters are looser than the app's, users may receive push notifications for items that would have been silenced locally
-- Current Worker behavior, by notification level (`none`/`minimal`/`standard`/`all`, set per-device at registration via `pushService.ts`):
-  - `none`: nothing notifies, not even Members Area
-  - `minimal`: only Members Area notifies
-  - `standard`: Members Area always notifies; Members Forum/Stock/Options Insights require author = Sean Hyman, AND (for Stock/Options Insights only) topic title contains `*`, AND the content passes the actionable-signal check — a starred topic does not exempt low-signal replies like "good job" from that last check
-  - `all`: Members Area always notifies; other forums require author = Sean Hyman but skip the star/actionable checks entirely
-- `/register` requires `feed_token` on every call, for every channel — `pushService.ts`'s `registerPushChannel()` and `updatePushLevel()` both always send it. Every channel verifies it via `feedTokenHasAccess` and stores it as `poll:<channel>`, the token `runChannel()` polls that channel's content with. The `members` **channel** (the push-registration grouping that bundles both Members Area and Members Forum — see `CHANNEL_FEEDS`) checks access against Members Forum specifically, since Members Area's own feed is readable regardless of token validity and would never catch an expired or invalid one.
+**Worker-side filtering**: the app only sends filter *settings* at registration time.
+Every matching decision (`matchesFilter` in `@li/core`, called from the cron handler in `cloudflare-worker/src/index.ts`) runs in the Worker.
+Members Area always notifies, at every tier — an unconditional bypass in `matchesFilter`, checked before any tier logic runs.
+For every other feed, the three tiers (`FILTER_TIERS` in `@li/core`: `members`, `actionable`, `length`) are narrow to broad, each a strict superset of the one before it:
+- `members`: nothing else notifies.
+- `actionable`: the post must satisfy all of:
+  - Author is in the Worker's own `ACTIONABLE_AUTHORS` list (`env.ACTIONABLE_AUTHORS`, default "Sean Hyman") — not the device's personal author whitelist.
+  - For Stock/Options Insights only: the topic title starts with `*`.
+  - Content passes both the actionable-signal negative and positive pattern checks.
+- `length`: everything that qualifies at `actionable` still qualifies here unconditionally, plus anything matching the device's own author whitelist with content at least `minLength` characters long.
+
+Every `/register` call includes `feed_token` — `registerPushChannel()` and `updatePushSettings()` both always send it.
+The Worker uses it to verify access before storing the registration; see `cloudflare-worker/src/index.ts` for how each channel checks it.
+One non-obvious case: the `members` channel (bundling both Members Area and Members Forum) checks access against Members Forum specifically, not Members Area — Members Area's own feed is readable regardless of token validity, so it alone would never catch an expired or invalid one.
 
 **Checking Worker status**: `GET /status` requires the Worker's `FEED_TOKEN` secret as a Bearer header — not a query param, so it can't be checked by pasting a URL into a browser (no `WWW-Authenticate` challenge is sent, so browsers won't prompt for credentials either). Use curl:
 ```bash
@@ -331,7 +440,24 @@ The Worker already pretty-prints the JSON response, so no `jq` needed. `FEED_TOK
 
 Central store for per-feed `hasUnread` booleans (`unread`) and per-topic booleans (`topicUnread`) that drive tab bar badges. Also owns the foreground refresh timer and orchestrates unread detection.
 
-**Badges**: On mount, a cold-start seed effect computes every badge — flat feed and every subscribed topic in every forum — directly from the local `scope_guids` store (`readStateService.ts`), with zero network calls, before the first fetch even lands. After each fetch, the flat feed calls `markFlatFeedSeen` + `hasUnread`; each topic-based forum calls `detectForumUnread` and merges the result into `topicUnread`. A forum's own badge is always the OR across its topics' flags, kept in sync by a dedicated effect. `refreshScopeUnread(feedKey, scopeId)` lets `ForumFeed` re-derive a single scope's badge immediately after marking something read, rather than waiting for the next fetch cycle.
+**Badges are always derived fresh from the model, never merged incrementally.**
+A cold-start seed effect first prunes orphaned `scope_guids` entries,
+via `pruneOrphanedScopesForAllFeeds` in `readStateService.ts`.
+An orphan is a topic id with no matching topic record anymore,
+such as from a build that deleted a topic before scope-clearing existed alongside deletion.
+It then computes every badge directly from the local `scope_guids` store: the flat feed, and every subscribed topic in every forum.
+Zero network calls, before the first fetch even lands.
+Each poll cycle (`fetchAllFeeds`) runs detection writes first:
+`markFlatFeedSeen` for the flat feed,
+`detectForumUnread` per topic-based forum, plus a re-sweep for orphans.
+It then re-derives badge state for every feed touched that cycle in one shared pass:
+`feedHasUnread(feedKey, hasSubFeeds, scopes, subs)` for the flat feed,
+`topicUnreadForForum(forumKey, scopes, subs)` for each topic-based forum's per-topic map.
+A merge can only ever add or overwrite keys it's told about.
+A topic deleted mid-pass would never be told about, so its last-known state — however stale — would stay stuck forever.
+Deriving fresh has no such gap, since an absent topic in `scope_guids` is simply absent from the result.
+A forum's own tab badge is always the OR across its topics' flags, kept in sync by a dedicated effect.
+`refreshUnread(feedKey)` lets `ForumFeed` re-derive an entire feed's badge state, immediately after any scope mutation: mark read, mark all read, a topic confirmed deleted.
 
 Detection (`markFlatFeedSeen`/`detectForumUnread`) is skipped entirely for a forum currently hidden via Settings' visibility toggle (`FEEDS[k].isVisible(visibility)`) — the top-level fetch itself still runs for every feed regardless, so a re-enabled forum's data isn't stale, only its detection work was deferred while hidden.
 
@@ -397,7 +523,7 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Per-forum tabs; optional forums (Stock/Options Insights) can be hidden entirely via Settings
 - ✅ Topic discovery & display: auto-discover forum topics from RSS, hierarchical UI (Forum → Topic → Posts), lazy-load topic feeds, per-topic subscription
 - ✅ Topic UX: previews persist across refreshes, tappable `[new]` badge per topic, preview only shown when topic has unread posts
-- ✅ Read state persistence with atomic batch writes (`markAllRead`)
+- ✅ Read state persistence with atomic batch writes (`markScopesRead`, `markGuidsRead`)
 - ✅ "Mark all read" button in every feed header (dismisses historical backlog on first use)
 - ✅ Tappable `[new]` badges on individual flat-feed posts
 - ✅ Tab bar red-dot badges (all tabs); seeded from storage on launch so unvisited tabs show correct state
@@ -410,9 +536,9 @@ The core UI component. Handles flat feeds (Members Area) and topic-based feeds (
 - ✅ Inaccessible feeds filtered out (Options Insights hidden if no access)
 - ✅ Logout clears token and redirects to login
 - ✅ iCloud/AsyncStorage storage abstraction; TypeScript strict mode clean (zero compiler errors)
-- ✅ Local notifications triggered by background fetch — filtered by author whitelist + minimum content length
-- ✅ Long-press any post/preview to add that author to notification whitelist
-- ✅ Notification settings in Settings screen (collapsible section: enable toggle, min length slider, author whitelist list)
+- ✅ Push notifications generated server-side (Cloudflare Worker) per a device-selected alert tier — no client-side notification generation
+- ✅ Long-press any post/preview opens a dialog to add that author to the push author whitelist
+- ✅ Notification settings in Settings screen: alert tier selector; author whitelist and min-length slider, both shown only under the `length` tier
 - ✅ Build number auto-increments via `eas.json`'s `autoIncrement: true` on the `production` profile — this patches the compiled native binary directly during the EAS build, not `app.json`; read it at runtime via `expo-application`'s `Application.nativeBuildVersion`, not `Constants.expoConfig`
 
 ### Known Issues
@@ -457,14 +583,14 @@ Run on a physical device before each TestFlight submission.
 - [ ] Forum visibility toggles hide/show Stock Insights and Options Insights tabs
 - [ ] Re-enabling a hidden forum shows its correct badge promptly (triggers an immediate refresh), not stale state from before it was hidden
 - [ ] Refresh interval change takes effect on next timer fire
-- [ ] Notification settings: enable/disable, author filter add/remove, min length slider
-- [ ] Long-press on a post adds its author to the notification whitelist
-- [ ] Test notification button fires a notification (`__DEV__` only)
+- [ ] Notification settings: switching to the `length` tier reveals the author whitelist and min-length slider; other tiers hide both
+- [ ] Author add/remove and the min-length slider value persist via Apply
+- [ ] Long-press on a post opens the add-author dialog; confirming adds it to the push author whitelist
 
 **Background & notifications**
 - [ ] Background fetch fires after app is closed for >15 min (physical device only)
 - [ ] Push notification received while app is closed; tap opens correct content
-- [ ] Local notification fires for new post matching author filter
+- [ ] Push notification respects the selected alert tier and author whitelist
 
 **Dark / light mode**
 - [ ] All screens render correctly in both modes
@@ -480,9 +606,11 @@ Run on a physical device before each TestFlight submission.
 - **ESLint**: Uses expo config, ignores `/dist/*` directory
 - **Token Management**: Feed token is app-level state, not synced per-feed
 - **XML Parsing**: Handles both single items and arrays in RSS channels
-- **Error States**: The real "no access" signal is zero items in the response (see Feed Aggregation → Error Handling above) — FeedService no longer tracks a separate accessibility flag. Non-200 responses return `error`.
+- **Error States**: The real "no access" signal is zero items in the response (see Feed Aggregation → Error Handling above).
+   Non-200 responses return `error`.
 - **Async Storage**: All storage operations are async; no synchronous access patterns
-- **Batch writes**: When marking multiple items read, always use `markAllRead()` — concurrent `markRead()` calls race on the same storage key
+- **Batch writes**: When marking multiple scopes or items read, use `markScopesRead()` or `markGuidsRead()`, not a loop of single-scope `markRead()` calls.
+  Each `markRead()` call reads, modifies, and writes the same storage key independently, so overlapping calls can silently overwrite each other's results
 - **Read State**: Tracked via `readStateService`'s unified `scope_guids` store; `hasUnread` is boolean everywhere (no counts) and updates in real time as posts are viewed
 - **Feed Organization**: Uses `FeedKey` type to ensure type-safe feed references throughout app
 - **Post Link Auth**: RSS `<link>` values never carry `feed_token` — `ForumFeed.tsx`'s `openPostLink()` appends it via `URL.searchParams.set('feed_token', token)` before opening the link with `Linking.openURL()` in the system browser (not an in-app WebView)
@@ -513,7 +641,7 @@ Run on a physical device before each TestFlight submission.
 │   ├── authService.ts       ← Login, token storage, isAuthenticated()
 │   ├── backgroundFetchService.ts ← expo-background-task registration
 │   ├── feedService.ts       ← RSS fetching/parsing, FEEDS config
-│   ├── readStateService.ts  ← Unified scope_guids read/unread store (use markAllRead/markGuidsRead for batches)
+│   ├── readStateService.ts  ← Unified scope_guids read/unread store (use markScopesRead/markGuidsRead for batches)
 │   ├── storageService.ts    ← iCloud/AsyncStorage abstraction
 │   ├── subscriptionService.ts ← Topic subscription state
 │   └── topicService.ts      ← Topic discovery, persistence, sorting

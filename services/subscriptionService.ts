@@ -4,8 +4,16 @@ import { FeedKey } from './feedService';
 // Legacy topic URL subscriptions (deprecated, kept for backwards compatibility)
 const LEGACY_SUBS_KEY = 'topic_subscriptions';
 
-// New topic ID subscriptions: { [topicId]: boolean }
-const TOPIC_SUBS_KEY = 'topic_id_subscriptions';
+// New topic ID subscriptions: { [topicId]: boolean }. Versioned independently of
+// topicService's TOPICS_STORAGE_KEY — each key's suffix counts that key's own breaking
+// schema changes, not a shared epoch, so the two numbers need not match. This bump exists
+// because topicId's identity scheme is slug-based (see topicService.generateTopicId), so a
+// prior title-based scheme's entries must live under a different key rather than being
+// silently misread as slug-based ones. 'topic_id_subscriptions' (no suffix) held title-based
+// entries and is now retired — see storageService's OBSOLETE_KEYS, which sweeps it on every
+// launch. Reusing that exact name here previously caused the live store to be swept right
+// along with the truly-obsolete one; keep the two apart on any future bump too.
+const TOPIC_SUBS_KEY = 'topic_id_subscriptions_v2';
 
 // Forum default preferences: { [forumKey]: boolean }
 // true = auto-subscribe new topics, false = auto-unsubscribe new topics

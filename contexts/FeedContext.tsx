@@ -6,7 +6,7 @@ import { FeedKey, FeedResult, FEEDS, fetchSingleFeed } from '../services/feedSer
 import { cleanupObsoleteStorage, getForumVisibility, getRefreshInterval } from '../services/storageService';
 import { registerPushChannel } from '../services/pushService';
 import { getToken } from '../services/authService';
-import { getAllScopes, viewScope, markFlatFeedSeen, hasUnread, detectForumUnread, topicUnreadForForum } from '../services/readStateService';
+import { getAllScopes, markFlatFeedSeen, detectForumUnread, topicUnreadForForum, feedHasUnread, pruneOrphanedScopesForAllFeeds } from '../services/readStateService';
 import { getAllTopicSubscriptions } from '../services/subscriptionService';
 import { useAuth } from './AuthContext';
 
@@ -18,7 +18,7 @@ interface FeedContextType {
   feedResults: FeedResults;
   unread: UnreadFlags;
   topicUnread: TopicUnreadFlags;
-  refreshScopeUnread: (feedKey: FeedKey, scopeId: string) => Promise<void>;
+  refreshUnread: (feedKey: FeedKey) => Promise<void>;
   triggerRefresh: () => void;
 }
 
@@ -56,10 +56,12 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       await cleanupObsoleteStorage();
-      const scopes = await getAllScopes();
-      setFeedUnread(FeedKeys.membersArea, viewScope(scopes[FeedKeys.membersArea] ?? {}).hasUnread);
+      await pruneOrphanedScopesForAllFeeds();
 
+      const scopes = await getAllScopes();
       const subs = await getAllTopicSubscriptions();
+
+      setFeedUnread(FeedKeys.membersArea, feedHasUnread(FeedKeys.membersArea, false, scopes, subs));
 
       for (const k of Object.keys(FEEDS) as FeedKey[]) {
         if (!FEEDS[k].hasSubFeeds) continue;
@@ -72,7 +74,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
 
   // Keep each topic-based forum's own badge in sync with its topics' aggregate state, whenever
   // that state changes for any reason (cold-start seed above, a fetch's detection pass below, or
-  // a single topic's post-read-marking refresh via refreshScopeUnread).
+  // a forum-wide refresh via refreshUnread).
   useEffect(() => {
     (Object.keys(FEEDS) as FeedKey[]).forEach((k) => {
       if (!FEEDS[k].hasSubFeeds) return;
@@ -82,7 +84,7 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     });
   }, [topicUnread, setFeedUnread]);
 
-  async function fetchAllFeeds() {
+  const fetchAllFeeds = useCallback(async () => {
     const keys = Object.keys(FEEDS) as FeedKey[];
     const results = await Promise.all(keys.map((k) => fetchSingleFeed(k)));
     const next: FeedResults = {};
@@ -95,23 +97,49 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     // nothing renders its badge while it's hidden.
     const visibility = await getForumVisibility();
 
-    // Each feed's detection runs independently and concurrently — a slow forum's bounded
-    // deep-dive fallback shouldn't delay another forum's (or the flat feed's) badge update.
+    // Each feed's detection runs independently and concurrently — a slow forum's deep-dive
+    // fallback shouldn't delay another forum's (or the flat feed's) badge update. This pass is
+    // writes only (scope_guids updates, topic discovery/deletion); badge state is re-derived
+    // fresh from the model in one shared pass afterward, not accumulated here — see the comment
+    // below on why.
+    const visited = new Set<FeedKey>();
     await Promise.all(keys.map(async (k) => {
       if (!FEEDS[k].isVisible(visibility)) return;
       const result = next[k]!;
-      if (!result.isSubscribed()) { setFeedUnread(k, false); return; }
+      if (result.hasConfirmedNoAccess()) { setFeedUnread(k, false); return; }
+      if (result.error) return; // fetch failed — leave existing badge state alone; retried next cycle
 
+      visited.add(k);
       if (!FEEDS[k].hasSubFeeds) {
         await markFlatFeedSeen(k, result.items);
-        setFeedUnread(k, await hasUnread(k));
-        return;
+      } else {
+        await detectForumUnread(k, result.items);
       }
-
-      const updates = await detectForumUnread(k, result.items);
-      if (Object.keys(updates).length === 0) return;
-      setTopicUnread((prev) => ({ ...prev, [k]: { ...(prev[k] ?? {}), ...updates } }));
     }));
+
+    // One shared read for every feed touched above, mirroring the cold-start seed: derive badge
+    // state fresh from the model (scope_guids + subscriptions) rather than merging each forum's
+    // detection results incrementally. A merge can only ever add or overwrite keys it's told
+    // about — a topic deleted this pass would never be told about, leaving its last-known state
+    // (however stale) stuck forever. Deriving fresh has no such gap: a deleted topic is simply
+    // absent from scope_guids, so it's absent from the result, full stop. Also re-sweep orphaned
+    // scopes here (not just at cold start) so any future regression of that same class self-heals
+    // on the next poll rather than needing an app restart.
+    if (visited.size > 0) {
+      await pruneOrphanedScopesForAllFeeds();
+      const scopes = await getAllScopes();
+      const subs = await getAllTopicSubscriptions();
+      for (const k of visited) {
+        if (!FEEDS[k].hasSubFeeds) {
+          setFeedUnread(k, feedHasUnread(k, false, scopes, subs));
+        } else {
+          // Per-topic map, not just the aggregate — ForumFeed needs per-topic granularity to
+          // render individual badges. The topicUnread effect below derives the forum's own
+          // aggregate badge from this the same way feedHasUnread would.
+          setTopicUnread((prev) => ({ ...prev, [k]: topicUnreadForForum(k, scopes, subs) }));
+        }
+      }
+    }
 
     const feedToken = await getToken();
     if (feedToken) {
@@ -127,17 +155,17 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
         }
       }
     }
-  }
+  }, [setFeedUnread]);
 
-  function fireRefresh() {
+  const fireRefresh = useCallback(() => {
     lastRefreshAtRef.current = Date.now();
     fetchAllFeeds();
-  }
+  }, [fetchAllFeeds]);
 
-  function startTimer(intervalMs: number) {
+  const startTimer = useCallback((intervalMs: number) => {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(fireRefresh, intervalMs);
-  }
+  }, [fireRefresh]);
 
   useEffect(() => {
     if (!authed) {
@@ -189,21 +217,21 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
       if (timerRef.current) clearInterval(timerRef.current);
       if (foregroundDelayRef.current) clearTimeout(foregroundDelayRef.current);
     };
-  }, [authed]);
+  }, [authed, fetchAllFeeds, fireRefresh, startTimer]);
 
-  // Called after ForumFeed marks something read: re-derives hasUnread for that one scope via a
-  // cheap local storage lookup, and updates the relevant slice of state. The topicUnread effect
-  // above then re-derives the forum's own aggregate flag.
-  const refreshScopeUnread = useCallback(async (feedKey: FeedKey, scopeId: string) => {
-    const result = await hasUnread(scopeId);
-    if (scopeId === feedKey) {
-      setFeedUnread(feedKey, result);
+  // Called after ForumFeed mutates a feed's scope(s) in any way (mark read, mark all read, a
+  // topic being deleted) — re-derives that feed's entire badge state fresh from the model, the
+  // same pattern fetchAllFeeds and the cold-start seed use. Deliberately not a per-scope patch:
+  // a targeted patch has no way to represent "this topic no longer exists," only "here's its new
+  // value," which is exactly the gap that let a deleted topic's stale badge outlive its deletion.
+  const refreshUnread = useCallback(async (feedKey: FeedKey) => {
+    const scopes = await getAllScopes();
+    const subs = await getAllTopicSubscriptions();
+    if (!FEEDS[feedKey].hasSubFeeds) {
+      setFeedUnread(feedKey, feedHasUnread(feedKey, false, scopes, subs));
       return;
     }
-    setTopicUnread((prev) => ({
-      ...prev,
-      [feedKey]: { ...(prev[feedKey] ?? {}), [scopeId]: result },
-    }));
+    setTopicUnread((prev) => ({ ...prev, [feedKey]: topicUnreadForForum(feedKey, scopes, subs) }));
   }, [setFeedUnread]);
 
   // Called by pull-to-refresh: re-fetches all feeds and resets the timer
@@ -211,10 +239,10 @@ export function FeedProvider({ children }: { children: React.ReactNode }) {
     lastRefreshAtRef.current = Date.now();
     getRefreshInterval().then((minutes) => startTimer(minutes * 60 * 1000));
     fetchAllFeeds();
-  }, []);
+  }, [fetchAllFeeds, startTimer]);
 
   return (
-    <FeedContext.Provider value={{ feedResults, unread, topicUnread, refreshScopeUnread, triggerRefresh }}>
+    <FeedContext.Provider value={{ feedResults, unread, topicUnread, refreshUnread, triggerRefresh }}>
       {children}
     </FeedContext.Provider>
   );

@@ -13,11 +13,28 @@ import {
   generateTopicUrl,
   discoverTopicsFromFeedItems,
   generateTopicId,
+  deleteTopic,
+  Topic,
 } from '../topicService';
 import { RssItem } from '../feedService';
+import { storageGetObject, storageSetObject } from '../storageService';
 import { FeedKeys } from '@li/core';
 
 const FK = FeedKeys;
+
+const baseTopic = (slug: string): Topic => ({
+  id: `membersForum:${slug}`,
+  name: slug,
+  slug,
+  forumKey: FK.membersForum,
+  discoveredAt: 0,
+  lastUpdatedAt: 0,
+  itemCount: 1,
+  latestAuthor: 'Author',
+  latestExcerpt: '',
+  latestItemId: `${slug}-latest`,
+  latestItemLink: '',
+});
 
 describe('topicService', () => {
   describe('extractTopicSlugFromLink', () => {
@@ -237,6 +254,26 @@ describe('topicService', () => {
 
       expect(discovered).toHaveLength(1);
       expect(discovered[0].name).toBe('ZQR');
+    });
+  });
+
+  describe('deleteTopic', () => {
+    it('removes the matching topic, leaving others untouched', async () => {
+      (storageGetObject as jest.Mock).mockResolvedValueOnce([baseTopic('zqr'), baseTopic('plmk')]);
+
+      await deleteTopic('membersForum:plmk');
+
+      const [, stored] = (storageSetObject as jest.Mock).mock.calls.at(-1) as [string, Topic[]];
+      expect(stored.map((t) => t.id)).toEqual(['membersForum:zqr']);
+    });
+
+    it('is a no-op when the topic id is not found', async () => {
+      (storageGetObject as jest.Mock).mockResolvedValueOnce([baseTopic('zqr')]);
+
+      await deleteTopic('membersForum:does-not-exist');
+
+      const [, stored] = (storageSetObject as jest.Mock).mock.calls.at(-1) as [string, Topic[]];
+      expect(stored).toEqual([baseTopic('zqr')]);
     });
   });
 });

@@ -12,10 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
-import { fetchTopicFeed, RssItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
-import { getAllScopes, viewScope, markRead, markAllRead, markGuidsRead, markScopesSeen } from '../services/readStateService';
+import { RssItem, FeedResult, FEEDS, FeedKey } from '../services/feedService';
+import { getAllScopes, viewScope, markRead, markScopesRead, updateTopic } from '../services/readStateService';
 import { getHideSnippetOnRead, storageGetObject, storageSetObject } from '../services/storageService';
-import { getTopicsForForum, generateTopicUrl, Topic } from '../services/topicService';
+import { getTopicsForForum, Topic } from '../services/topicService';
 import { getAllTopicSubscriptions, setTopicSubscription } from '../services/subscriptionService';
 import { useFeed } from '../contexts/FeedContext';
 import { getToken } from '../services/authService';
@@ -40,6 +40,7 @@ interface SectionState {
   loading: boolean;
   error?: string;
   isSubscribed(): boolean;
+  hasConfirmedNoAccess(): boolean;
 }
 
 async function getTopicExpandedStates(feedKey: FeedKey): Promise<Record<string, boolean>> {
@@ -58,7 +59,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   const [refreshing, setRefreshing] = useState(false);
   const [hideSnippetOnRead, setHideSnippetOnRead] = useState(false);
   const [itemReadStates, setItemReadStates] = useState<ItemReadState>({});
-  const { feedResults, unread, topicUnread, refreshScopeUnread, triggerRefresh } = useFeed();
+  const { feedResults, unread, topicUnread, refreshUnread, triggerRefresh } = useFeed();
   const result = feedResults[feedKey];
 
   async function buildSection(result: FeedResult): Promise<SectionState> {
@@ -71,15 +72,24 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       const subs = await getAllTopicSubscriptions(); // one read, not one per topic
       const isSubscribed = (topicId: string) => subs[topicId] ?? true;
 
-      topicSections = await Promise.all(
+      topicSections = (await Promise.all(
         allTopics
           .filter((topic) => isSubscribed(topic.id))
-          .map(async (topic) => {
+          .map(async (topic): Promise<TopicSection | null> => {
             const isExpanded = topicExpandedStates[topic.id] ?? false;
             let items: RssItem[] = [];
 
             if (isExpanded) {
-              items = await fetchTopicFeed(generateTopicUrl(topic.slug), feedKey);
+              const fetched = await updateTopic(topic, feedKey);
+              if (fetched.deleted) {
+                // Confirmed deleted by this very fetch — drop it now rather than waiting for the
+                // next refresh; there's no cached content to fall back to showing anyway. Also
+                // refresh the forum's badge, re-derived fresh from the model rather than patched,
+                // so a topic no longer in scope_guids is simply absent, not stuck stale.
+                await refreshUnread(feedKey);
+                return null;
+              }
+              items = fetched.items;
             }
 
             return {
@@ -89,7 +99,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
               loading: false,
             };
           })
-      );
+      )).filter((section): section is TopicSection => section !== null);
     }
 
     return {
@@ -98,6 +108,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       loading: false,
       error: result.error,
       isSubscribed: result.isSubscribed,
+      hasConfirmedNoAccess: result.hasConfirmedNoAccess,
     };
   }
 
@@ -193,31 +204,34 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
 
     try {
-      const posts = await fetchTopicFeed(generateTopicUrl(topic.slug), feedKey);
-      // Write-through to the same store detection uses, so a manual expand short-circuits the
-      // next detection pass for this topic.
-      await markScopesSeen({ [topic.id]: posts.map((p) => p.guid) });
+      const fetched = await updateTopic(topic, feedKey);
 
-      const scopes = await getAllScopes();
-      const view = viewScope(scopes[topic.id] ?? {});
-      setItemReadStates((prev) => {
-        const updated = { ...prev };
-        posts.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
-        return updated;
-      });
+      if (!fetched.deleted) {
+        const scopes = await getAllScopes();
+        const view = viewScope(scopes[topic.id] ?? {});
+        setItemReadStates((prev) => {
+          const updated = { ...prev };
+          fetched.items.forEach((p) => { updated[p.guid] = view.isRead(p.guid); });
+          return updated;
+        });
+      }
 
       setSection((prev) =>
         prev
           ? {
               ...prev,
-              topics: prev.topics.map((t) =>
-                t.topic.id === topic.id ? { ...t, items: posts, loading: false } : t
-              ),
+              // A topic confirmed deleted by this fetch has no value staying in the list — there's
+              // no cached post history to fall back to displaying, only whatever came back just now.
+              topics: fetched.deleted
+                ? prev.topics.filter((t) => t.topic.id !== topic.id)
+                : prev.topics.map((t) =>
+                    t.topic.id === topic.id ? { ...t, items: fetched.items, loading: false } : t
+                  ),
             }
           : prev
       );
 
-      await refreshScopeUnread(feedKey, topic.id);
+      await refreshUnread(feedKey);
     } catch {
       setSection((prev) =>
         prev
@@ -244,7 +258,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   async function onPressItem(item: RssItem, scopeId: string) {
     await markRead(scopeId, item.guid);
     setItemReadStates((prev) => ({ ...prev, [item.guid]: true }));
-    await refreshScopeUnread(feedKey, scopeId);
+    await refreshUnread(feedKey);
     openPostLink(item.link);
   }
 
@@ -273,32 +287,22 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
   async function markAllFeedRead() {
     if (!section) return;
 
-    if (section.topics.length > 0) {
-      const scopes = await getAllScopes();
-      const updates: Record<string, string[]> = {};
-      for (const t of section.topics) {
-        updates[t.topic.id] = Object.keys(scopes[t.topic.id] ?? {});
-      }
-      await markGuidsRead(updates); // one write for the whole forum, not one per topic
+    // The flat feed is just a scope with no topic subdivision (see readStateService's SCOPE_KEY),
+    // so "mark everything read" is the same operation at either granularity — a list of one
+    // scope id, or one per topic.
+    const scopeIds = section.topics.length > 0 ? section.topics.map((t) => t.topic.id) : [feedKey];
+    const updates = await markScopesRead(scopeIds); // one write for the whole forum, not one per topic
 
-      setItemReadStates((prev) => {
-        const updated = { ...prev };
-        Object.values(updates).flat().forEach((guid) => { updated[guid] = true; });
-        return updated;
-      });
+    const allGuids = Object.values(updates).flat();
+    if (allGuids.length === 0) return;
 
-      await Promise.all(section.topics.map((t) => refreshScopeUnread(feedKey, t.topic.id)));
-    } else {
-      const allIds = section.items.map((i) => i.guid);
-      if (allIds.length === 0) return;
-      await markAllRead(feedKey, allIds);
-      setItemReadStates((prev) => {
-        const updated = { ...prev };
-        allIds.forEach((id) => { updated[id] = true; });
-        return updated;
-      });
-      await refreshScopeUnread(feedKey, feedKey);
-    }
+    setItemReadStates((prev) => {
+      const updated = { ...prev };
+      allGuids.forEach((guid) => { updated[guid] = true; });
+      return updated;
+    });
+
+    await refreshUnread(feedKey);
   }
 
   function showPostMenu(item: { title: string; author: string }) {
@@ -318,11 +322,8 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     const topicSection = section.topics.find((t) => t.topic.id === topicId);
     if (!topicSection) return;
 
-    const scopes = await getAllScopes();
-    const allGuids = Object.keys(scopes[topicId] ?? {});
-    if (allGuids.length > 0) {
-      await markAllRead(topicId, allGuids);
-    }
+    const updates = await markScopesRead([topicId]);
+    const allGuids = updates[topicId] ?? [];
 
     setItemReadStates((prev) => {
       const updated = { ...prev };
@@ -330,7 +331,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
       return updated;
     });
 
-    await refreshScopeUnread(feedKey, topicId);
+    await refreshUnread(feedKey);
   }
 
   if (loading) {
@@ -349,7 +350,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
     );
   }
 
-  if (!section.isSubscribed() && !section.error) {
+  if (section.hasConfirmedNoAccess()) {
     return (
       <View style={[styles.center, { backgroundColor: c.bg }]}>
         <Text style={{ color: c.text }}>You don&apos;t have access to this feed</Text>
@@ -503,7 +504,7 @@ export function ForumFeed({ feedKey, title }: { feedKey: FeedKey; title?: string
                                 e.stopPropagation();
                                 await markRead(feedKey, item.guid);
                                 setItemReadStates(prev => ({ ...prev, [item.guid]: true }));
-                                await refreshScopeUnread(feedKey, feedKey);
+                                await refreshUnread(feedKey);
                               }}
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >

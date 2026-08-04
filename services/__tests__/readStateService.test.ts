@@ -1,5 +1,33 @@
+import {
+  markScopesSeen,
+  markGuidsRead,
+  markScopesRead,
+  viewScope,
+  hasUnread,
+  isRead,
+  markRead,
+  markAllRead,
+  markFlatFeedSeen,
+  detectForumUnread,
+  getAllScopes,
+  topicUnreadForForum,
+  feedHasUnread,
+  clearScope,
+  pruneOrphanedScopes,
+  pruneOrphanedScopesForAllFeeds,
+  updateTopic,
+} from '../readStateService';
+import { FeedKeys } from '@li/core';
+import { fetchTopicFeed, RssItem } from '../feedService';
+import { getTopicsForForum, Topic } from '../topicService';
+import { getAllTopicSubscriptions } from '../subscriptionService';
+import { storageGetObject, storageSetObject } from '../storageService';
+
 let store: Record<string, unknown> = {};
 
+// jest.mock calls are hoisted above every import above at compile time regardless of where
+// they're written in source — this position (after the imports) is what satisfies both that
+// hoisting and eslint's import/first rule at once.
 jest.mock('../storageService', () => ({
   storageGetObject: jest.fn((key: string) => Promise.resolve((store as any)[key] ?? null)),
   storageSetObject: jest.fn((key: string, value: unknown) => {
@@ -8,7 +36,12 @@ jest.mock('../storageService', () => ({
   }),
 }));
 
+// FEEDS is pure static config, safe to pull in via requireActual — but feedService.ts also
+// imports authService (expo-secure-store), which doesn't resolve under Jest without a
+// native-module bridge, so that needs stubbing out too even though nothing here calls it.
+jest.mock('../authService', () => ({ getToken: jest.fn() }));
 jest.mock('../feedService', () => ({
+  ...jest.requireActual('../feedService'),
   fetchTopicFeed: jest.fn(),
 }));
 
@@ -20,25 +53,6 @@ jest.mock('../topicService', () => ({
 jest.mock('../subscriptionService', () => ({
   getAllTopicSubscriptions: jest.fn(),
 }));
-
-import {
-  markScopesSeen,
-  markGuidsRead,
-  viewScope,
-  hasUnread,
-  isRead,
-  markRead,
-  markAllRead,
-  markFlatFeedSeen,
-  detectForumUnread,
-  getAllScopes,
-  topicUnreadForForum,
-} from '../readStateService';
-import { FeedKeys } from '@li/core';
-import { fetchTopicFeed, RssItem } from '../feedService';
-import { getTopicsForForum, Topic } from '../topicService';
-import { getAllTopicSubscriptions } from '../subscriptionService';
-import { storageGetObject, storageSetObject } from '../storageService';
 
 const FK = FeedKeys;
 
@@ -74,7 +88,7 @@ const topic = (slug: string, lastUpdatedAt = 1): Topic => ({
 
 beforeEach(() => {
   store = {};
-  mockFetchTopicFeed.mockReset().mockResolvedValue([]);
+  mockFetchTopicFeed.mockReset().mockResolvedValue({ items: [], deleted: false });
   mockGetTopicsForForum.mockReset().mockResolvedValue([]);
   mockGetAllTopicSubscriptions.mockReset().mockResolvedValue({});
   mockStorageGetObject.mockClear();
@@ -146,6 +160,143 @@ describe('markScopesSeen / markGuidsRead', () => {
   });
 });
 
+describe('markScopesRead', () => {
+  it('marks every known guid in each given scope read, regardless of read state, and returns what it marked', async () => {
+    await markScopesSeen({ 'membersForum:zqr': ['g1', 'g2'] });
+    await markGuidsRead({ 'membersForum:zqr': ['g1'] }); // g1 already read, g2 still unread
+
+    const updates = await markScopesRead(['membersForum:zqr']);
+
+    expect(updates).toEqual({ 'membersForum:zqr': ['g1', 'g2'] });
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:zqr']).toEqual({ g1: true, g2: true });
+  });
+
+  it('treats a flat feed key exactly like a topic id — same operation, no special case', async () => {
+    await markScopesSeen({ [FK.membersArea]: ['g1'] });
+
+    const updates = await markScopesRead([FK.membersArea]);
+
+    expect(updates).toEqual({ [FK.membersArea]: ['g1'] });
+  });
+
+  it('marks multiple scopes in one call, independently', async () => {
+    await markScopesSeen({
+      'membersForum:zqr': ['g1'],
+      'membersForum:plmk': ['g2'],
+    });
+
+    const updates = await markScopesRead(['membersForum:zqr', 'membersForum:plmk']);
+
+    expect(updates).toEqual({
+      'membersForum:zqr': ['g1'],
+      'membersForum:plmk': ['g2'],
+    });
+  });
+
+  it('returns an empty guid list for a scope that has never been seen, without erroring', async () => {
+    const updates = await markScopesRead(['membersForum:never-seen']);
+
+    expect(updates).toEqual({ 'membersForum:never-seen': [] });
+  });
+});
+
+describe('clearScope', () => {
+  it('removes the scope entirely, leaving other scopes untouched', async () => {
+    await markScopesSeen({
+      'membersForum:zqr': ['g1', 'g2'],
+      'membersForum:plmk': ['g3'],
+    });
+
+    await clearScope('membersForum:zqr');
+
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:zqr']).toBeUndefined();
+    expect(scopes['membersForum:plmk']).toEqual({ g3: false });
+  });
+
+  it('is a no-op when the scope does not exist', async () => {
+    await markScopesSeen({ 'membersForum:plmk': ['g1'] });
+    (storageSetObject as jest.Mock).mockClear();
+
+    await clearScope('membersForum:does-not-exist');
+
+    expect(storageSetObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('pruneOrphanedScopes', () => {
+  it('removes any scope not in the valid set, leaving valid ones untouched', async () => {
+    await markScopesSeen({
+      'membersForum:zqr': ['g1'],
+      'membersForum:gone': ['g2'],
+      [FK.membersArea]: ['g3'],
+    });
+
+    await pruneOrphanedScopes(new Set(['membersForum:zqr', FK.membersArea]));
+
+    const scopes = await getAllScopes();
+    expect(Object.keys(scopes).sort()).toEqual([FK.membersArea, 'membersForum:zqr'].sort());
+    expect(scopes['membersForum:zqr']).toEqual({ g1: false });
+  });
+
+  it('is a no-op (no write) when nothing is orphaned', async () => {
+    await markScopesSeen({ 'membersForum:zqr': ['g1'] });
+    (storageSetObject as jest.Mock).mockClear();
+
+    await pruneOrphanedScopes(new Set(['membersForum:zqr']));
+
+    expect(storageSetObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('pruneOrphanedScopesForAllFeeds', () => {
+  it('removes a topic scope whose topic no longer exists in any forum, keeping real ones', async () => {
+    await markScopesSeen({
+      'membersForum:zqr': ['g1'],
+      'membersForum:gone': ['g2'], // orphan: no longer returned by getTopicsForForum
+      [FK.membersArea]: ['g3'],
+    });
+    mockGetTopicsForForum.mockImplementation(async (forumKey: string) =>
+      forumKey === FK.membersForum ? [topic('zqr')] : []
+    );
+
+    await pruneOrphanedScopesForAllFeeds();
+
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:gone']).toBeUndefined();
+    expect(scopes['membersForum:zqr']).toEqual({ g1: false });
+    expect(scopes[FK.membersArea]).toEqual({ g3: false });
+  });
+});
+
+describe('updateTopic', () => {
+  beforeEach(() => {
+    mockFetchTopicFeed.mockReset();
+  });
+
+  it('marks the fetched items seen when the topic is still alive', async () => {
+    mockFetchTopicFeed.mockResolvedValue({ items: [item('g1', 'zqr'), item('g2', 'zqr')], deleted: false });
+
+    const result = await updateTopic(topic('zqr'), FK.membersForum);
+
+    expect(result.deleted).toBe(false);
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:zqr']).toEqual({ g1: false, g2: false });
+  });
+
+  it('clears the scope instead of marking anything seen when the topic is confirmed deleted', async () => {
+    await markScopesSeen({ 'membersForum:zqr': ['stale-guid'] });
+    mockFetchTopicFeed.mockResolvedValue({ items: [], deleted: true });
+
+    const result = await updateTopic(topic('zqr'), FK.membersForum);
+
+    expect(result.deleted).toBe(true);
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:zqr']).toBeUndefined();
+  });
+});
+
 describe('hasUnread / isRead / markRead / markAllRead (single-scope wrappers)', () => {
   it('hasUnread is false for a scope that has never been seen', async () => {
     expect(await hasUnread('membersForum:zqr')).toBe(false);
@@ -212,6 +363,42 @@ describe('topicUnreadForForum', () => {
   });
 });
 
+describe('feedHasUnread', () => {
+  it('for a flat feed, reads its own single scope directly', () => {
+    const scopes = { [FK.membersArea]: { g1: false } };
+    expect(feedHasUnread(FK.membersArea, false, scopes, {})).toBe(true);
+  });
+
+  it('for a flat feed with everything read, is false', () => {
+    const scopes = { [FK.membersArea]: { g1: true } };
+    expect(feedHasUnread(FK.membersArea, false, scopes, {})).toBe(false);
+  });
+
+  it('for a topic-based forum, is true if any non-silenced topic has unread', () => {
+    const scopes = {
+      'membersForum:zqr': { g1: true },
+      'membersForum:plmk': { g2: false },
+    };
+    expect(feedHasUnread(FK.membersForum, true, scopes, {})).toBe(true);
+  });
+
+  it('for a topic-based forum, is false when every topic is read', () => {
+    const scopes = { 'membersForum:zqr': { g1: true } };
+    expect(feedHasUnread(FK.membersForum, true, scopes, {})).toBe(false);
+  });
+
+  it('for a topic-based forum, ignores a silenced topic even if it has unread guids', () => {
+    const scopes = { 'membersForum:zqr': { g1: false } };
+    const subs = { 'membersForum:zqr': false };
+    expect(feedHasUnread(FK.membersForum, true, scopes, subs)).toBe(false);
+  });
+
+  it('for a feed with no scope entries at all, is false either way', () => {
+    expect(feedHasUnread(FK.membersArea, false, {}, {})).toBe(false);
+    expect(feedHasUnread(FK.membersForum, true, {}, {})).toBe(false);
+  });
+});
+
 describe('detectForumUnread', () => {
   it('fast path: newest considered item already known — zero fetchTopicFeed calls, zero touched topics', async () => {
     await markScopesSeen({ 'membersForum:zqr': ['g1'] });
@@ -239,16 +426,17 @@ describe('detectForumUnread', () => {
     expect(scopes['membersForum:plmk']).toEqual({ 'g-new-2': false });
   });
 
-  it('incomplete window: nothing known in the whole window — bounded fallback deep-dive, restricted to subscribed topics', async () => {
+  it('incomplete window: nothing known in the whole window — deep-dive restricted to subscribed topics', async () => {
     mockGetTopicsForForum.mockResolvedValue([
       topic('zqr', 3),
       topic('plmk', 2),
       topic('silenced-topic', 1),
     ]);
     mockGetAllTopicSubscriptions.mockResolvedValue({ 'membersForum:silenced-topic': false });
-    mockFetchTopicFeed.mockImplementation(async (url: string) =>
-      url.includes('/zqr/') ? [item('deep-g1', 'zqr')] : [item('deep-g2', 'plmk')]
-    );
+    mockFetchTopicFeed.mockImplementation(async (t: Topic) => ({
+      items: t.slug === 'zqr' ? [item('deep-g1', 'zqr')] : [item('deep-g2', 'plmk')],
+      deleted: false,
+    }));
 
     const items = [item('g-new', 'zqr')]; // never-before-seen, window exhausted with no boundary
     const result = await detectForumUnread(FK.membersForum, items);
@@ -259,7 +447,27 @@ describe('detectForumUnread', () => {
     expect(result['membersForum:silenced-topic']).toBeUndefined();
   });
 
-  it('bounds the fallback deep-dive to at most 10 topics', async () => {
+  // A topic whose item is in the top-level window is demonstrably alive at fetch time, so this
+  // combination (staged by the main walk, then found deleted by the dive) only happens if the
+  // topic was deleted in the narrow gap between the two fetches — not worth preventing, but
+  // recovery from it must still be clean, not leave a resurrected guid behind.
+  it('gracefully recovers when a topic is deleted between the top-level fetch and its own deep-dive', async () => {
+    await markScopesSeen({ 'membersForum:gone': ['stale-guid'] }); // leftover from before it was deleted
+    mockGetTopicsForForum.mockResolvedValue([topic('gone', 5)]);
+    mockGetAllTopicSubscriptions.mockResolvedValue({});
+    mockFetchTopicFeed.mockResolvedValue({ items: [], deleted: true });
+
+    const result = await detectForumUnread(FK.membersForum, [item('g-new', 'gone')]);
+
+    expect(result['membersForum:gone']).toBeUndefined();
+    const scopes = await getAllScopes();
+    expect(scopes['membersForum:gone']).toBeUndefined();
+  });
+
+  it('dives every subscribed topic when the window is incomplete — no arbitrary cap', async () => {
+    // A cap here previously meant a cold/inactive topic ranked below the cutoff could never be
+    // checked. Concurrent (Promise.all) dives cost latency once, not per topic, so there's no
+    // reason to bound the count.
     mockGetTopicsForForum.mockResolvedValue(
       Array.from({ length: 15 }, (_, i) => topic(`topic-${i}`, 15 - i))
     );
@@ -267,7 +475,7 @@ describe('detectForumUnread', () => {
 
     await detectForumUnread(FK.membersForum, [item('g-new', 'topic-0')]);
 
-    expect(mockFetchTopicFeed).toHaveBeenCalledTimes(10);
+    expect(mockFetchTopicFeed).toHaveBeenCalledTimes(15);
   });
 
   it('reads the scope store a constant number of times, not once per item in the window', async () => {

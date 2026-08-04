@@ -185,6 +185,18 @@ export async function getTopic(topicId: string): Promise<Topic | null> {
 }
 
 /**
+ * Remove a topic entirely — called by feedService.fetchTopicFeed once it detects the topic's own
+ * feed URL no longer returns that topic's content (the site itself stops listing a genuinely
+ * deleted topic in RSS, so there's no expectation of it resurfacing; if a topic id does turn up
+ * again it's treated as a fresh discovery, not evidence this needs to remember dead ids forever).
+ * A no-op if the topic id isn't found (already removed, or never discovered).
+ */
+export async function deleteTopic(topicId: string): Promise<void> {
+  const all = await getTopics();
+  await storeTopics(all.filter((t) => t.id !== topicId));
+}
+
+/**
  * Clear all discovered topics (for testing/reset).
  */
 export async function clearTopics(): Promise<void> {
