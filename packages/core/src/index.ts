@@ -199,14 +199,20 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
 ];
 
-function matchNegativePattern(text: string): ActionableResult | null {
+// Exported for the embeddings-similarity prototype (see similarity.ts): closed-class discourse
+// markers (hedge modals, personal-address phrases, negation) are reliably keyword-detectable —
+// the whack-a-mole history on this file is about open-ended phrasing (directive vs. retrospective
+// framing), not these markers, so there's no reason for a hybrid classifier to re-derive them.
+export function matchNegativePattern(text: string): ActionableResult | null {
   for (const [re, clause] of NEG_PATTERNS) {
     if (re.test(text)) return clause;
   }
   return null;
 }
 
-function matchPositivePattern(text: string): ActionableResult | null {
+// Exported for the embeddings-similarity prototype (see similarity.ts) — see matchNegativePattern's
+// comment above for why this file's reliable literal markers are reused rather than re-derived.
+export function matchPositivePattern(text: string): ActionableResult | null {
   for (const [re, clause] of POS_PATTERNS) {
     if (re.test(text)) return clause;
   }
