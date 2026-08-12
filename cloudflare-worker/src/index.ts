@@ -1,5 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FeedKeys, ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type FeedKey, type ContentFilter, type FilterItem, type Channel, type RssItem } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem } from '@li/core';
+import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
+import { DEFAULT_TOKENS_TTL_DAYS, CHANNEL_FEEDS } from './config';
 
 function toFilterItem(item: RssItem): FilterItem {
   return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
@@ -19,6 +21,9 @@ export interface Env {
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
   TOKENS_TTL_DAYS?: string;         // days a TOKENS registration survives without renewal, default "30"
+  VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
+  VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
+  VAPID_PRIVATE_KEY: string;        // secret — set via: wrangler secret put VAPID_PRIVATE_KEY
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -27,21 +32,22 @@ export interface Env {
   HEARTBEAT_URL_OPTIONS?: string;
 }
 
-// The app re-registers every push channel unconditionally on every cold launch (FeedContext), so
-// a registration that stops renewing means the device is gone (uninstalled, or never called
-// /unregister). This TTL just needs slack beyond normal usage gaps — weeks, not days — see #60.
-export const DEFAULT_TOKENS_TTL_DAYS = 30;
 function tokensTtlSeconds(env: Pick<Env, 'TOKENS_TTL_DAYS'>): number {
   return parseInt(env.TOKENS_TTL_DAYS ?? String(DEFAULT_TOKENS_TTL_DAYS), 10) * 60 * 60 * 24;
 }
 
 // filter/authors/minLength are required on every registration. feedToken is optional here only
 // for KV entries predating universal storage; recovers a stale stock/options poll token.
+// kind/subscription are only ever written for a webpush registration — undefined means Expo (every
+// entry written before Web Push existed, and every entry the RN app still writes), so no migration
+// is needed for pre-existing entries.
 interface TokenMeta {
   feedToken?: string;
   filter?: ContentFilter;
   authors?: string[];
   minLength?: number;
+  kind?: 'webpush';
+  subscription?: PushSubscription;
 }
 
 interface RunStats {
@@ -119,30 +125,6 @@ export function heartbeatUrlFor(channel: Channel, env: Env): string | undefined 
   }[channel];
 }
 
-// The 'members' Channel bundles two distinct feeds under one push-registration grouping.
-// feedTokenHasAccess() below always checks index [0] of a channel's feed list, so order is
-// deliberate here: Members Forum is first because its feed requires a valid feed_token to
-// return any items, making it a real check of membership status (catches an expired or
-// invalid token). Members Area's feed is readable regardless of token validity — only the
-// content snippet is paywalled — so it would never catch anything if checked instead.
-//
-// No `discoverTopics`/topic-sub-feed fetching here — the top-level "All Posts" feed for a forum
-// already aggregates replies from every topic in it (confirmed against a real authenticated
-// fetch), so alerting never needs to walk into individual topics. Topic discovery remains a
-// purely app-side concern (topicService.ts) for the browsing UI.
-export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey }[]> = {
-  members: [
-    { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/', feedKey: FeedKeys.membersForum },
-    { url: 'https://logicalinvestor.net/feed/',                            feedKey: FeedKeys.membersArea },
-  ],
-  stock: [
-    { url: 'https://logicalinvestor.net/forums/forum/stock-insights/feed/', feedKey: FeedKeys.stockInsights },
-  ],
-  options: [
-    { url: 'https://logicalinvestor.net/forums/forum/options-insights/feed/', feedKey: FeedKeys.optionsInsights },
-  ],
-};
-
 // Module-level parser shared across all calls within an invocation
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 
@@ -211,22 +193,33 @@ export function timingSafeEqualStr(a: string, b: string): boolean {
 }
 
 export default {
-  // HTTP API (called by the app's pushService.ts):
+  // HTTP API (called by the app's pushService.ts, or the web-push registration page's app.js):
   //
-  //   GET  /status       Authorization: Bearer <FEED_TOKEN>
+  //   GET  /status              Authorization: Bearer <FEED_TOKEN>
+  //   GET  /vapid-public-key
   //   POST /register    { token, channel, filter, authors, minLength, feed_token }
-  //   POST /unregister  { token, channel }
+  //     or { subscription: { endpoint, keys: { p256dh, auth } }, channel, filter, authors, minLength, feed_token }
+  //   POST /unregister  { token, channel } or { subscription: { endpoint }, channel }
+  //   POST /test-push   { token, channel, feed_token } or { subscription, channel, feed_token }
+  //     sends one immediate notification straight to this device, bypassing polling entirely —
+  //     for confirming a registration actually receives pushes.
   //
-  //   token      — Expo push token (device identifier for APNs/FCM delivery)
-  //   channel    — 'members' | 'stock' | 'options'
-  //   filter     — 'members' | 'actionable' | 'length' (see @li/core ContentFilter)
-  //   authors    — string[], substring whitelist; [] = no author restriction (no global fallback)
-  //   minLength  — number; 0 = no minimum
-  //   feed_token — WordPress auth token, required on every /register call regardless of
-  //                channel. For stock/options it also proves access — rejected with 403
-  //                if missing, invalid, or the account isn't subscribed to that channel.
+  //   token        — Expo push token (device identifier for APNs/FCM delivery), RN app only
+  //   subscription — browser PushManager subscription object, web page only. Mutually exclusive
+  //                  with token; whichever is present determines the registration's delivery kind.
+  //   channel      — 'members' | 'stock' | 'options'
+  //   filter       — 'members' | 'actionable' | 'length' (see @li/core ContentFilter)
+  //   authors      — string[], substring whitelist; [] = no author restriction (no global fallback)
+  //   minLength    — number; 0 = no minimum
+  //   feed_token   — WordPress auth token, required on every /register call regardless of
+  //                  channel. For stock/options it also proves access — rejected with 403
+  //                  if missing, invalid, or the account isn't subscribed to that channel.
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === 'GET' && url.pathname === '/vapid-public-key') {
+      return new Response(env.VAPID_PUBLIC_KEY, { headers: { 'Content-Type': 'text/plain' } });
+    }
 
     if (request.method === 'GET' && url.pathname === '/status') {
       const auth = request.headers.get('Authorization') ?? '';
@@ -267,15 +260,38 @@ export default {
 
     if (request.method !== 'POST') return new Response('not found', { status: 404 });
 
-    const body = await request.json() as { token?: string; channel?: string; filter?: string; authors?: unknown; minLength?: unknown; feed_token?: string };
-    const pushToken = body.token;
+    const body = await request.json() as {
+      token?: string;
+      subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+      channel?: string; filter?: string; authors?: unknown; minLength?: unknown; feed_token?: string;
+    };
     const channel = body.channel as Channel | null;
-    if (!pushToken) return new Response('missing token', { status: 400 });
     if (!channel || !CHANNELS.includes(channel)) {
       return new Response('invalid channel', { status: 400 });
     }
 
-    const kvKey = `${channel}:${pushToken}`;
+    // token and subscription are mutually exclusive registration kinds — token wins if somehow
+    // both are sent, since only the RN app ever sends token and only the web page sends subscription.
+    let pushToken: string;
+    let subscription: PushSubscription | undefined;
+    if (typeof body.token === 'string' && body.token) {
+      pushToken = body.token;
+    } else if (
+      body.subscription &&
+      typeof body.subscription.endpoint === 'string' && body.subscription.endpoint &&
+      body.subscription.keys &&
+      typeof body.subscription.keys.p256dh === 'string' && body.subscription.keys.p256dh &&
+      typeof body.subscription.keys.auth === 'string' && body.subscription.keys.auth
+    ) {
+      pushToken = body.subscription.endpoint;
+      subscription = { endpoint: body.subscription.endpoint, expirationTime: null, keys: { p256dh: body.subscription.keys.p256dh, auth: body.subscription.keys.auth } };
+    } else {
+      return new Response('missing token or subscription', { status: 400 });
+    }
+
+    // A webpush registration's KV key is namespaced under `web:` so it can never collide with an
+    // Expo push token's own key space, even though both share the same TOKENS.list() prefix scan.
+    const kvKey = subscription ? `${channel}:web:${pushToken}` : `${channel}:${pushToken}`;
 
     if (url.pathname === '/register') {
       const filter = body.filter as ContentFilter;
@@ -292,11 +308,18 @@ export default {
       if (typeof feedToken !== 'string' || feedToken === '') {
         return new Response('missing or invalid feed_token', { status: 400 });
       }
-      return registerDevice({ channel, pushToken, filter, authors: body.authors, minLength: body.minLength, feedToken }, env);
+      return registerDevice({ channel, pushToken, subscription, filter, authors: body.authors, minLength: body.minLength, feedToken }, env);
     }
     if (url.pathname === '/unregister') {
       await env.TOKENS.delete(kvKey);
       return new Response('ok');
+    }
+    if (url.pathname === '/test-push') {
+      const feedToken = body.feed_token;
+      if (typeof feedToken !== 'string' || feedToken === '') {
+        return new Response('missing or invalid feed_token', { status: 400 });
+      }
+      return sendTestPush({ channel, pushToken, subscription, feedToken }, env);
     }
     return new Response('not found', { status: 404 });
   },
@@ -315,7 +338,10 @@ export default {
 
 export interface RegisterParams {
   channel: Channel;
+  // Expo push token, or (when subscription is set) the webpush subscription's own endpoint URL —
+  // either way, the KV key discriminator for this device.
   pushToken: string;
+  subscription?: PushSubscription;
   filter: ContentFilter;
   authors: string[];
   minLength: number;
@@ -327,7 +353,7 @@ export interface RegisterParams {
 // only encodes the access/storage decision, so it can be unit tested with plain objects,
 // no Request/env plumbing.
 export async function registerDevice(
-  { channel, pushToken, filter, authors, minLength, feedToken }: RegisterParams,
+  { channel, pushToken, subscription, filter, authors, minLength, feedToken }: RegisterParams,
   env: Pick<Env, 'TOKENS' | 'STATE' | 'TOKENS_TTL_DAYS'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
@@ -339,9 +365,63 @@ export async function registerDevice(
   }
   await env.STATE.put(`poll:${channel}`, feedToken);
 
-  const meta: TokenMeta = { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength };
-  await env.TOKENS.put(`${channel}:${pushToken}`, '1', { metadata: meta, expirationTtl: tokensTtlSeconds(env) });
+  // kind/subscription are only ever written for a webpush registration (see TokenMeta) — omitting
+  // them entirely for an Expo registration keeps every pre-existing entry's shape unchanged.
+  const meta: TokenMeta = subscription
+    ? { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, kind: 'webpush', subscription }
+    : { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength };
+  const kvKey = subscription ? `${channel}:web:${pushToken}` : `${channel}:${pushToken}`;
+  await env.TOKENS.put(kvKey, '1', { metadata: meta, expirationTtl: tokensTtlSeconds(env) });
   return new Response('ok');
+}
+
+export interface TestPushParams {
+  channel: Channel;
+  pushToken: string;
+  subscription?: PushSubscription;
+  feedToken: string;
+}
+
+// Sends one immediate notification straight to the requesting device, bypassing the poll/detect/
+// filter pipeline entirely — for confirming a registration actually receives pushes, not for
+// exercising matchesFilter (already covered where registration happens). Same feed_token gate as
+// registerDevice, so this can't be used to spam an arbitrary subscription without proving access
+// first.
+export async function sendTestPush(
+  { channel, pushToken, subscription, feedToken }: TestPushParams,
+  env: Pick<Env, 'VAPID_SUBJECT' | 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY'>,
+): Promise<Response> {
+  const access = await feedTokenHasAccess(channel, feedToken);
+  if (access === null) {
+    return new Response('access check failed, try again', { status: 503 });
+  }
+  if (!access) {
+    return new Response('no access', { status: 403 });
+  }
+
+  const title = 'Test notification';
+  const body = 'If you can see this, push notifications are working.';
+
+  if (subscription) {
+    const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+    try {
+      const result = await sendWebPush(subscription, { data: { title, body } }, vapid);
+      return result.ok ? new Response('ok') : new Response('send failed', { status: 502 });
+    } catch {
+      return new Response('send failed', { status: 502 });
+    }
+  }
+
+  try {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([{ to: pushToken, title, body }]),
+    });
+    return res.ok ? new Response('ok') : new Response('send failed', { status: 502 });
+  } catch {
+    return new Response('send failed', { status: 502 });
+  }
 }
 
 // Tri-state: true/false are definitive, null means the check itself failed (network error, 5xx,
@@ -381,7 +461,7 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
   return null;
 }
 
-interface Bucket { filter: ContentFilter; authors: string[]; minLength: number; tokens: string[] }
+interface Bucket { filter: ContentFilter; authors: string[]; minLength: number; tokens: string[]; webpushSubs: PushSubscription[] }
 
 // Re-reads `daily` fresh from KV right before a write that follows slow work (bucket-building,
 // push-sending). A duplicate cron dispatch for the same channel can complete its own write in
@@ -526,14 +606,17 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
         // access === null: check itself failed (network blip, 5xx) — leave the registration
         // and keep notifying; only a definitive 401/403 proves access was actually revoked.
       }
-      const { filter, authors, minLength } = key.metadata ?? {};
+      const { filter, authors, minLength, kind, subscription } = key.metadata ?? {};
       if (!filter || authors === undefined || minLength === undefined) continue; // pre-redesign entry — skip until it re-registers
-      const token = key.name.slice(channel.length + 1);
       // Devices sharing filter+authors+minLength get one shared eligibility check per item below
       // instead of one per device — negligible cost even at hundreds of distinct buckets.
       const sig = `${filter}|${authors.join(',')}|${minLength}`;
-      const bucket = buckets.get(sig) ?? { filter, authors, minLength, tokens: [] };
-      bucket.tokens.push(token);
+      const bucket = buckets.get(sig) ?? { filter, authors, minLength, tokens: [], webpushSubs: [] };
+      if (kind === 'webpush' && subscription) {
+        bucket.webpushSubs.push(subscription);
+      } else {
+        bucket.tokens.push(key.name.slice(channel.length + 1));
+      }
       buckets.set(sig, bucket);
     }
     cursor = page.list_complete ? undefined : page.cursor;
@@ -549,6 +632,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // this shortens wall-clock duration (fetch() wait doesn't count against the Worker's CPU-time
   // limit either way, but a shorter invocation is still less exposed to Cloudflare's separate
   // wall-clock duration cap). A failure in one bucket's send must not skip the others.
+  const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
   const sentCounts = await Promise.all(
     Array.from(buckets.values()).map(async (bucket) => {
       const toNotify = freshItems
@@ -556,23 +640,47 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
         .slice(0, 5);
       if (toNotify.length === 0) return 0;
 
-      const messages = toNotify.map((item, i) => ({
-        to: bucket.tokens,
-        title: formatTitle(item),
-        body: item.description.slice(0, 150) || 'New post',
-        sound: i === 0 ? 'default' : undefined,
-      }));
+      let sent = 0;
 
-      try {
-        await fetch('https://exp.host/--/api/v2/push/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(messages),
-        });
-        return toNotify.length;
-      } catch {
-        return 0;
+      if (bucket.tokens.length > 0) {
+        const messages = toNotify.map((item, i) => ({
+          to: bucket.tokens,
+          title: formatTitle(item),
+          body: item.description.slice(0, 150) || 'New post',
+          sound: i === 0 ? 'default' : undefined,
+        }));
+
+        try {
+          await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(messages),
+          });
+          sent += toNotify.length;
+        } catch { /* this bucket's Expo send failed; webpush sends below are unaffected */ }
       }
+
+      if (bucket.webpushSubs.length > 0) {
+        // Web Push has no bulk-send endpoint (inherent to the protocol) — one encrypted request
+        // per subscription per item, run concurrently rather than one at a time.
+        const results = await Promise.all(
+          bucket.webpushSubs.flatMap((sub) =>
+            toNotify.map((item) =>
+              sendWebPush(sub, { data: { title: formatTitle(item), body: item.description.slice(0, 150) || 'New post', url: item.link } }, vapid)
+                .then(async (result) => {
+                  // gone:true (HTTP 404/410) is the protocol's standard "subscription no longer
+                  // exists" signal — prune it now or it accumulates forever.
+                  if (result.gone) await env.TOKENS.delete(`${channel}:web:${sub.endpoint}`);
+                  return result;
+                })
+                .catch(() => ({ ok: false, gone: false }))
+            )
+          )
+        );
+        if (results.some((r) => r.ok)) sent += toNotify.length;
+      }
+
+      return sent;
     })
   );
   runStats.sent = sentCounts.reduce((a, b) => a + b, 0);

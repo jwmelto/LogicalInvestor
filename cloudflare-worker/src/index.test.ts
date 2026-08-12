@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, timingSafeEqualStr, CHANNEL_FEEDS, advanceDaily, DEFAULT_TOKENS_TTL_DAYS } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily } from './index';
+import { CHANNEL_FEEDS, DEFAULT_TOKENS_TTL_DAYS } from './config';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
 
@@ -446,6 +447,177 @@ describe('/register endpoint validation (HTTP boundary)', () => {
   });
 });
 
+// The web-push registration page sends `subscription` instead of `token` — everything else
+// (channel/filter/authors/minLength/feed_token validation) is shared with the Expo path above.
+describe('/register endpoint validation — webpush subscription path', () => {
+  function mockEnv() {
+    return {
+      TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
+      STATE: { put: vi.fn().mockResolvedValue(undefined) },
+    } as any;
+  }
+
+  function registerRequest(body: Record<string, unknown>) {
+    return new Request('https://worker.test/register', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  const validSubscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+
+  it('accepts a well-formed subscription in place of token, and stores it under a web:-namespaced key', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ subscription: validSubscription, channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
+    expect(res.status).toBe(200);
+    expect(env.TOKENS.put).toHaveBeenCalledWith(
+      'members:web:https://fcm.googleapis.com/fcm/send/abc',
+      '1',
+      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys } }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
+    );
+  });
+
+  it.each([
+    ['missing endpoint', { keys: { p256dh: 'p256dh-value', auth: 'auth-value' } }],
+    ['missing keys.p256dh', { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { auth: 'auth-value' } }],
+    ['missing keys.auth', { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p256dh-value' } }],
+    ['missing keys entirely', { endpoint: 'https://fcm.googleapis.com/fcm/send/abc' }],
+  ])('rejects a malformed subscription (%s)', async (_desc, subscription) => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ subscription, channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
+    expect(res.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects when neither token nor subscription is present', async () => {
+    const env = mockEnv();
+    const res = await worker.fetch(registerRequest({ channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
+    expect(res.status).toBe(400);
+    expect(env.TOKENS.put).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendTestPush (logic, plain-object inputs)', () => {
+  // Same throwaway test-only key material as webpush.test.ts / the runChannel webpush suite.
+  const VAPID_ENV = {
+    VAPID_SUBJECT: 'mailto:test@example.com',
+    VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
+    VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
+  };
+  const validSubscription = {
+    endpoint: 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id',
+    expirationTime: null,
+    keys: {
+      p256dh: 'BELwtddmVvbvOEHadf6IA9Jj2Gx2u6K9Yoj-0TOzGPDJWfQbUprGpFpfOKvULdsyl9m5LwdBLqG6t9zUajeGN8A',
+      auth: 'wUSvE5FxCS7VqmXHVW79FQ',
+    },
+  };
+
+  it('rejects when feed_token has no access', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'unauthorized' }, VAPID_ENV);
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 503 (not 403) when the access check itself fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, VAPID_ENV);
+    expect(res.status).toBe(503);
+  });
+
+  it('sends via exp.host for an Expo pushToken and returns ok', async () => {
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, VAPID_ENV);
+    expect(res.status).toBe(200);
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    const messages = JSON.parse(pushCall![1]!.body as string);
+    expect(messages).toEqual([{ to: 'push1', title: 'Test notification', body: 'If you can see this, push notifications are working.' }]);
+  });
+
+  it('reports 502 when the Expo send itself fails', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: false, status: 500 });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, VAPID_ENV);
+    expect(res.status).toBe(502);
+  });
+
+  it('sends via sendWebPush for a subscription and returns ok', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === validSubscription.endpoint) return Promise.resolve({ ok: true, status: 201 });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, VAPID_ENV);
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls.some(([url]) => url === validSubscription.endpoint)).toBe(true);
+  });
+
+  it('reports 502 when the webpush send itself fails, without throwing', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === validSubscription.endpoint) return Promise.resolve({ ok: false, status: 500 });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, VAPID_ENV);
+    expect(res.status).toBe(502);
+  });
+
+  it('reports 502 rather than throwing when the subscription itself is cryptographically malformed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const malformed = { endpoint: 'https://fcm.googleapis.com/fcm/send/bad', expirationTime: null, keys: { p256dh: 'not-a-real-key', auth: 'not-a-real-auth' } };
+    const res = await sendTestPush({ channel: 'options', pushToken: malformed.endpoint, subscription: malformed, feedToken: 'valid' }, VAPID_ENV);
+    expect(res.status).toBe(502);
+  });
+});
+
+describe('/test-push endpoint validation (HTTP boundary)', () => {
+  const VAPID_ENV = {
+    VAPID_SUBJECT: 'mailto:test@example.com',
+    VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
+    VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
+  };
+  function mockEnv() { return { ...VAPID_ENV } as any; }
+  function testPushRequest(body: Record<string, unknown>) {
+    return new Request('https://worker.test/test-push', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  it('rejects a missing feed_token', async () => {
+    const res = await worker.fetch(testPushRequest({ token: 'push1', channel: 'members' }), mockEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an empty-string feed_token', async () => {
+    const res = await worker.fetch(testPushRequest({ token: 'push1', channel: 'members', feed_token: '' }), mockEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('a valid Expo token request reaches sendTestPush and succeeds', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await worker.fetch(testPushRequest({ token: 'push1', channel: 'members', feed_token: 'valid' }), mockEnv());
+    expect(res.status).toBe(200);
+  });
+
+  it('a valid subscription request reaches sendTestPush and succeeds', async () => {
+    const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id', keys: { p256dh: 'BELwtddmVvbvOEHadf6IA9Jj2Gx2u6K9Yoj-0TOzGPDJWfQbUprGpFpfOKvULdsyl9m5LwdBLqG6t9zUajeGN8A', auth: 'wUSvE5FxCS7VqmXHVW79FQ' } };
+    const fetchMock = vi.fn((url: string) => {
+      if (url === subscription.endpoint) return Promise.resolve({ ok: true, status: 201 });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await worker.fetch(testPushRequest({ subscription, channel: 'members', feed_token: 'valid' }), mockEnv());
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('runChannel (via scheduled) — stale registration pruning', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
   const itemWithAuthor = (guid: string, author: string) =>
@@ -700,6 +872,93 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
 
     const finalState = JSON.parse(stateStore['run:members']!);
     expect(finalState.stats.sent).toBe(1); // only the second (successful) bucket counted
+  });
+});
+
+describe('runChannel — web push delivery', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const itemWithAuthor = (guid: string, author: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
+
+  // Throwaway test-only key material, same shapes exercised (and validated against real
+  // buildPushPayload crypto) in webpush.test.ts.
+  const VAPID_ENV = {
+    VAPID_SUBJECT: 'mailto:test@example.com',
+    VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
+    VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
+  };
+  const WEBPUSH_ENDPOINT = 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id';
+  const subscription = {
+    endpoint: WEBPUSH_ENDPOINT,
+    expirationTime: null,
+    keys: {
+      p256dh: 'BELwtddmVvbvOEHadf6IA9Jj2Gx2u6K9Yoj-0TOzGPDJWfQbUprGpFpfOKvULdsyl9m5LwdBLqG6t9zUajeGN8A',
+      auth: 'wUSvE5FxCS7VqmXHVW79FQ',
+    },
+  };
+
+  function mockEnv(keys: { name: string; metadata: Record<string, unknown> }[]) {
+    const stateStore: Record<string, string | null> = {
+      'run:options': runState({ optionsInsights: ['old-guid'] }),
+      'poll:options': 'poll-token',
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = {
+      ...VAPID_ENV,
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: tokensDelete },
+    } as any;
+    return { env, stateStore, tokensDelete };
+  }
+
+  it('sends a webpush notification to a registered browser subscription', async () => {
+    const { env } = mockEnv([
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription } },
+    ]);
+    const fetchMock = vi.fn((url: string) => {
+      if (url === WEBPUSH_ENDPOINT) return Promise.resolve({ ok: true, status: 201 });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(fetchMock.mock.calls.some(([url]) => url === WEBPUSH_ENDPOINT)).toBe(true);
+    const finalState = JSON.parse((await env.STATE.get('run:options'))!);
+    expect(finalState.stats.sent).toBeGreaterThan(0);
+  });
+
+  it('prunes a webpush subscription that returns 410 Gone, without affecting other recipients', async () => {
+    const { env, tokensDelete } = mockEnv([
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription } },
+      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0 } },
+    ]);
+    const fetchMock = vi.fn((url: string) => {
+      if (url === WEBPUSH_ENDPOINT) return Promise.resolve({ ok: false, status: 410 });
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(tokensDelete).toHaveBeenCalledWith(`options:web:${WEBPUSH_ENDPOINT}`);
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined(); // the Expo-token recipient in the same bucket still got notified
+  });
+
+  it('a webpush network failure does not throw or abort the run', async () => {
+    const { env } = mockEnv([
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription } },
+    ]);
+    const fetchMock = vi.fn((url: string) => {
+      if (url === WEBPUSH_ENDPOINT) return Promise.reject(new Error('network blip'));
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any)).resolves.not.toThrow();
   });
 });
 

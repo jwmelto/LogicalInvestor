@@ -1,6 +1,16 @@
 name = "logicalinvestor-push"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
+# @block65/webcrypto-web-push (Web Push crypto) references node:crypto in an unreachable fallback
+# branch (Workers always provides the globalThis.crypto it prefers) — the bundler can't prove that
+# statically, so it needs this flag to resolve the import rather than warning about it.
+compatibility_flags = ["nodejs_compat"]
+
+# Serves the web-push registration page (public/index.html, app.js, sw.js, manifest.json).
+# Requests that don't match a file here fall through to the fetch() handler below, so
+# /register, /unregister, /status, /vapid-public-key are unaffected.
+[assets]
+directory = "public"
 
 [triggers]
 crons = [
@@ -24,7 +34,9 @@ MAX_PUSH_AGE_MINUTES  = "120"   # content older than this won't be pushed even i
 MAX_ALERT_ITEMS_PER_FEED = "25" # cap on how many of a feed's most-recent posts are considered per poll
 ACTIONABLE_AUTHORS = "Sean Hyman" # comma-separated; who can trigger the 'actionable' tier
 TOKENS_TTL_DAYS = "30"          # days a push registration survives without renewal (see #60)
-# FEED_TOKEN is a secret — set it with: wrangler secret put FEED_TOKEN
+VAPID_PUBLIC_KEY = "BFjru_rX_u1HQJrm4n79m0vT1KQUGuiYHnvZ4VUXgmc_be8ER8d3mmkbT-SJogSW6OFho-mLoHH7CJn5y3yB-L8" # Web Push VAPID key pair; safe to commit, not secret
+VAPID_SUBJECT = "mailto:jwmelto@users.sourceforge.net" # required by the Web Push protocol as a contact for push services
+# FEED_TOKEN and VAPID_PRIVATE_KEY are secrets — set with: wrangler secret put FEED_TOKEN / VAPID_PRIVATE_KEY
 
 # After running `wrangler kv namespace create TOKENS`, paste the id below
 [[kv_namespaces]]

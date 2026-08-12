@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logical Investor Alerts</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<style>
+  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  fieldset { border: 1px solid #ccc; border-radius: 8px; margin: 1rem 0; padding: 0.75rem 1rem; }
+  legend { font-weight: 600; padding: 0 0.3rem; }
+  label { display: block; margin: 0.5rem 0; }
+  input[type="text"], input[type="number"] { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+  .hint { font-size: 0.85rem; color: #555; }
+  #ios-note { background: #fff8e1; border: 1px solid #e0c56a; border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; display: none; }
+  button { display: block; font-size: 1rem; padding: 0.6rem 1.2rem; border-radius: 6px; border: none; background: #0a7ea4; color: #fff; cursor: pointer; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  #unsubscribe-btn { margin-top: 1rem; background: #c0392b; }
+  #test-btn { margin-top: 2rem; }
+  #status { margin-top: 1rem; white-space: pre-wrap; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    fieldset { border-color: #444; }
+    .hint { color: #aaa; }
+    #ios-note { background: #332b00; border-color: #7a6a1f; color: #eee; }
+  }
+</style>
+</head>
+<body>
+<h1>Logical Investor Alerts</h1>
+<p>Register this browser to receive push notifications for new forum activity, without installing the app.</p>
+
+<div id="ios-note">
+  <strong>On iPhone/iPad:</strong> tap the Share button, then "Add to Home Screen." Open the app from
+  the home screen icon before continuing below — iOS only delivers push notifications to an installed
+  page, not a regular Safari tab.
+</div>
+
+<form id="register-form">
+  <fieldset>
+    <legend>Feed token</legend>
+    <label>
+      Feed token
+      <input type="text" id="feed-token" required autocomplete="off" spellcheck="false">
+    </label>
+    <p class="hint">
+      While logged in at logicalinvestor.net, visit
+      <a href="https://logicalinvestor.net/my-feed-url" target="_blank" rel="noopener">/my-feed-url</a>
+      and copy the <code>feed_token</code> value from the URL.
+    </p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Forums to watch</legend>
+    <label><input type="checkbox" name="channel" value="members" checked> Members Area / Members Forum</label>
+    <label><input type="checkbox" name="channel" value="stock"> Stock Insights</label>
+    <label><input type="checkbox" name="channel" value="options"> Options Insights</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Alert level</legend>
+    <label><input type="radio" name="filter" value="members" checked> Members Area only</label>
+    <label><input type="radio" name="filter" value="actionable"> Actionable trade alerts</label>
+    <label><input type="radio" name="filter" value="length"> Actionable, plus long posts from chosen authors</label>
+  </fieldset>
+
+  <fieldset id="length-fields" hidden>
+    <legend>Length-tier settings</legend>
+    <label>
+      Authors (comma-separated)
+      <input type="text" id="authors" placeholder="Sean Hyman">
+    </label>
+    <label>
+      Minimum post length (characters)
+      <input type="number" id="min-length" value="200" min="0">
+    </label>
+  </fieldset>
+
+  <button type="submit" id="submit-btn">Enable notifications</button>
+</form>
+
+<button type="button" id="unsubscribe-btn" hidden>Disable notifications</button>
+
+<button type="button" id="test-btn" hidden>Send test notification</button>
+
+<div id="status"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@li/core": "*",
+    "@block65/webcrypto-web-push": "^1.0.2",
     "fast-xml-parser": "^4.5.0"
   },
   "devDependencies": {
