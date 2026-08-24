@@ -35,7 +35,7 @@ MAX_PUSH_AGE_MINUTES  = "120"   # content older than this won't be pushed even i
 MAX_ALERT_ITEMS_PER_FEED = "25" # cap on how many of a feed's most-recent posts are considered per poll
 ACTIONABLE_AUTHORS = "Sean Hyman" # comma-separated; who can trigger the 'actionable' tier
 TOKENS_TTL_DAYS = "30"          # days a push registration survives without renewal (see #60)
-VAPID_PUBLIC_KEY = "BFjru_rX_u1HQJrm4n79m0vT1KQUGuiYHnvZ4VUXgmc_be8ER8d3mmkbT-SJogSW6OFho-mLoHH7CJn5y3yB-L8" # Web Push VAPID key pair; safe to commit, not secret
+VAPID_PUBLIC_KEY = "BGept7obnwDwF1lwsbiMLGMn4JlvNqbXlWWWGCAryLTNEc4mZBBFyEBxedhGgfAXvzWQDX1fRj6IlyshUw18u6c" # Web Push VAPID key pair; safe to commit, not secret
 VAPID_SUBJECT = "mailto:jwmelto@users.sourceforge.net" # required by the Web Push protocol as a contact for push services
 # FEED_TOKEN and VAPID_PRIVATE_KEY are secrets — set with: wrangler secret put FEED_TOKEN / VAPID_PRIVATE_KEY
 

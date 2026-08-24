@@ -432,6 +432,37 @@ The Worker already pretty-prints the JSON response, so no `jq` needed. `FEED_TOK
 - healthchecks.io checks are configured as **Simple** schedule (not Cron) — period 5 min, grace 15 min — matching how often each channel's cron actually fires; alerts by default go to the account email
 - `heartbeatUrlFor(channel, env)` in `cloudflare-worker/src/index.ts` does the channel → secret lookup
 
+#### Web Push registration page (`web-push/`)
+
+A static page (`index.html`, `app.js`, `sw.js`, `manifest.json`, icons — no build step) that
+registers a browser for push notifications, replacing the RN app's own App Store submission
+(abandoned after a Guideline 4.2.2 rejection; Apple's reviewer suggested this alternative).
+It's a client of the Worker's API, not part of the Worker's own source, so it lives at the repo's
+top level rather than nested under `cloudflare-worker/`. The Worker still serves it today via
+Workers Static Assets (`cloudflare-worker/wrangler.toml`'s `[assets] directory = "../web-push"`),
+which doubles as the local dev/testing path (`wrangler dev` + a `cloudflared tunnel --url` for
+phone testing) regardless of where it's ultimately hosted for real — hosting on
+logicalinvestor.net itself is the intent, pending Sean Hyman's approval.
+
+**Delivery mechanism**: a second push transport alongside the RN app's Expo push path, additive
+only — `cloudflare-worker/src/webpush.ts` wraps `@block65/webcrypto-web-push` (WebCrypto-native,
+works unmodified in Workers; the canonical `web-push` npm package does not, since it depends on
+Node `crypto` APIs Workers' `nodejs_compat` polyfill doesn't fully cover). `TOKENS` KV entries gain
+`kind: 'webpush'` and a `subscription` object; entries without `kind` are the pre-existing Expo
+ones, unaffected. `runChannel`'s notification loop sends to both kinds in the same pass.
+
+**Endpoints** (`cloudflare-worker/src/index.ts`, same `/register`/`/unregister` routes the RN app
+uses, distinguishing by whether the body has `token` (Expo) or `subscription` (browser)):
+- `GET /vapid-public-key` — the public key, so the page never hardcodes a value that'd go stale on rotation
+- `POST /test-push` — sends one notification straight to the requesting device, bypassing the poll/filter pipeline, for confirming a registration actually receives pushes without waiting for real forum activity
+
+**VAPID key pair**: production and local dev are deliberately different key pairs.
+- Production: the public half is `wrangler.toml`'s committed `VAPID_PUBLIC_KEY` var (not secret); the private half is set only via `wrangler secret put VAPID_PRIVATE_KEY` — never written to any file in this repo.
+- Local dev: `cloudflare-worker/.dev.vars.example` holds a shared, committed, test-only key pair (`cp` to `.dev.vars`, which is gitignored) — this pair has never been used in production and never will be, so there's nothing meaningful to keep secret about it. `.dev.vars` overrides `wrangler.toml`'s `[vars]` during `wrangler dev` only, never during a real deploy, so local testing stays self-consistent on the test pair regardless of what the production public key is.
+- To generate a new pair (only needed for a real production rotation — see the caveat above about existing subscriptions breaking): `npx web-push@3.6.7 generate-vapid-keys`. Pin the version in the command rather than adding `web-push` as a project dependency — it's a one-off human-run CLI utility, never imported by any code.
+
+**CORS**: the Worker's `fetch()` adds `Access-Control-Allow-Origin` only for `https://logicalinvestor.net` (not a wildcard, since these endpoints act on a `feed_token`'s behalf), plus `OPTIONS` preflight handling. Additive only — same-origin requests (today's default) never trigger CORS enforcement, so this only matters once the page is served from logicalinvestor.net.
+
 ### Contexts
 
 **Location**: `contexts/` directory
