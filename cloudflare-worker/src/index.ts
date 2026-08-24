@@ -24,6 +24,7 @@ export interface Env {
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
   VAPID_PRIVATE_KEY: string;        // secret — set via: wrangler secret put VAPID_PRIVATE_KEY
+  CORS_ALLOWED_ORIGIN?: string;     // origin allowed to call this API cross-origin, default "https://logicalinvestor.net"
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
@@ -215,9 +216,9 @@ export default {
   //                  channel. For stock/options it also proves access — rejected with 403
   //                  if missing, invalid, or the account isn't subscribed to that channel.
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.method === 'OPTIONS') return corsPreflightResponse(request);
+    if (request.method === 'OPTIONS') return corsPreflightResponse(request, env);
     const response = await handleRequest(request, env);
-    return withCors(response, request);
+    return withCors(response, request, env);
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -236,28 +237,31 @@ export default {
 // Assets) but is also meant to be hostable on logicalinvestor.net itself — a genuinely different
 // origin from the Worker's API. Same-origin requests (today's default) never trigger CORS
 // enforcement at all, so this is purely additive: it only matters once/if the page moves.
-// Restricted to the one real caller rather than a wildcard, since these endpoints act on a
-// feed_token's behalf.
-const ALLOWED_ORIGIN = 'https://logicalinvestor.net';
+// Restricted to one configured caller rather than a wildcard, since these endpoints act on a
+// feed_token's behalf. A wrangler.toml var, not a hardcoded value: the exact eventual origin
+// isn't settled (pending Sean Hyman's decision, and even a "yes" could land on a different
+// subdomain than assumed here), so it needs to be changeable without a code change.
+const DEFAULT_ALLOWED_ORIGIN = 'https://logicalinvestor.net';
 
-function corsHeadersFor(request: Request): Record<string, string> {
+function corsHeadersFor(request: Request, env: Pick<Env, 'CORS_ALLOWED_ORIGIN'>): Record<string, string> {
   const origin = request.headers.get('Origin');
+  const allowedOrigin = env.CORS_ALLOWED_ORIGIN ?? DEFAULT_ALLOWED_ORIGIN;
   // Vary: Origin — this response's Access-Control-Allow-Origin value depends on the request's
   // Origin header, so a cache must not serve one origin's (or no-Origin's) response to another.
-  return origin === ALLOWED_ORIGIN ? { 'Access-Control-Allow-Origin': ALLOWED_ORIGIN, Vary: 'Origin' } : {};
+  return origin === allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin, Vary: 'Origin' } : {};
 }
 
-function corsPreflightResponse(request: Request): Response {
-  const headers = new Headers(corsHeadersFor(request));
+function corsPreflightResponse(request: Request, env: Pick<Env, 'CORS_ALLOWED_ORIGIN'>): Response {
+  const headers = new Headers(corsHeadersFor(request, env));
   headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Content-Type');
   headers.set('Access-Control-Max-Age', '86400');
   return new Response(null, { status: 204, headers });
 }
 
-function withCors(response: Response, request: Request): Response {
+function withCors(response: Response, request: Request, env: Pick<Env, 'CORS_ALLOWED_ORIGIN'>): Response {
   const headers = new Headers(response.headers);
-  for (const [key, value] of Object.entries(corsHeadersFor(request))) headers.set(key, value);
+  for (const [key, value] of Object.entries(corsHeadersFor(request, env))) headers.set(key, value);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 

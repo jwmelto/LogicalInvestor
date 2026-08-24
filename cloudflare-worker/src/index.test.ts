@@ -667,6 +667,22 @@ describe('CORS', () => {
     const res = await worker.fetch(req, mockEnv());
     expect(res.status).toBe(401); // unrelated auth failure still surfaces correctly through the CORS wrapper
   });
+
+  it('falls back to the default allowed origin when CORS_ALLOWED_ORIGIN is unset', async () => {
+    const req = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://logicalinvestor.net' } });
+    const res = await worker.fetch(req, { ...mockEnv(), VAPID_PUBLIC_KEY: 'pub' });
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://logicalinvestor.net');
+  });
+
+  it('honors a configured CORS_ALLOWED_ORIGIN, overriding the default', async () => {
+    const env = { ...mockEnv(), VAPID_PUBLIC_KEY: 'pub', CORS_ALLOWED_ORIGIN: 'https://example.com' };
+    const allowed = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://example.com' } });
+    expect((await worker.fetch(allowed, env)).headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+
+    // The default origin no longer matches once a different one is configured.
+    const noLongerAllowed = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://logicalinvestor.net' } });
+    expect((await worker.fetch(noLongerAllowed, env)).headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
 });
 
 describe('runChannel (via scheduled) — stale registration pruning', () => {

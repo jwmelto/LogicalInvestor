@@ -37,6 +37,7 @@ ACTIONABLE_AUTHORS = "Sean Hyman" # comma-separated; who can trigger the 'action
 TOKENS_TTL_DAYS = "30"          # days a push registration survives without renewal (see #60)
 VAPID_PUBLIC_KEY = "BGept7obnwDwF1lwsbiMLGMn4JlvNqbXlWWWGCAryLTNEc4mZBBFyEBxedhGgfAXvzWQDX1fRj6IlyshUw18u6c" # Web Push VAPID key pair; safe to commit, not secret
 VAPID_SUBJECT = "mailto:jwmelto@users.sourceforge.net" # required by the Web Push protocol as a contact for push services
+CORS_ALLOWED_ORIGIN = "https://logicalinvestor.net" # origin allowed to call this API cross-origin; currently unused (page is Cloudflare-hosted, same-origin — see index.ts)
 # FEED_TOKEN and VAPID_PRIVATE_KEY are secrets — set with: wrangler secret put FEED_TOKEN / VAPID_PRIVATE_KEY
 
 # After running `wrangler kv namespace create TOKENS`, paste the id below
