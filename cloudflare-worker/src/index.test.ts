@@ -447,8 +447,8 @@ describe('/register endpoint validation (HTTP boundary)', () => {
   });
 });
 
-// The web-push registration page sends `subscription` instead of `token` — everything else
-// (channel/filter/authors/minLength/feed_token validation) is shared with the Expo path above.
+// The web-push registration page sends `subscription` instead of `token`. Channel, filter,
+// authors, minLength, and feed_token validation are all shared with the Expo path above.
 describe('/register endpoint validation — webpush subscription path', () => {
   function mockEnv() {
     return {
@@ -618,70 +618,81 @@ describe('/test-push endpoint validation (HTTP boundary)', () => {
   });
 });
 
-// The registration page can be served from logicalinvestor.net (a different origin than the
-// Worker's own API domain) as well as same-origin (today's default). CORS only matters for the
-// cross-origin case — a browser never sends an Origin header, or enforces these headers, for a
-// same-origin request, which is why none of the tests elsewhere in this file (none set Origin)
-// needed to change when this was added.
+// The registration page could be served from a different origin than the Worker's own API
+// domain. Today it's same-origin, via Static Assets, and CORS_ALLOWED_ORIGIN exists for if that
+// ever changes.
+//
+// CORS only matters for the cross-origin case. A browser never sends an Origin header for a
+// same-origin request, and never enforces these headers there either. That's why none of the
+// other tests in this file needed to change when this was added — none of them set Origin.
 describe('CORS', () => {
-  function mockEnv() {
+  const CONFIGURED_ORIGIN = 'https://example.com';
+
+  function mockEnv(overrides: Record<string, unknown> = {}) {
     return {
       TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }) },
       STATE: { get: vi.fn().mockResolvedValue(null) },
       FEED_TOKEN: 'secret',
+      ...overrides,
     } as any;
   }
 
-  it('OPTIONS from the allowed origin gets a preflight response with the right headers', async () => {
-    const req = new Request('https://worker.test/register', { method: 'OPTIONS', headers: { Origin: 'https://logicalinvestor.net' } });
-    const res = await worker.fetch(req, mockEnv());
+  it('OPTIONS from the configured origin gets a preflight response with the right headers', async () => {
+    const env = mockEnv({ CORS_ALLOWED_ORIGIN: CONFIGURED_ORIGIN });
+    const req = new Request('https://worker.test/register', { method: 'OPTIONS', headers: { Origin: CONFIGURED_ORIGIN } });
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(204);
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://logicalinvestor.net');
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CONFIGURED_ORIGIN);
     expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST');
     expect(res.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type');
   });
 
-  it('OPTIONS from an unrecognized origin gets no Access-Control-Allow-Origin', async () => {
+  it('OPTIONS from an unconfigured origin gets no Access-Control-Allow-Origin', async () => {
+    const env = mockEnv({ CORS_ALLOWED_ORIGIN: CONFIGURED_ORIGIN });
     const req = new Request('https://worker.test/register', { method: 'OPTIONS', headers: { Origin: 'https://evil.example.com' } });
-    const res = await worker.fetch(req, mockEnv());
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(204);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 
-  it('a real request from the allowed origin gets Access-Control-Allow-Origin on the response', async () => {
-    const req = new Request('https://worker.test/status', { headers: { Origin: 'https://logicalinvestor.net', Authorization: 'Bearer secret' } });
-    const res = await worker.fetch(req, mockEnv());
+  it('a real request from the configured origin gets Access-Control-Allow-Origin on the response', async () => {
+    const env = mockEnv({ CORS_ALLOWED_ORIGIN: CONFIGURED_ORIGIN });
+    const req = new Request('https://worker.test/status', { headers: { Origin: CONFIGURED_ORIGIN, Authorization: 'Bearer secret' } });
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(200);
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://logicalinvestor.net');
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(CONFIGURED_ORIGIN);
   });
 
   it('a real request with no Origin header (same-origin) gets no CORS header, and is unaffected', async () => {
+    const env = mockEnv({ CORS_ALLOWED_ORIGIN: CONFIGURED_ORIGIN });
     const req = new Request('https://worker.test/status', { headers: { Authorization: 'Bearer secret' } });
-    const res = await worker.fetch(req, mockEnv());
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(200);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 
   it('does not alter the response status or body for a real request', async () => {
-    const req = new Request('https://worker.test/status', { headers: { Origin: 'https://logicalinvestor.net', Authorization: 'Bearer wrong' } });
-    const res = await worker.fetch(req, mockEnv());
+    const env = mockEnv({ CORS_ALLOWED_ORIGIN: CONFIGURED_ORIGIN });
+    const req = new Request('https://worker.test/status', { headers: { Origin: CONFIGURED_ORIGIN, Authorization: 'Bearer wrong' } });
+    const res = await worker.fetch(req, env);
     expect(res.status).toBe(401); // unrelated auth failure still surfaces correctly through the CORS wrapper
   });
 
-  it('falls back to the default allowed origin when CORS_ALLOWED_ORIGIN is unset', async () => {
-    const req = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://logicalinvestor.net' } });
-    const res = await worker.fetch(req, { ...mockEnv(), VAPID_PUBLIC_KEY: 'pub' });
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://logicalinvestor.net');
+  it('denies every origin when CORS_ALLOWED_ORIGIN is unset', async () => {
+    const env = mockEnv({ VAPID_PUBLIC_KEY: 'pub' }); // no CORS_ALLOWED_ORIGIN
+    for (const origin of [CONFIGURED_ORIGIN, 'https://evil.example.com', 'https://logicalinvestor.net']) {
+      const req = new Request('https://worker.test/vapid-public-key', { headers: { Origin: origin } });
+      expect((await worker.fetch(req, env)).headers.get('Access-Control-Allow-Origin')).toBeNull();
+    }
   });
 
-  it('honors a configured CORS_ALLOWED_ORIGIN, overriding the default', async () => {
-    const env = { ...mockEnv(), VAPID_PUBLIC_KEY: 'pub', CORS_ALLOWED_ORIGIN: 'https://example.com' };
-    const allowed = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://example.com' } });
-    expect((await worker.fetch(allowed, env)).headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+  it('honors a configured CORS_ALLOWED_ORIGIN, and denies any other origin', async () => {
+    const env = mockEnv({ VAPID_PUBLIC_KEY: 'pub', CORS_ALLOWED_ORIGIN: CONFIGURED_ORIGIN });
+    const allowed = new Request('https://worker.test/vapid-public-key', { headers: { Origin: CONFIGURED_ORIGIN } });
+    expect((await worker.fetch(allowed, env)).headers.get('Access-Control-Allow-Origin')).toBe(CONFIGURED_ORIGIN);
 
-    // The default origin no longer matches once a different one is configured.
-    const noLongerAllowed = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://logicalinvestor.net' } });
-    expect((await worker.fetch(noLongerAllowed, env)).headers.get('Access-Control-Allow-Origin')).toBeNull();
+    const notAllowed = new Request('https://worker.test/vapid-public-key', { headers: { Origin: 'https://logicalinvestor.net' } });
+    expect((await worker.fetch(notAllowed, env)).headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 });
 

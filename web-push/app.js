@@ -1,3 +1,8 @@
+// All API calls below use relative paths. This page and the API are always served by the same
+// Worker, so a relative path always resolves correctly: production, local wrangler dev, or a
+// dev tunnel pointed at either. This breaks only if the page and the API are ever served from
+// different origins (a split deployment). That isn't the case today, and isn't planned.
+
 const form = document.getElementById('register-form');
 const statusEl = document.getElementById('status');
 const submitBtn = document.getElementById('submit-btn');
@@ -10,14 +15,6 @@ const lengthFields = document.getElementById('length-fields');
 // (subscription, channels, feed_token) without the user re-entering anything.
 let lastRegistration = null;
 
-// The API always lives on the Worker's own domain, regardless of where this page itself is
-// served from. When the page IS served by the Worker (production workers.dev, local wrangler
-// dev, or a dev tunnel pointed at either), relative paths already resolve there correctly, so
-// API_BASE stays empty — only logicalinvestor.net (a different origin entirely) needs the
-// absolute URL. Mirrors the /my-feed-url origin gate below.
-const WORKER_URL = 'https://logicalinvestor-push.logicalinvestor.workers.dev';
-const API_BASE = location.hostname === 'logicalinvestor.net' ? WORKER_URL : '';
-
 const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 if (isIos && !isStandalone) iosNote.style.display = 'block';
@@ -29,19 +26,20 @@ for (const radio of form.querySelectorAll('input[name="filter"]')) {
 }
 
 if ('serviceWorker' in navigator) {
-  // Relative, unlike the API calls below — sw.js is served alongside this page itself, from
-  // wherever that ends up being, not from the Worker's API domain. A relative path also scopes
-  // the service worker to just this directory (not the whole host), which matters if this page
-  // ever lands under a subdirectory of a larger site rather than at its root.
+  // Relative, unlike the API calls below. sw.js is served alongside this page itself, wherever
+  // that ends up being, not from the Worker's API domain. A relative path also scopes the
+  // service worker to just this directory instead of the whole host. That matters if this page
+  // ever lands under a subdirectory of a larger site.
   navigator.serviceWorker.register('./sw.js').catch((err) => {
     statusEl.textContent = `Service worker registration failed: ${err.message}`;
   });
 }
 
-// Only same-origin (this page served from logicalinvestor.net itself) can read /my-feed-url
-// without CORS, using the visitor's existing WordPress session cookie — same extraction
-// authService.ts does in the RN app. Cross-origin (e.g. the Worker's own domain), this fetch
-// would be blocked by the browser, so it's gated to avoid a guaranteed-failing request.
+// Only a same-origin request (this page served from logicalinvestor.net itself) can read
+// /my-feed-url without CORS, using the visitor's existing WordPress session cookie.
+// authService.ts does the same extraction in the RN app. A cross-origin fetch, such as one
+// from the Worker's own domain, would be blocked by the browser. This gate avoids sending a
+// request that would always fail.
 if (location.hostname === 'logicalinvestor.net') {
   fetch('/my-feed-url', { credentials: 'same-origin' })
     .then((res) => res.text())
@@ -49,11 +47,11 @@ if (location.hostname === 'logicalinvestor.net') {
       const match = html.match(/feed_token=([a-zA-Z0-9_-]+)/);
       if (match) document.getElementById('feed-token').value = match[1];
     })
-    .catch(() => {}); // not logged in, or page shape changed — user can still paste it manually
+    .catch(() => {}); // Not logged in, or the page shape changed. The user can still paste the token manually.
 }
 
-// PushManager.subscribe() requires the VAPID key as a raw Uint8Array, not the base64url string
-// the server hands out — this is the standard conversion every Web Push client needs.
+// PushManager.subscribe() requires the VAPID key as a raw Uint8Array. The server hands out a
+// base64url string instead. This is the standard conversion every Web Push client needs.
 function urlBase64ToUint8Array(base64Url) {
   const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
   const base64 = (base64Url + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -93,7 +91,7 @@ form.addEventListener('submit', async (event) => {
 
     setStatus('Subscribing…');
     const registration = await navigator.serviceWorker.ready;
-    const vapidKey = await fetch(`${API_BASE}/vapid-public-key`).then((res) => res.text());
+    const vapidKey = await fetch('/vapid-public-key').then((res) => res.text());
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
@@ -104,7 +102,7 @@ form.addEventListener('submit', async (event) => {
 
     setStatus('Registering…');
     const results = await Promise.all(channels.map((channel) =>
-      fetch(`${API_BASE}/register`, {
+      fetch('/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscription: subscription.toJSON(), channel, filter, authors, minLength, feed_token: feedToken }),
@@ -134,7 +132,7 @@ testBtn.addEventListener('click', async () => {
   testBtn.disabled = true;
   try {
     setStatus('Sending test notification…');
-    const res = await fetch(`${API_BASE}/test-push`, {
+    const res = await fetch('/test-push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscription: lastRegistration.subscription, channel: lastRegistration.channels[0], feed_token: lastRegistration.feedToken }),
@@ -152,21 +150,20 @@ unsubscribeBtn.addEventListener('click', async () => {
   unsubscribeBtn.disabled = true;
   try {
     setStatus('Disabling notifications…');
-    // Unconditionally unregister every channel — not just the ones from the most recent
-    // successful registration. lastRegistration is in-memory only (lost on reload) and only
-    // reflects the last submission, so it can't be trusted as "everything this subscription is
-    // currently registered for" if channel selection ever changed across separate submissions.
-    // /unregister is a no-op for a channel this subscription was never registered for, so
-    // clearing all three unconditionally is always correct, never harmful.
+    // Unconditionally unregisters all three channels. lastRegistration is in-memory only and is
+    // lost on reload. It only reflects the most recent submission, so a channel selection
+    // change across separate submissions could leave it incomplete. /unregister is a no-op for
+    // a channel this subscription was never registered for, so clearing all three is always
+    // safe.
     await Promise.all(['members', 'stock', 'options'].map((channel) =>
-      fetch(`${API_BASE}/unregister`, {
+      fetch('/unregister', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscription: lastRegistration.subscription, channel }),
       })
     ));
-    // ...and tear down the browser's own subscription, so it's not left dangling with the push
-    // service (Apple/Google/Mozilla) after the server no longer has any record of it.
+    // Also tears down the browser's own subscription. Otherwise it stays registered with the
+    // push service (Apple, Google, or Mozilla) after the server has already forgotten it.
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
     if (subscription) await subscription.unsubscribe();

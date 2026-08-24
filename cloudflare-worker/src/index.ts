@@ -39,9 +39,9 @@ function tokensTtlSeconds(env: Pick<Env, 'TOKENS_TTL_DAYS'>): number {
 
 // filter/authors/minLength are required on every registration. feedToken is optional here only
 // for KV entries predating universal storage; recovers a stale stock/options poll token.
-// kind/subscription are only ever written for a webpush registration — undefined means Expo (every
-// entry written before Web Push existed, and every entry the RN app still writes), so no migration
-// is needed for pre-existing entries.
+// kind/subscription are only ever written for a webpush registration. Undefined means Expo: every
+// entry written before Web Push existed, and every entry the RN app still writes. No migration is
+// needed for pre-existing entries.
 interface TokenMeta {
   feedToken?: string;
   filter?: ContentFilter;
@@ -233,21 +233,23 @@ export default {
   },
 };
 
-// The registration page is currently served same-origin (this Worker's own domain, via Static
-// Assets) but is also meant to be hostable on logicalinvestor.net itself — a genuinely different
-// origin from the Worker's API. Same-origin requests (today's default) never trigger CORS
-// enforcement at all, so this is purely additive: it only matters once/if the page moves.
-// Restricted to one configured caller rather than a wildcard, since these endpoints act on a
-// feed_token's behalf. A wrangler.toml var, not a hardcoded value: the exact eventual origin
-// isn't settled (pending Sean Hyman's decision, and even a "yes" could land on a different
-// subdomain than assumed here), so it needs to be changeable without a code change.
-const DEFAULT_ALLOWED_ORIGIN = 'https://logicalinvestor.net';
-
+// The registration page is served same-origin today, via this Worker's own Static Assets. A
+// browser never enforces CORS for a same-origin request, so this code is currently dormant. It
+// exists for a possible future cross-origin host.
+//
+// Only the single origin in CORS_ALLOWED_ORIGIN is allowed to call this API. These endpoints act
+// on a feed_token's behalf, so a wildcard would let any site read feed_token-scoped responses.
+// The allowed origin lives in wrangler.toml as a plain config var. A wrangler.toml edit and a
+// deploy are enough to change it.
+//
+// A browser's Origin header is always absent or a real "scheme://host" value. It is never an
+// empty string. When CORS_ALLOWED_ORIGIN is unset, the fallback of '' can never match a real
+// request, so every origin is denied by default.
 function corsHeadersFor(request: Request, env: Pick<Env, 'CORS_ALLOWED_ORIGIN'>): Record<string, string> {
   const origin = request.headers.get('Origin');
-  const allowedOrigin = env.CORS_ALLOWED_ORIGIN ?? DEFAULT_ALLOWED_ORIGIN;
-  // Vary: Origin — this response's Access-Control-Allow-Origin value depends on the request's
-  // Origin header, so a cache must not serve one origin's (or no-Origin's) response to another.
+  const allowedOrigin = env.CORS_ALLOWED_ORIGIN ?? '';
+  // This response's Access-Control-Allow-Origin value depends on the request's Origin header.
+  // Vary: Origin tells a cache not to serve one origin's response to another.
   return origin === allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin, Vary: 'Origin' } : {};
 }
 
@@ -321,8 +323,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return new Response('invalid channel', { status: 400 });
   }
 
-  // token and subscription are mutually exclusive registration kinds — token wins if somehow
-  // both are sent, since only the RN app ever sends token and only the web page sends subscription.
+  // token and subscription are mutually exclusive registration kinds. Only the RN app sends
+  // token, and only the web page sends subscription, so token wins if somehow both are sent.
   let pushToken: string;
   let subscription: PushSubscription | undefined;
   if (typeof body.token === 'string' && body.token) {
@@ -377,8 +379,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
 export interface RegisterParams {
   channel: Channel;
-  // Expo push token, or (when subscription is set) the webpush subscription's own endpoint URL —
-  // either way, the KV key discriminator for this device.
+  // Expo push token, or, when subscription is set, the webpush subscription's own endpoint URL.
+  // Either way, this is the KV key discriminator for this device.
   pushToken: string;
   subscription?: PushSubscription;
   filter: ContentFilter;
@@ -404,8 +406,9 @@ export async function registerDevice(
   }
   await env.STATE.put(`poll:${channel}`, feedToken);
 
-  // kind/subscription are only ever written for a webpush registration (see TokenMeta) — omitting
-  // them entirely for an Expo registration keeps every pre-existing entry's shape unchanged.
+  // kind/subscription are only ever written for a webpush registration (see TokenMeta).
+  // Omitting them entirely for an Expo registration keeps every pre-existing entry's shape
+  // unchanged.
   const meta: TokenMeta = subscription
     ? { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, kind: 'webpush', subscription }
     : { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength };
@@ -421,11 +424,11 @@ export interface TestPushParams {
   feedToken: string;
 }
 
-// Sends one immediate notification straight to the requesting device, bypassing the poll/detect/
-// filter pipeline entirely — for confirming a registration actually receives pushes, not for
-// exercising matchesFilter (already covered where registration happens). Same feed_token gate as
-// registerDevice, so this can't be used to spam an arbitrary subscription without proving access
-// first.
+// Sends one immediate notification straight to the requesting device. It bypasses the poll,
+// detect, and filter pipeline entirely, to confirm a registration actually receives pushes.
+//
+// Uses the same feed_token gate as registerDevice. This proves access before sending, so it
+// can't be used to spam an arbitrary subscription.
 export async function sendTestPush(
   { channel, pushToken, subscription, feedToken }: TestPushParams,
   env: Pick<Env, 'VAPID_SUBJECT' | 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY'>,
@@ -700,15 +703,16 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       }
 
       if (bucket.webpushSubs.length > 0) {
-        // Web Push has no bulk-send endpoint (inherent to the protocol) — one encrypted request
-        // per subscription per item, run concurrently rather than one at a time.
+        // Web Push has no bulk-send endpoint. This is a protocol constraint. One encrypted
+        // request per subscription per item, run concurrently instead of sequentially.
         const results = await Promise.all(
           bucket.webpushSubs.flatMap((sub) =>
             toNotify.map((item) =>
               sendWebPush(sub, { data: { title: formatTitle(item), body: item.description.slice(0, 150) || 'New post', url: item.link } }, vapid)
                 .then(async (result) => {
-                  // gone:true (HTTP 404/410) is the protocol's standard "subscription no longer
-                  // exists" signal — prune it now or it accumulates forever.
+                  // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no
+                  // longer exists" signal. Prune it now, or expired subscriptions accumulate
+                  // forever.
                   if (result.gone) await env.TOKENS.delete(`${channel}:web:${sub.endpoint}`);
                   return result;
                 })

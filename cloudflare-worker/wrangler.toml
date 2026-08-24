@@ -1,15 +1,15 @@
 name = "logicalinvestor-push"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
-# @block65/webcrypto-web-push (Web Push crypto) references node:crypto in an unreachable fallback
-# branch (Workers always provides the globalThis.crypto it prefers) — the bundler can't prove that
-# statically, so it needs this flag to resolve the import rather than warning about it.
+# @block65/webcrypto-web-push (Web Push crypto) references node:crypto in an unreachable
+# fallback branch. Workers always provides the globalThis.crypto it prefers instead. The bundler
+# can't prove that statically, so this flag is needed to resolve the import without a warning.
 compatibility_flags = ["nodejs_compat"]
 
-# Serves the web-push registration page — a client of this Worker's API, not part of the
-# Worker's own source, so it lives at the repo's top level (../web-push) alongside the RN app
-# rather than nested in here. Requests that don't match a file there fall through to the
-# fetch() handler below, so /register, /unregister, /status, /vapid-public-key are unaffected.
+# Serves the web-push registration page. It's a client of this Worker's API, not part of the
+# Worker's own source, so it lives at the repo's top level (../web-push), alongside the RN app,
+# instead of nested in here. Requests that don't match a file there fall through to the fetch()
+# handler below. /register, /unregister, /status, and /vapid-public-key are unaffected.
 [assets]
 directory = "../web-push"
 
@@ -37,7 +37,7 @@ ACTIONABLE_AUTHORS = "Sean Hyman" # comma-separated; who can trigger the 'action
 TOKENS_TTL_DAYS = "30"          # days a push registration survives without renewal (see #60)
 VAPID_PUBLIC_KEY = "BGept7obnwDwF1lwsbiMLGMn4JlvNqbXlWWWGCAryLTNEc4mZBBFyEBxedhGgfAXvzWQDX1fRj6IlyshUw18u6c" # Web Push VAPID key pair; safe to commit, not secret
 VAPID_SUBJECT = "mailto:jwmelto@users.sourceforge.net" # required by the Web Push protocol as a contact for push services
-CORS_ALLOWED_ORIGIN = "https://logicalinvestor.net" # origin allowed to call this API cross-origin; currently unused (page is Cloudflare-hosted, same-origin — see index.ts)
+CORS_ALLOWED_ORIGIN = "https://logicalinvestor.net" # Origin allowed to call this API cross-origin. Currently unused: the page is Cloudflare-hosted, same-origin. See index.ts.
 # FEED_TOKEN and VAPID_PRIVATE_KEY are secrets — set with: wrangler secret put FEED_TOKEN / VAPID_PRIVATE_KEY
 
 # After running `wrangler kv namespace create TOKENS`, paste the id below

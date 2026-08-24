@@ -1,12 +1,13 @@
 # Copy this file to .dev.vars (gitignored) to get a working `wrangler dev` locally:
 #   cp .dev.vars.example .dev.vars
 #
-# This key pair is shared, committed, and test-only — it has never been used in production and
+# This key pair is shared, committed, and test-only. It has never been used in production and
 # never will be. There is no real subscriber it could ever send a push to, so there's nothing
-# meaningful to keep secret about it; it exists purely so local wrangler dev has a valid,
-# self-consistent VAPID key pair without every contributor needing to generate their own.
-# Production uses a completely separate key pair: the public half lives in wrangler.toml's
-# [vars], the private half is set only via `wrangler secret put VAPID_PRIVATE_KEY` — never
-# committed, never placed in any file.
+# meaningful to keep secret about it. It exists purely so local wrangler dev has a valid,
+# self-consistent VAPID key pair, without every contributor needing to generate their own.
+#
+# Production uses a completely separate key pair. The public half lives in wrangler.toml's
+# [vars]. The private half is set only via `wrangler secret put VAPID_PRIVATE_KEY`, and is
+# never committed or placed in any file.
 VAPID_PRIVATE_KEY=gwB0nkbwnQc29iv_Ut54fEopwsL8L-XKK3rEv4EAdMo
 VAPID_PUBLIC_KEY=BFjru_rX_u1HQJrm4n79m0vT1KQUGuiYHnvZ4VUXgmc_be8ER8d3mmkbT-SJogSW6OFho-mLoHH7CJn5y3yB-L8

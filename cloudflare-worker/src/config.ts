@@ -1,11 +1,12 @@
 import { FeedKeys, type Channel, type FeedKey } from '@li/core';
 
-// Split out of index.ts: workerd requires every named export of a Worker's entry module (the
-// file wrangler.toml points `main` at) to be a function or WorkerEntrypoint class, for its named
-// RPC-entrypoint discovery — a plain constant or object export fails at startup with "Incorrect
-// type for map entry '<name>': the provided value is not of type 'function or ExportedHandler'."
-// index.ts's exported *functions* (registerDevice, channelFromCron, etc.) are unaffected and stay
-// there; only these two non-function values needed to move.
+// Split out of index.ts. workerd requires every named export of a Worker's entry module to be a
+// function or a WorkerEntrypoint class. wrangler.toml's `main` field points at that entry module.
+// A plain constant or object export fails at startup: "Incorrect type for map entry '<name>': the
+// provided value is not of type 'function or ExportedHandler'."
+//
+// index.ts's exported functions (registerDevice, channelFromCron, etc.) are unaffected. Only
+// these two non-function values needed to move.
 
 // The app re-registers every push channel unconditionally on every cold launch (FeedContext), so
 // a registration that stops renewing means the device is gone (uninstalled, or never called
