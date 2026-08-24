@@ -284,14 +284,20 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const todayET = getETDate(new Date());
     for (const channel of CHANNELS) {
       const [tokens, runJson, pollToken] = await Promise.all([
-        env.TOKENS.list({ prefix: `${channel}:` }),
+        env.TOKENS.list<TokenMeta>({ prefix: `${channel}:` }),
         env.STATE.get(`run:${channel}`),
         env.STATE.get(`poll:${channel}`),
       ]);
       const state: ChannelState | null = runJson ? JSON.parse(runJson) : null;
       const stats = state?.stats ?? null;
+      // Broken out by delivery kind because the two scale very differently: Expo sends one bulk
+      // request per bucket regardless of device count, but Web Push has no bulk endpoint, so
+      // registeredWebpush is the number that actually drives subrequest count per cron run.
+      const registeredWebpush = tokens.keys.filter((k) => k.metadata?.kind === 'webpush').length;
       result[channel] = {
         registeredTokens: tokens.keys.length,
+        registeredExpo: tokens.keys.length - registeredWebpush,
+        registeredWebpush,
         seenIds:   state?.seen ? Object.values(state.seen).reduce((a, b) => a + (b?.length ?? 0), 0) : 0,
         pollToken: pollToken ? 'present' : 'missing',
         lastRun:      stats?.lastRun      ?? null,

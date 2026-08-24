@@ -1367,6 +1367,57 @@ describe('GET /status auth', () => {
   });
 });
 
+describe('GET /status — registration counts by delivery kind', () => {
+  it('splits registeredTokens into registeredExpo and registeredWebpush per channel', async () => {
+    const env = {
+      FEED_TOKEN: 'secret',
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [
+            { name: 'members:expo-a', metadata: { filter: 'length', authors: [], minLength: 0 } },
+            { name: 'members:expo-b', metadata: { filter: 'length', authors: [], minLength: 0 } },
+            { name: 'members:web:endpoint-a', metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush' } },
+          ],
+          list_complete: true,
+        }),
+      },
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+    } as any;
+
+    const res = await worker.fetch(
+      new Request('https://worker.test/status', { headers: { Authorization: 'Bearer secret' } }),
+      env,
+    );
+    const body = await res.json() as any;
+
+    expect(body.members.registeredTokens).toBe(3);
+    expect(body.members.registeredExpo).toBe(2);
+    expect(body.members.registeredWebpush).toBe(1);
+  });
+
+  it('reports zero webpush registrations for a channel with only Expo devices', async () => {
+    const env = {
+      FEED_TOKEN: 'secret',
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'options:expo-a', metadata: { filter: 'length', authors: [], minLength: 0 } }],
+          list_complete: true,
+        }),
+      },
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+    } as any;
+
+    const res = await worker.fetch(
+      new Request('https://worker.test/status', { headers: { Authorization: 'Bearer secret' } }),
+      env,
+    );
+    const body = await res.json() as any;
+
+    expect(body.options.registeredExpo).toBe(1);
+    expect(body.options.registeredWebpush).toBe(0);
+  });
+});
+
 // Synthetic inputs covering the learned patterns — update when pattern logic changes.
 describe('containsActionableSignal', () => {
   describe('should fire (positive training)', () => {
