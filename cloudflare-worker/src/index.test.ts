@@ -618,6 +618,57 @@ describe('/test-push endpoint validation (HTTP boundary)', () => {
   });
 });
 
+// The registration page can be served from logicalinvestor.net (a different origin than the
+// Worker's own API domain) as well as same-origin (today's default). CORS only matters for the
+// cross-origin case — a browser never sends an Origin header, or enforces these headers, for a
+// same-origin request, which is why none of the tests elsewhere in this file (none set Origin)
+// needed to change when this was added.
+describe('CORS', () => {
+  function mockEnv() {
+    return {
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }) },
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+      FEED_TOKEN: 'secret',
+    } as any;
+  }
+
+  it('OPTIONS from the allowed origin gets a preflight response with the right headers', async () => {
+    const req = new Request('https://worker.test/register', { method: 'OPTIONS', headers: { Origin: 'https://logicalinvestor.net' } });
+    const res = await worker.fetch(req, mockEnv());
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://logicalinvestor.net');
+    expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+    expect(res.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type');
+  });
+
+  it('OPTIONS from an unrecognized origin gets no Access-Control-Allow-Origin', async () => {
+    const req = new Request('https://worker.test/register', { method: 'OPTIONS', headers: { Origin: 'https://evil.example.com' } });
+    const res = await worker.fetch(req, mockEnv());
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('a real request from the allowed origin gets Access-Control-Allow-Origin on the response', async () => {
+    const req = new Request('https://worker.test/status', { headers: { Origin: 'https://logicalinvestor.net', Authorization: 'Bearer secret' } });
+    const res = await worker.fetch(req, mockEnv());
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://logicalinvestor.net');
+  });
+
+  it('a real request with no Origin header (same-origin) gets no CORS header, and is unaffected', async () => {
+    const req = new Request('https://worker.test/status', { headers: { Authorization: 'Bearer secret' } });
+    const res = await worker.fetch(req, mockEnv());
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('does not alter the response status or body for a real request', async () => {
+    const req = new Request('https://worker.test/status', { headers: { Origin: 'https://logicalinvestor.net', Authorization: 'Bearer wrong' } });
+    const res = await worker.fetch(req, mockEnv());
+    expect(res.status).toBe(401); // unrelated auth failure still surfaces correctly through the CORS wrapper
+  });
+});
+
 describe('runChannel (via scheduled) — stale registration pruning', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
   const itemWithAuthor = (guid: string, author: string) =>

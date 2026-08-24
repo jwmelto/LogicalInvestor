@@ -6,11 +6,12 @@ compatibility_date = "2024-12-01"
 # statically, so it needs this flag to resolve the import rather than warning about it.
 compatibility_flags = ["nodejs_compat"]
 
-# Serves the web-push registration page (public/index.html, app.js, sw.js, manifest.json).
-# Requests that don't match a file here fall through to the fetch() handler below, so
-# /register, /unregister, /status, /vapid-public-key are unaffected.
+# Serves the web-push registration page — a client of this Worker's API, not part of the
+# Worker's own source, so it lives at the repo's top level (../web-push) alongside the RN app
+# rather than nested in here. Requests that don't match a file there fall through to the
+# fetch() handler below, so /register, /unregister, /status, /vapid-public-key are unaffected.
 [assets]
-directory = "public"
+directory = "../web-push"
 
 [triggers]
 crons = [

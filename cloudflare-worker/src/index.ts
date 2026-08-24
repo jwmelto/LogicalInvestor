@@ -215,113 +215,9 @@ export default {
   //                  channel. For stock/options it also proves access — rejected with 403
   //                  if missing, invalid, or the account isn't subscribed to that channel.
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (request.method === 'GET' && url.pathname === '/vapid-public-key') {
-      return new Response(env.VAPID_PUBLIC_KEY, { headers: { 'Content-Type': 'text/plain' } });
-    }
-
-    if (request.method === 'GET' && url.pathname === '/status') {
-      const auth = request.headers.get('Authorization') ?? '';
-      const secret = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-      if (!timingSafeEqualStr(secret, env.FEED_TOKEN)) {
-        return new Response('unauthorized', { status: 401 });
-      }
-      const result: Record<string, unknown> = {};
-      const todayET = getETDate(new Date());
-      for (const channel of CHANNELS) {
-        const [tokens, runJson, pollToken] = await Promise.all([
-          env.TOKENS.list({ prefix: `${channel}:` }),
-          env.STATE.get(`run:${channel}`),
-          env.STATE.get(`poll:${channel}`),
-        ]);
-        const state: ChannelState | null = runJson ? JSON.parse(runJson) : null;
-        const stats = state?.stats ?? null;
-        result[channel] = {
-          registeredTokens: tokens.keys.length,
-          seenIds:   state?.seen ? Object.values(state.seen).reduce((a, b) => a + (b?.length ?? 0), 0) : 0,
-          pollToken: pollToken ? 'present' : 'missing',
-          lastRun:      stats?.lastRun      ?? null,
-          lastNotified: stats?.lastNotified ?? null,
-          lastRunStats: stats ? {
-            itemsFetched: stats.itemsFetched,
-            numNewItems:  stats.numNewItems,
-            sent:         stats.sent,
-          } : null,
-          // Only surface daily as "today's" if a poll has actually run today — an unrolled-over
-          // stale date (no poll yet today) must not be mislabeled as today's stats.
-          todayStats: state?.daily && state.daily.date === todayET ? state.daily : null,
-        };
-      }
-      return new Response(JSON.stringify(result, null, 2), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (request.method !== 'POST') return new Response('not found', { status: 404 });
-
-    const body = await request.json() as {
-      token?: string;
-      subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
-      channel?: string; filter?: string; authors?: unknown; minLength?: unknown; feed_token?: string;
-    };
-    const channel = body.channel as Channel | null;
-    if (!channel || !CHANNELS.includes(channel)) {
-      return new Response('invalid channel', { status: 400 });
-    }
-
-    // token and subscription are mutually exclusive registration kinds — token wins if somehow
-    // both are sent, since only the RN app ever sends token and only the web page sends subscription.
-    let pushToken: string;
-    let subscription: PushSubscription | undefined;
-    if (typeof body.token === 'string' && body.token) {
-      pushToken = body.token;
-    } else if (
-      body.subscription &&
-      typeof body.subscription.endpoint === 'string' && body.subscription.endpoint &&
-      body.subscription.keys &&
-      typeof body.subscription.keys.p256dh === 'string' && body.subscription.keys.p256dh &&
-      typeof body.subscription.keys.auth === 'string' && body.subscription.keys.auth
-    ) {
-      pushToken = body.subscription.endpoint;
-      subscription = { endpoint: body.subscription.endpoint, expirationTime: null, keys: { p256dh: body.subscription.keys.p256dh, auth: body.subscription.keys.auth } };
-    } else {
-      return new Response('missing token or subscription', { status: 400 });
-    }
-
-    // A webpush registration's KV key is namespaced under `web:` so it can never collide with an
-    // Expo push token's own key space, even though both share the same TOKENS.list() prefix scan.
-    const kvKey = subscription ? `${channel}:web:${pushToken}` : `${channel}:${pushToken}`;
-
-    if (url.pathname === '/register') {
-      const filter = body.filter as ContentFilter;
-      if (!FILTER_TIERS.includes(filter)) {
-        return new Response('missing or invalid filter', { status: 400 });
-      }
-      if (!Array.isArray(body.authors) || !body.authors.every((a) => typeof a === 'string')) {
-        return new Response('missing or invalid authors', { status: 400 });
-      }
-      if (typeof body.minLength !== 'number' || body.minLength < 0) {
-        return new Response('missing or invalid minLength', { status: 400 });
-      }
-      const feedToken = body.feed_token;
-      if (typeof feedToken !== 'string' || feedToken === '') {
-        return new Response('missing or invalid feed_token', { status: 400 });
-      }
-      return registerDevice({ channel, pushToken, subscription, filter, authors: body.authors, minLength: body.minLength, feedToken }, env);
-    }
-    if (url.pathname === '/unregister') {
-      await env.TOKENS.delete(kvKey);
-      return new Response('ok');
-    }
-    if (url.pathname === '/test-push') {
-      const feedToken = body.feed_token;
-      if (typeof feedToken !== 'string' || feedToken === '') {
-        return new Response('missing or invalid feed_token', { status: 400 });
-      }
-      return sendTestPush({ channel, pushToken, subscription, feedToken }, env);
-    }
-    return new Response('not found', { status: 404 });
+    if (request.method === 'OPTIONS') return corsPreflightResponse(request);
+    const response = await handleRequest(request, env);
+    return withCors(response, request);
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -335,6 +231,145 @@ export default {
     await runChannel(channel, env, event);
   },
 };
+
+// The registration page is currently served same-origin (this Worker's own domain, via Static
+// Assets) but is also meant to be hostable on logicalinvestor.net itself — a genuinely different
+// origin from the Worker's API. Same-origin requests (today's default) never trigger CORS
+// enforcement at all, so this is purely additive: it only matters once/if the page moves.
+// Restricted to the one real caller rather than a wildcard, since these endpoints act on a
+// feed_token's behalf.
+const ALLOWED_ORIGIN = 'https://logicalinvestor.net';
+
+function corsHeadersFor(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin');
+  // Vary: Origin — this response's Access-Control-Allow-Origin value depends on the request's
+  // Origin header, so a cache must not serve one origin's (or no-Origin's) response to another.
+  return origin === ALLOWED_ORIGIN ? { 'Access-Control-Allow-Origin': ALLOWED_ORIGIN, Vary: 'Origin' } : {};
+}
+
+function corsPreflightResponse(request: Request): Response {
+  const headers = new Headers(corsHeadersFor(request));
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  headers.set('Access-Control-Max-Age', '86400');
+  return new Response(null, { status: 204, headers });
+}
+
+function withCors(response: Response, request: Request): Response {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeadersFor(request))) headers.set(key, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+async function handleRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+
+  if (request.method === 'GET' && url.pathname === '/vapid-public-key') {
+    return new Response(env.VAPID_PUBLIC_KEY, { headers: { 'Content-Type': 'text/plain' } });
+  }
+
+  if (request.method === 'GET' && url.pathname === '/status') {
+    const auth = request.headers.get('Authorization') ?? '';
+    const secret = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!timingSafeEqualStr(secret, env.FEED_TOKEN)) {
+      return new Response('unauthorized', { status: 401 });
+    }
+    const result: Record<string, unknown> = {};
+    const todayET = getETDate(new Date());
+    for (const channel of CHANNELS) {
+      const [tokens, runJson, pollToken] = await Promise.all([
+        env.TOKENS.list({ prefix: `${channel}:` }),
+        env.STATE.get(`run:${channel}`),
+        env.STATE.get(`poll:${channel}`),
+      ]);
+      const state: ChannelState | null = runJson ? JSON.parse(runJson) : null;
+      const stats = state?.stats ?? null;
+      result[channel] = {
+        registeredTokens: tokens.keys.length,
+        seenIds:   state?.seen ? Object.values(state.seen).reduce((a, b) => a + (b?.length ?? 0), 0) : 0,
+        pollToken: pollToken ? 'present' : 'missing',
+        lastRun:      stats?.lastRun      ?? null,
+        lastNotified: stats?.lastNotified ?? null,
+        lastRunStats: stats ? {
+          itemsFetched: stats.itemsFetched,
+          numNewItems:  stats.numNewItems,
+          sent:         stats.sent,
+        } : null,
+        // Only surface daily as "today's" if a poll has actually run today — an unrolled-over
+        // stale date (no poll yet today) must not be mislabeled as today's stats.
+        todayStats: state?.daily && state.daily.date === todayET ? state.daily : null,
+      };
+    }
+    return new Response(JSON.stringify(result, null, 2), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (request.method !== 'POST') return new Response('not found', { status: 404 });
+
+  const body = await request.json() as {
+    token?: string;
+    subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+    channel?: string; filter?: string; authors?: unknown; minLength?: unknown; feed_token?: string;
+  };
+  const channel = body.channel as Channel | null;
+  if (!channel || !CHANNELS.includes(channel)) {
+    return new Response('invalid channel', { status: 400 });
+  }
+
+  // token and subscription are mutually exclusive registration kinds — token wins if somehow
+  // both are sent, since only the RN app ever sends token and only the web page sends subscription.
+  let pushToken: string;
+  let subscription: PushSubscription | undefined;
+  if (typeof body.token === 'string' && body.token) {
+    pushToken = body.token;
+  } else if (
+    body.subscription &&
+    typeof body.subscription.endpoint === 'string' && body.subscription.endpoint &&
+    body.subscription.keys &&
+    typeof body.subscription.keys.p256dh === 'string' && body.subscription.keys.p256dh &&
+    typeof body.subscription.keys.auth === 'string' && body.subscription.keys.auth
+  ) {
+    pushToken = body.subscription.endpoint;
+    subscription = { endpoint: body.subscription.endpoint, expirationTime: null, keys: { p256dh: body.subscription.keys.p256dh, auth: body.subscription.keys.auth } };
+  } else {
+    return new Response('missing token or subscription', { status: 400 });
+  }
+
+  // A webpush registration's KV key is namespaced under `web:` so it can never collide with an
+  // Expo push token's own key space, even though both share the same TOKENS.list() prefix scan.
+  const kvKey = subscription ? `${channel}:web:${pushToken}` : `${channel}:${pushToken}`;
+
+  if (url.pathname === '/register') {
+    const filter = body.filter as ContentFilter;
+    if (!FILTER_TIERS.includes(filter)) {
+      return new Response('missing or invalid filter', { status: 400 });
+    }
+    if (!Array.isArray(body.authors) || !body.authors.every((a) => typeof a === 'string')) {
+      return new Response('missing or invalid authors', { status: 400 });
+    }
+    if (typeof body.minLength !== 'number' || body.minLength < 0) {
+      return new Response('missing or invalid minLength', { status: 400 });
+    }
+    const feedToken = body.feed_token;
+    if (typeof feedToken !== 'string' || feedToken === '') {
+      return new Response('missing or invalid feed_token', { status: 400 });
+    }
+    return registerDevice({ channel, pushToken, subscription, filter, authors: body.authors, minLength: body.minLength, feedToken }, env);
+  }
+  if (url.pathname === '/unregister') {
+    await env.TOKENS.delete(kvKey);
+    return new Response('ok');
+  }
+  if (url.pathname === '/test-push') {
+    const feedToken = body.feed_token;
+    if (typeof feedToken !== 'string' || feedToken === '') {
+      return new Response('missing or invalid feed_token', { status: 400 });
+    }
+    return sendTestPush({ channel, pushToken, subscription, feedToken }, env);
+  }
+  return new Response('not found', { status: 404 });
+}
 
 export interface RegisterParams {
   channel: Channel;
