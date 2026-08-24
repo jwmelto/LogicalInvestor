@@ -24,7 +24,7 @@ export interface Env {
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
   VAPID_PRIVATE_KEY: string;        // secret — set via: wrangler secret put VAPID_PRIVATE_KEY
-  CORS_ALLOWED_ORIGIN?: string;     // origin allowed to call this API cross-origin, default "https://logicalinvestor.net"
+  CORS_ALLOWED_ORIGIN?: string;     // origin allowed to call this API cross-origin. Unset denies every origin.
   // Per-channel dead-man's-switch pings (healthchecks.io or similar) — see issue #24.
   // One check per channel since each is an independent Cloudflare Cron Trigger registration
   // and can get stuck without the others being affected.
