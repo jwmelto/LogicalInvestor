@@ -432,6 +432,43 @@ The Worker already pretty-prints the JSON response, so no `jq` needed. `FEED_TOK
 - healthchecks.io checks are configured as **Simple** schedule (not Cron) — period 5 min, grace 15 min — matching how often each channel's cron actually fires; alerts by default go to the account email
 - `heartbeatUrlFor(channel, env)` in `cloudflare-worker/src/index.ts` does the channel → secret lookup
 
+#### Web Push registration page (`web-push/`)
+
+A static page (`index.html`, `app.js`, `sw.js`, `manifest.json`, icons, no build step) that
+registers a browser for push notifications. It replaces the RN app's own App Store submission,
+abandoned after a Guideline 4.2.2 rejection. Apple's reviewer suggested this alternative.
+
+It's a client of the Worker's API, not part of the Worker's own source. It lives at the repo's
+top level, alongside the RN app, instead of nested under `cloudflare-worker/`. Sean Hyman
+declined to host it on logicalinvestor.net, so Cloudflare hosting is permanent: the Worker
+serves it via Workers Static Assets (`cloudflare-worker/wrangler.toml`'s `[assets] directory =
+"../web-push"`). Local dev and phone testing use the same path: `wrangler dev` plus a
+`cloudflared tunnel --url`.
+
+**Delivery mechanism**: a second push transport alongside the RN app's Expo push path, additive
+only. `cloudflare-worker/src/webpush.ts` wraps `@block65/webcrypto-web-push`. It's WebCrypto-
+native and works unmodified in Workers. The canonical `web-push` npm package does not, since it
+depends on Node `crypto` APIs Workers' `nodejs_compat` polyfill doesn't fully cover. `TOKENS` KV
+entries gain `kind: 'webpush'` and a `subscription` object. Entries without `kind` are the
+pre-existing Expo ones, unaffected. `runChannel`'s notification loop sends to both kinds in the
+same pass.
+
+**Endpoints** (`cloudflare-worker/src/index.ts`, same `/register`/`/unregister` routes the RN app
+uses; the request body's `token` field means Expo, `subscription` means browser):
+- `GET /vapid-public-key`: the public key. The page never hardcodes a value that would go stale on rotation.
+- `POST /test-push`: sends one notification straight to the requesting device, bypassing the poll/filter pipeline. Confirms a registration actually receives pushes without waiting for real forum activity.
+
+**VAPID key pair**: production and local dev use deliberately different key pairs.
+- Production: the public half is `wrangler.toml`'s committed `VAPID_PUBLIC_KEY` var. It isn't secret. The private half is set only via `wrangler secret put VAPID_PRIVATE_KEY`, and is never written to any file in this repo.
+- Local dev: `cloudflare-worker/.dev.vars.example` holds a shared, committed, test-only key pair. Copy it to `.dev.vars`, which is gitignored. This pair has never been used in production and never will be, so there's nothing meaningful to keep secret about it. `.dev.vars` overrides `wrangler.toml`'s `[vars]` during `wrangler dev` only, never during a real deploy. Local testing stays self-consistent on the test pair regardless of the production public key.
+- To generate a new pair, needed only for a real production rotation (see the caveat above about breaking existing subscriptions): `npx web-push@3.6.7 generate-vapid-keys`. The version is pinned in the command instead of adding `web-push` as a project dependency, since it's a one-off human-run CLI utility never imported by any code.
+
+**CORS**: `cloudflare-worker/src/index.ts`'s `fetch()` adds `Access-Control-Allow-Origin` for a
+single configured origin (`env.CORS_ALLOWED_ORIGIN`, a `wrangler.toml` var), plus `OPTIONS`
+preflight handling. Same-origin requests, today's only real case, never trigger CORS
+enforcement. This code is currently dormant. No cross-origin host is configured, and none is
+planned.
+
 ### Contexts
 
 **Location**: `contexts/` directory
