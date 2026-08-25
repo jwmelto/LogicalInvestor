@@ -953,27 +953,31 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
   });
 });
 
-describe('runChannel — web push delivery', () => {
+// Throwaway test-only key material, same shapes exercised (and validated against real
+// buildPushPayload crypto) in webpush.test.ts.
+const VAPID_ENV = {
+  VAPID_SUBJECT: 'mailto:test@example.com',
+  VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
+  VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
+};
+const WEBPUSH_ENDPOINT = 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id';
+const webpushSubscription = {
+  endpoint: WEBPUSH_ENDPOINT,
+  expirationTime: null,
+  keys: {
+    p256dh: 'BELwtddmVvbvOEHadf6IA9Jj2Gx2u6K9Yoj-0TOzGPDJWfQbUprGpFpfOKvULdsyl9m5LwdBLqG6t9zUajeGN8A',
+    auth: 'wUSvE5FxCS7VqmXHVW79FQ',
+  },
+};
+
+// runChannel never sends a webpush notification itself — it only enqueues one
+// WebPushQueueMessage per (subscriber, item) pair onto WEBPUSH_QUEUE. The queue() consumer
+// (tested separately below) does the actual encrypted send, in its own invocation with its own
+// subrequest budget — see wrangler.toml's queues.consumers max_batch_size.
+describe('runChannel — web push queuing', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
-
-  // Throwaway test-only key material, same shapes exercised (and validated against real
-  // buildPushPayload crypto) in webpush.test.ts.
-  const VAPID_ENV = {
-    VAPID_SUBJECT: 'mailto:test@example.com',
-    VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
-    VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
-  };
-  const WEBPUSH_ENDPOINT = 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id';
-  const subscription = {
-    endpoint: WEBPUSH_ENDPOINT,
-    expirationTime: null,
-    keys: {
-      p256dh: 'BELwtddmVvbvOEHadf6IA9Jj2Gx2u6K9Yoj-0TOzGPDJWfQbUprGpFpfOKvULdsyl9m5LwdBLqG6t9zUajeGN8A',
-      auth: 'wUSvE5FxCS7VqmXHVW79FQ',
-    },
-  };
 
   function mockEnv(keys: { name: string; metadata: Record<string, unknown> }[]) {
     const stateStore: Record<string, string | null> = {
@@ -981,39 +985,38 @@ describe('runChannel — web push delivery', () => {
       'poll:options': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
-    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       ...VAPID_ENV,
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
-      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: tokensDelete },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn().mockResolvedValue(undefined) },
+      WEBPUSH_QUEUE: { sendBatch },
     } as any;
-    return { env, stateStore, tokensDelete };
+    return { env, stateStore, sendBatch };
   }
 
-  it('sends a webpush notification to a registered browser subscription', async () => {
-    const { env } = mockEnv([
-      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription } },
+  it('enqueues one message for a registered browser subscription', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription: webpushSubscription } },
     ]);
-    const fetchMock = vi.fn((url: string) => {
-      if (url === WEBPUSH_ENDPOINT) return Promise.resolve({ ok: true, status: 201 });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) })));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(fetchMock.mock.calls.some(([url]) => url === WEBPUSH_ENDPOINT)).toBe(true);
+    expect(sendBatch).toHaveBeenCalledTimes(1);
+    const [messages] = sendBatch.mock.calls[0];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].body).toMatchObject({ channel: 'options', subscription: webpushSubscription, title: expect.any(String) });
     const finalState = JSON.parse((await env.STATE.get('run:options'))!);
     expect(finalState.stats.sent).toBeGreaterThan(0);
   });
 
-  it('prunes a webpush subscription that returns 410 Gone, without affecting other recipients', async () => {
-    const { env, tokensDelete } = mockEnv([
-      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription } },
+  it('enqueuing a webpush recipient does not block an Expo recipient in the same bucket', async () => {
+    const { env } = mockEnv([
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription: webpushSubscription } },
       { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0 } },
     ]);
     const fetchMock = vi.fn((url: string) => {
-      if (url === WEBPUSH_ENDPOINT) return Promise.resolve({ ok: false, status: 410 });
       if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
     });
@@ -1021,22 +1024,87 @@ describe('runChannel — web push delivery', () => {
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(tokensDelete).toHaveBeenCalledWith(`options:web:${WEBPUSH_ENDPOINT}`);
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined(); // the Expo-token recipient in the same bucket still got notified
+    expect(pushCall).toBeDefined();
   });
 
-  it('a webpush network failure does not throw or abort the run', async () => {
+  it('chunks sendBatch calls at 100 messages', async () => {
+    const manySubs = Array.from({ length: 150 }, (_, i) => ({
+      name: `options:web:endpoint-${i}`,
+      metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription: { ...webpushSubscription, endpoint: `endpoint-${i}` } },
+    }));
+    const { env, sendBatch } = mockEnv(manySubs);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) })));
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).toHaveBeenCalledTimes(2); // 150 messages -> batches of 100 + 50
+    expect(sendBatch.mock.calls[0][0]).toHaveLength(100);
+    expect(sendBatch.mock.calls[1][0]).toHaveLength(50);
+  });
+
+  it('a WEBPUSH_QUEUE.sendBatch failure in one bucket does not abort another bucket\'s Expo send', async () => {
     const { env } = mockEnv([
-      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription } },
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'members', authors: [], minLength: 0, kind: 'webpush', subscription: webpushSubscription } },
+      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0 } },
     ]);
+    env.WEBPUSH_QUEUE.sendBatch.mockRejectedValue(new Error('queue unavailable'));
     const fetchMock = vi.fn((url: string) => {
-      if (url === WEBPUSH_ENDPOINT) return Promise.reject(new Error('network blip'));
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
     });
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any)).resolves.not.toThrow();
+
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined();
+  });
+});
+
+describe('queue() — web push delivery', () => {
+  function messageBatch(bodies: { channel: string; subscription: typeof webpushSubscription; title: string; body: string; url?: string }[]): any {
+    return { messages: bodies.map((body) => ({ body })) };
+  }
+
+  it('sends a webpush notification for a queued message', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { ...VAPID_ENV, TOKENS: { delete: vi.fn() } } as any;
+
+    await worker.queue(messageBatch([{ channel: 'options', subscription: webpushSubscription, title: 't', body: 'b' }]), env);
+
+    expect(fetchMock).toHaveBeenCalledWith(WEBPUSH_ENDPOINT, expect.anything());
+  });
+
+  it('prunes a webpush subscription that returns 410 Gone, without affecting other messages', async () => {
+    const goneEndpoint = 'https://fcm.googleapis.com/fcm/send/gone-endpoint';
+    const fetchMock = vi.fn((url: string) => Promise.resolve(url === goneEndpoint ? { ok: false, status: 410 } : { ok: true, status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = { ...VAPID_ENV, TOKENS: { delete: tokensDelete } } as any;
+
+    await worker.queue(messageBatch([
+      { channel: 'options', subscription: { ...webpushSubscription, endpoint: goneEndpoint }, title: 't', body: 'b' },
+      { channel: 'options', subscription: webpushSubscription, title: 't', body: 'b' },
+    ]), env);
+
+    expect(tokensDelete).toHaveBeenCalledWith(`options:web:${goneEndpoint}`);
+    expect(tokensDelete).toHaveBeenCalledTimes(1); // the still-valid subscription is untouched
+  });
+
+  it('a webpush network failure does not throw or abort the batch', async () => {
+    const failEndpoint = 'https://fcm.googleapis.com/fcm/send/fails-endpoint';
+    const fetchMock = vi.fn((url: string) => url === failEndpoint ? Promise.reject(new Error('network blip')) : Promise.resolve({ ok: true, status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { ...VAPID_ENV, TOKENS: { delete: vi.fn() } } as any;
+
+    await expect(worker.queue(messageBatch([
+      { channel: 'options', subscription: { ...webpushSubscription, endpoint: failEndpoint }, title: 't', body: 'b' },
+      { channel: 'options', subscription: webpushSubscription, title: 't', body: 'b' },
+    ]), env)).resolves.not.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledWith(WEBPUSH_ENDPOINT, expect.anything()); // second message still sent
   });
 });
 
