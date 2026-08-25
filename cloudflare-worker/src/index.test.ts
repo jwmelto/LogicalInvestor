@@ -1053,17 +1053,31 @@ describe('runChannel — web push queuing', () => {
 
 describe('queue() — web push delivery', () => {
   function messageBatch(bodies: { channel: string; subscription: typeof webpushSubscription; title: string; body: string; url?: string }[]): any {
-    return { messages: bodies.map((body) => ({ body })) };
+    return { messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
   }
 
-  it('sends a webpush notification for a queued message', async () => {
+  it('sends a webpush notification for a queued message, and acks it', async () => {
     const fetchMock = vi.fn(() => Promise.resolve({ ok: true, status: 201 }));
     vi.stubGlobal('fetch', fetchMock);
     const env = { ...VAPID_ENV, TOKENS: { delete: vi.fn() } } as any;
+    const batch = messageBatch([{ channel: 'options', subscription: webpushSubscription, title: 't', body: 'b' }]);
 
-    await worker.queue(messageBatch([{ channel: 'options', subscription: webpushSubscription, title: 't', body: 'b' }]), env);
+    await worker.queue(batch, env);
 
     expect(fetchMock).toHaveBeenCalledWith(WEBPUSH_ENDPOINT, expect.anything());
+    expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+  });
+
+  // Cloudflare Queues auto-retries any message that isn't explicitly ack'd or retry'd, even a
+  // successfully-sent one — without this, every push would go out up to max_retries times.
+  it('acks a message even when the send fails, so Cloudflare does not auto-retry it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    const env = { ...VAPID_ENV, TOKENS: { delete: vi.fn() } } as any;
+    const batch = messageBatch([{ channel: 'options', subscription: webpushSubscription, title: 't', body: 'b' }]);
+
+    await worker.queue(batch, env);
+
+    expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
   });
 
   it('prunes a webpush subscription that returns 410 Gone, without affecting other messages', async () => {

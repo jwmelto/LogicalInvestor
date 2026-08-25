@@ -236,18 +236,22 @@ export default {
 
   // Drains WEBPUSH_QUEUE, bounded per invocation by wrangler.toml's consumer max_batch_size —
   // this is what keeps webpush fan-out under the 50-subrequest-per-invocation cap regardless of
-  // how many (subscriber, item) pairs a busy poll queues up. No retry: same fire-and-forget
-  // tolerance the rest of this file already applies to push sends (a dropped notification isn't
-  // worth re-delivering a stale alert for).
+  // how many (subscriber, item) pairs a busy poll queues up. Every message is explicitly ack'd,
+  // success or failure: Cloudflare Queues auto-retries any message that isn't explicitly ack'd
+  // or retry'd, and a delayed re-send of a time-sensitive forum alert (possibly minutes or
+  // hours later, once max_retries is exhausted) is worse than a missed one — same fire-and-
+  // forget tolerance the rest of this file already applies to push sends.
   async queue(batch: MessageBatch<WebPushQueueMessage>, env: Env): Promise<void> {
     const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
-    await Promise.all(batch.messages.map(async ({ body: { channel, subscription, title, body, url } }) => {
+    await Promise.all(batch.messages.map(async (msg) => {
+      const { channel, subscription, title, body, url } = msg.body;
       try {
         const result = await sendWebPush(subscription, { data: { title, body, url } }, vapid);
         // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no longer
         // exists" signal. Prune it now, or expired subscriptions accumulate forever.
         if (result.gone) await env.TOKENS.delete(`${channel}:web:${subscription.endpoint}`);
       } catch { /* one message's failure must not affect the rest of the batch */ }
+      finally { msg.ack(); }
     }));
   },
 };
