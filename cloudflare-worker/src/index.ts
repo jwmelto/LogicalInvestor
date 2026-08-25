@@ -203,8 +203,9 @@ export default {
   //     or { subscription: { endpoint, keys: { p256dh, auth } }, channel, filter, authors, minLength, feed_token }
   //   POST /unregister  { token, channel } or { subscription: { endpoint }, channel }
   //   POST /test-push   { token, channel, feed_token } or { subscription, channel, feed_token }
-  //     sends one immediate notification straight to this device, bypassing polling entirely —
-  //     for confirming a registration actually receives pushes.
+  //     bypasses polling entirely, to confirm a registration actually receives pushes. Expo
+  //     sends immediately; a webpush subscription is enqueued through the same WEBPUSH_QUEUE a
+  //     real alert uses, so 'ok' there means queued, not confirmed delivered.
   //
   //   token        — Expo push token (device identifier for APNs/FCM delivery), RN app only
   //   subscription — browser PushManager subscription object, web page only. Mutually exclusive
@@ -448,14 +449,14 @@ export interface TestPushParams {
   feedToken: string;
 }
 
-// Sends one immediate notification straight to the requesting device. It bypasses the poll,
-// detect, and filter pipeline entirely, to confirm a registration actually receives pushes.
+// Bypasses the poll/detect/filter pipeline, to confirm a registration actually receives pushes
+// through the same delivery path a real alert would use.
 //
 // Uses the same feed_token gate as registerDevice. This proves access before sending, so it
 // can't be used to spam an arbitrary subscription.
 export async function sendTestPush(
   { channel, pushToken, subscription, feedToken }: TestPushParams,
-  env: Pick<Env, 'VAPID_SUBJECT' | 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY'>,
+  env: Pick<Env, 'WEBPUSH_QUEUE'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
   if (access === null) {
@@ -469,12 +470,16 @@ export async function sendTestPush(
   const body = 'If you can see this, push notifications are working.';
 
   if (subscription) {
-    const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+    // Enqueued through the same WEBPUSH_QUEUE runChannel uses, rather than sent inline, so this
+    // exercises the real delivery path (queue wiring, deployed consumer) instead of a shortcut
+    // that could report success while the operational path is broken. 'ok' means queued, not
+    // confirmed delivered — the encrypted send, and any resulting subscription-pruning, happens
+    // in the queue() consumer, asynchronously.
     try {
-      const result = await sendWebPush(subscription, { data: { title, body } }, vapid);
-      return result.ok ? new Response('ok') : new Response('send failed', { status: 502 });
+      await env.WEBPUSH_QUEUE.sendBatch([{ body: { channel, subscription, title, body } }]);
+      return new Response('ok');
     } catch {
-      return new Response('send failed', { status: 502 });
+      return new Response('enqueue failed', { status: 502 });
     }
   }
 

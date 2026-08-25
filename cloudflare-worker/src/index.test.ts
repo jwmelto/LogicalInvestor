@@ -496,12 +496,6 @@ describe('/register endpoint validation — webpush subscription path', () => {
 });
 
 describe('sendTestPush (logic, plain-object inputs)', () => {
-  // Same throwaway test-only key material as webpush.test.ts / the runChannel webpush suite.
-  const VAPID_ENV = {
-    VAPID_SUBJECT: 'mailto:test@example.com',
-    VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
-    VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
-  };
   const validSubscription = {
     endpoint: 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id',
     expirationTime: null,
@@ -510,16 +504,19 @@ describe('sendTestPush (logic, plain-object inputs)', () => {
       auth: 'wUSvE5FxCS7VqmXHVW79FQ',
     },
   };
+  function envWithQueue(sendBatch = vi.fn().mockResolvedValue(undefined)) {
+    return { WEBPUSH_QUEUE: { sendBatch } } as any;
+  }
 
   it('rejects when feed_token has no access', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'unauthorized' }, VAPID_ENV);
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'unauthorized' }, envWithQueue());
     expect(res.status).toBe(403);
   });
 
   it('returns 503 (not 403) when the access check itself fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, VAPID_ENV);
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, envWithQueue());
     expect(res.status).toBe(503);
   });
 
@@ -529,7 +526,7 @@ describe('sendTestPush (logic, plain-object inputs)', () => {
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, VAPID_ENV);
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, envWithQueue());
     expect(res.status).toBe(200);
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
     const messages = JSON.parse(pushCall![1]!.body as string);
@@ -542,46 +539,40 @@ describe('sendTestPush (logic, plain-object inputs)', () => {
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
     });
     vi.stubGlobal('fetch', fetchMock);
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, VAPID_ENV);
+    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, envWithQueue());
     expect(res.status).toBe(502);
   });
 
-  it('sends via sendWebPush for a subscription and returns ok', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === validSubscription.endpoint) return Promise.resolve({ ok: true, status: 201 });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, VAPID_ENV);
+  it('enqueues via WEBPUSH_QUEUE for a subscription and returns ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, envWithQueue(sendBatch));
     expect(res.status).toBe(200);
-    expect(fetchMock.mock.calls.some(([url]) => url === validSubscription.endpoint)).toBe(true);
+    expect(sendBatch).toHaveBeenCalledWith([{ body: { channel: 'options', subscription: validSubscription, title: 'Test notification', body: 'If you can see this, push notifications are working.' } }]);
   });
 
-  it('reports 502 when the webpush send itself fails, without throwing', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === validSubscription.endpoint) return Promise.resolve({ ok: false, status: 500 });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, VAPID_ENV);
+  it('reports 502 when the enqueue itself fails, without throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const sendBatch = vi.fn().mockRejectedValue(new Error('queue unavailable'));
+    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, envWithQueue(sendBatch));
     expect(res.status).toBe(502);
   });
 
-  it('reports 502 rather than throwing when the subscription itself is cryptographically malformed', async () => {
+  // A cryptographically malformed subscription is no longer caught here: enqueueing doesn't
+  // validate key material, only the queue() consumer's buildPushPayload call does — and that
+  // failure is swallowed there the same way a real alert's would be (see queue() tests). This
+  // endpoint reporting the same "ok, queued" outcome regardless of key validity is the point:
+  // it now proves the operational path, not a shortcut that could pass while that path is broken.
+  it('enqueues even a cryptographically malformed subscription — validation happens in the consumer', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const malformed = { endpoint: 'https://fcm.googleapis.com/fcm/send/bad', expirationTime: null, keys: { p256dh: 'not-a-real-key', auth: 'not-a-real-auth' } };
-    const res = await sendTestPush({ channel: 'options', pushToken: malformed.endpoint, subscription: malformed, feedToken: 'valid' }, VAPID_ENV);
-    expect(res.status).toBe(502);
+    const res = await sendTestPush({ channel: 'options', pushToken: malformed.endpoint, subscription: malformed, feedToken: 'valid' }, envWithQueue());
+    expect(res.status).toBe(200);
   });
 });
 
 describe('/test-push endpoint validation (HTTP boundary)', () => {
-  const VAPID_ENV = {
-    VAPID_SUBJECT: 'mailto:test@example.com',
-    VAPID_PUBLIC_KEY: 'BPCnUQ9J_eoysTmL_P7DlsBAv5zaU2aylMaMl2VzAKzk_FbMuvA20mC8cjW6EwDXa6oAgFRf_FDHGE6N5OZZzp0',
-    VAPID_PRIVATE_KEY: 'id36_WQR8FiP-75gk_Na8OgU9YsWSZWcMxCicgWTfTo',
-  };
-  function mockEnv() { return { ...VAPID_ENV } as any; }
+  function mockEnv() { return { WEBPUSH_QUEUE: { sendBatch: vi.fn().mockResolvedValue(undefined) } } as any; }
   function testPushRequest(body: Record<string, unknown>) {
     return new Request('https://worker.test/test-push', { method: 'POST', body: JSON.stringify(body) });
   }
@@ -606,15 +597,13 @@ describe('/test-push endpoint validation (HTTP boundary)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('a valid subscription request reaches sendTestPush and succeeds', async () => {
+  it('a valid subscription request reaches sendTestPush, enqueues it, and succeeds', async () => {
     const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/fake-endpoint-id', keys: { p256dh: 'BELwtddmVvbvOEHadf6IA9Jj2Gx2u6K9Yoj-0TOzGPDJWfQbUprGpFpfOKvULdsyl9m5LwdBLqG6t9zUajeGN8A', auth: 'wUSvE5FxCS7VqmXHVW79FQ' } };
-    const fetchMock = vi.fn((url: string) => {
-      if (url === subscription.endpoint) return Promise.resolve({ ok: true, status: 201 });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const res = await worker.fetch(testPushRequest({ subscription, channel: 'members', feed_token: 'valid' }), mockEnv());
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = mockEnv();
+    const res = await worker.fetch(testPushRequest({ subscription, channel: 'members', feed_token: 'valid' }), env);
     expect(res.status).toBe(200);
+    expect(env.WEBPUSH_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
   });
 });
 

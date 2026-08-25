@@ -137,7 +137,7 @@ testBtn.addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscription: lastRegistration.subscription, channel: lastRegistration.channels[0], feed_token: lastRegistration.feedToken }),
     });
-    setStatus(res.ok ? 'Test notification sent — check for it now.' : `Test notification failed (HTTP ${res.status}).`);
+    setStatus(res.ok ? 'Test notification queued — check for it in a few seconds.' : `Test notification failed (HTTP ${res.status}).`);
   } catch (err) {
     setStatus(`Error: ${err.message}`);
   } finally {
