@@ -82,6 +82,9 @@ interface ChannelState {
   stats: RunStats;
   seen: Partial<Record<FeedKey, string[]>>;
   daily: DailyStats;
+  // ET date string of the last time this channel's devices had their feedTokenHasAccess
+  // rechecked (see shouldSweepAccess) — undefined means never swept.
+  lastAccessSweepDate?: string;
 }
 
 function emptyDaily(date: string): DailyStats {
@@ -90,6 +93,14 @@ function emptyDaily(date: string): DailyStats {
 
 function emptyRunStats(): RunStats {
   return { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 };
+}
+
+// Pure so it's directly testable. The per-device feedTokenHasAccess recheck only needs to run
+// once per (ET) day per channel — see issue #86: doing it on every notify-worthy tick risked
+// exceeding the free plan's 50-subrequest-per-invocation cap as registered-device count grew,
+// which throws and aborts the whole tick's notifications, not just the overflow devices.
+export function shouldSweepAccess(lastAccessSweepDate: string | undefined, todayET: string): boolean {
+  return lastAccessSweepDate !== todayET;
 }
 
 // Pure so it's directly testable. Resets the rolling counters when `todayET` doesn't match the
@@ -610,6 +621,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   const claimedStats: RunStats = { ...(state?.stats ?? emptyRunStats()), lastRun: now.toISOString(), lastScheduledTime: event.scheduledTime };
   await env.STATE.put(runKey, JSON.stringify({
     stats: claimedStats, seen: state?.seen ?? {}, daily: state?.daily ?? emptyDaily(getETDate(now)),
+    lastAccessSweepDate: state?.lastAccessSweepDate,
   } satisfies ChannelState));
 
   const seenMap: Partial<Record<string, string[]>> = state?.seen ?? {};
@@ -670,23 +682,36 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (newItems.length === 0) {
     // The fetch loop above already ran (network I/O — "slow work"), so daily's base is re-read
     // fresh here rather than trusting the pre-fetch snapshot, same reasoning as the branches below.
+    // No access sweep happened — that only runs once the notify-worthy bucket-building loop below
+    // is reached — so lastAccessSweepDate carries forward unchanged.
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
-    await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
+    await env.STATE.put(runKey, JSON.stringify({
+      stats: runStats, seen: seenMap, daily, lastAccessSweepDate: state?.lastAccessSweepDate,
+    } satisfies ChannelState));
     return;
   }
 
+  // Access is only checked at registration time (registerDevice) otherwise. A subscription can
+  // lapse afterward, so this recheck exists to prune dead registrations before they get another
+  // channel's worth of content pushed to them — same signal findAndStorePollToken uses for stale
+  // tokens. It's gated to once per ET day per channel (see shouldSweepAccess/issue #86): doing it
+  // on every notify-worthy tick meant one fetch per device with a stored feedToken, synchronously,
+  // and the free plan's 50-subrequest-per-invocation cap could be exceeded — which throws and
+  // aborts the whole tick, silently failing to notify every device on the channel, not just the
+  // devices past the limit — once registered-device count grew past roughly the 40s. Real
+  // tradeoff: a revoked subscriber can now keep receiving pushes for up to a day instead of being
+  // pruned immediately.
+  // ponytail: the sweep itself is still one fetch per device in a single invocation, so a channel
+  // with a very large device count could still exceed the cap on sweep day specifically. Chunk the
+  // sweep across multiple ticks if device count ever approaches that ceiling.
+  const doAccessSweep = shouldSweepAccess(state?.lastAccessSweepDate, todayET);
   const buckets = new Map<string, Bucket>();
   let cursor: string | undefined;
   do {
     const page = await env.TOKENS.list<TokenMeta>({ prefix: `${channel}:`, cursor });
     for (const key of page.keys) {
-      // Access is only checked at registration time (registerDevice). A subscription can lapse
-      // afterward, so re-verify here — same signal findAndStorePollToken uses for stale tokens —
-      // and prune dead registrations before they get another channel's worth of content pushed
-      // to them. metadata comes free with the list() call above, so this adds no extra KV reads;
-      // only an HTTP fetch per device, and only when there's new content to notify about.
       const deviceFeedToken = key.metadata?.feedToken;
-      if (deviceFeedToken) {
+      if (doAccessSweep && deviceFeedToken) {
         const access = await feedTokenHasAccess(channel, deviceFeedToken);
         if (access === false) {
           await env.TOKENS.delete(key.name);
@@ -711,9 +736,13 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
 
+  const lastAccessSweepDate = doAccessSweep ? todayET : state?.lastAccessSweepDate;
+
   if (buckets.size === 0) {
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
-    await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
+    await env.STATE.put(runKey, JSON.stringify({
+      stats: runStats, seen: seenMap, daily, lastAccessSweepDate,
+    } satisfies ChannelState));
     return;
   }
 
@@ -774,7 +803,9 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
 
   const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
-  await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
+  await env.STATE.put(runKey, JSON.stringify({
+    stats: runStats, seen: seenMap, daily, lastAccessSweepDate,
+  } satisfies ChannelState));
 }
 
 export { matchesFilter, stripReplyPrefix } from '@li/core';

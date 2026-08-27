@@ -420,6 +420,11 @@ Every `/register` call includes `feed_token` — `registerPushChannel()` and `up
 The Worker uses it to verify access before storing the registration; see `cloudflare-worker/src/index.ts` for how each channel checks it.
 One non-obvious case: the `members` channel (bundling both Members Area and Members Forum) checks access against Members Forum specifically, not Members Area — Members Area's own feed is readable regardless of token validity, so it alone would never catch an expired or invalid one.
 
+**Post-registration access recheck**: a subscription can lapse after registration, so `runChannel`'s bucket-building loop re-verifies every registered device's `feedToken` and prunes access-revoked ones before they get another channel's worth of content pushed to them.
+This recheck is gated to once per ET calendar day per channel (`shouldSweepAccess`, tracked via `lastAccessSweepDate` in the `run:<channel>` STATE blob), not every notify-worthy tick — one `fetch()` per device competes with the same invocation's other subrequests, and the free plan's 50-subrequest-per-invocation cap could otherwise be exceeded as registered-device count grows, which throws and aborts the whole tick's notifications for everyone on that channel, not just the overflow devices (issue #86).
+Real tradeoff: a revoked subscriber can keep receiving pushes for up to a day before being pruned, instead of immediately.
+A channel with a very large device count could still exceed the cap on the one tick where the sweep actually runs; chunking the sweep itself across multiple ticks would be the next step if that's ever reached.
+
 **Checking Worker status**: `GET /status` requires the Worker's `FEED_TOKEN` secret as a Bearer header — not a query param, so it can't be checked by pasting a URL into a browser (no `WWW-Authenticate` challenge is sent, so browsers won't prompt for credentials either). Use curl:
 ```bash
 curl -H "Authorization: Bearer $FEED_TOKEN" https://logicalinvestor-push.logicalinvestor.workers.dev/status

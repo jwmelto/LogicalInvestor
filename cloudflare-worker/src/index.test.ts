@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, shouldSweepAccess } from './index';
 import { CHANNEL_FEEDS, DEFAULT_TOKENS_TTL_DAYS } from './config';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
@@ -766,6 +766,89 @@ describe('runChannel (via scheduled) — stale registration pruning', () => {
   });
 });
 
+describe('runChannel — access-recheck sweep gating (issue #86)', () => {
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  const itemWithAuthor = (guid: string, author: string) =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
+
+  function runStateWithSweep(lastAccessSweepDate: string | undefined): string {
+    return JSON.stringify({
+      stats: { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 },
+      seen: { optionsInsights: ['old-guid'] },
+      daily: { date: '1970-01-01', runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0 },
+      lastAccessSweepDate,
+    });
+  }
+
+  function mockEnv(lastAccessSweepDate: string | undefined) {
+    const stateStore: Record<string, string | null> = {
+      'run:options': runStateWithSweep(lastAccessSweepDate),
+      'poll:options': 'poll-token',
+    };
+    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } }],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+    } as any;
+    return { env, stateStore };
+  }
+
+  it('skips the per-device access recheck when already swept today', async () => {
+    const { env, stateStore } = mockEnv(TODAY_ET);
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('feed_token=device-token'))).toBe(false);
+    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
+    expect(pushCall).toBeDefined(); // notification still sent despite skipping the recheck
+    const finalState = JSON.parse(stateStore['run:options']!);
+    expect(finalState.lastAccessSweepDate).toBe(TODAY_ET); // unchanged
+  });
+
+  it('runs the per-device access recheck when never swept before, and records today\'s date', async () => {
+    const { env, stateStore } = mockEnv(undefined);
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
+      if (url.includes('feed_token=device-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('feed_token=device-token'))).toBe(true);
+    const finalState = JSON.parse(stateStore['run:options']!);
+    expect(finalState.lastAccessSweepDate).toBe(TODAY_ET);
+  });
+
+  it('runs the per-device access recheck again once the ET date rolls over', async () => {
+    const { env, stateStore } = mockEnv('1970-01-01');
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
+      if (url.includes('feed_token=device-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('feed_token=device-token'))).toBe(true);
+    const finalState = JSON.parse(stateStore['run:options']!);
+    expect(finalState.lastAccessSweepDate).toBe(TODAY_ET);
+  });
+});
+
 describe('runChannel — registrations predating filter/authors/minLength are skipped', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
@@ -1381,6 +1464,18 @@ describe('advanceDaily', () => {
     const yesterday = advanceDaily(undefined, '2026-01-01', stats());
     const today = advanceDaily(yesterday, '2026-01-02', stats({ itemsFetched: 1, numNewItems: 1, sent: 0 }));
     expect(today).toEqual({ date: '2026-01-02', runs: 1, itemsFetched: 1, numNewItems: 1, sent: 0 });
+  });
+});
+
+describe('shouldSweepAccess', () => {
+  it('sweeps when never swept before', () => {
+    expect(shouldSweepAccess(undefined, '2026-01-01')).toBe(true);
+  });
+  it('does not sweep again on the same ET date', () => {
+    expect(shouldSweepAccess('2026-01-01', '2026-01-01')).toBe(false);
+  });
+  it('sweeps again once the ET date rolls over', () => {
+    expect(shouldSweepAccess('2026-01-01', '2026-01-02')).toBe(true);
   });
 });
 
