@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, shouldSweepAccess, needsRevalidation } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
 import { CHANNEL_FEEDS, DEFAULT_TOKENS_TTL_DAYS } from './config';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
@@ -770,13 +770,13 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
     expect(messages[0].body.tokenKey).toBe('options:stale-push');
   });
 
-  it('does not enqueue at all once this channel has already been scanned today', async () => {
+  it('does not enqueue at all once this channel has already been scanned in the last ~24h', async () => {
     const { env, stateStore, sendBatch } = mockEnv([
       { name: 'options:never-validated', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
     ]);
     stateStore['run:options'] = JSON.stringify({
       ...JSON.parse(runState({ optionsInsights: ['old-guid'] })),
-      lastValidationEnqueueDate: TODAY_ET,
+      lastValidationEnqueueDate: Date.now() - 60_000,
     });
     vi.stubGlobal('fetch', pushFetch());
 
@@ -1481,18 +1481,6 @@ describe('advanceDaily', () => {
   });
 });
 
-describe('shouldSweepAccess', () => {
-  it('sweeps when never swept before', () => {
-    expect(shouldSweepAccess(undefined, '2026-01-01')).toBe(true);
-  });
-  it('does not sweep again on the same ET date', () => {
-    expect(shouldSweepAccess('2026-01-01', '2026-01-01')).toBe(false);
-  });
-  it('sweeps again once the ET date rolls over', () => {
-    expect(shouldSweepAccess('2026-01-01', '2026-01-02')).toBe(true);
-  });
-});
-
 describe('needsRevalidation', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -1507,9 +1495,9 @@ describe('needsRevalidation', () => {
     const now = Date.now();
     expect(needsRevalidation(now - DAY_MS, now)).toBe(true);
   });
-  // A real elapsed-time check, unlike shouldSweepAccess's calendar-day comparison: two
-  // timestamps a few minutes apart, straddling midnight, must not both read as "needs
-  // revalidation" just because the calendar date changed.
+  // Two timestamps a few minutes apart, straddling midnight, must not both read as "needs
+  // revalidation" just because the calendar date changed — that was the exact bug in the
+  // calendar-date-string version this replaced.
   it('does not treat timestamps minutes apart as needing revalidation, even across a calendar-day boundary', () => {
     const justBeforeMidnight = new Date('2026-01-01T23:58:00-05:00').getTime();
     const justAfterMidnight = new Date('2026-01-02T00:02:00-05:00').getTime();

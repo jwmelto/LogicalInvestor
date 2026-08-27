@@ -11,6 +11,16 @@ import { FeedKeys, type Channel, type FeedKey } from '@li/core';
 // The app re-registers every push channel unconditionally on every cold launch (FeedContext), so
 // a registration that stops renewing means the device is gone (uninstalled, or never called
 // /unregister). This TTL just needs slack beyond normal usage gaps — weeks, not days — see #60.
+//
+// Distinct from, and not made redundant by, the per-registration access revalidation in
+// index.ts (issue #86): revalidation answers "is this feedToken's WordPress subscription still
+// valid," and deletes fast once it's confirmed not to be. This TTL answers a question
+// revalidation can never answer — "is any device still actually here to receive pushes at all" —
+// since a token can keep passing feedTokenHasAccess indefinitely even after its owner uninstalled
+// the app or a browser silently dropped the subscription. Revalidation's successful path
+// deliberately preserves this TTL rather than resetting it on every check, specifically so a
+// long-abandoned-but-still-access-valid registration still expires on schedule instead of being
+// kept alive forever by revalidation alone.
 export const DEFAULT_TOKENS_TTL_DAYS = 30;
 
 // The 'members' Channel bundles two distinct feeds under one push-registration grouping.

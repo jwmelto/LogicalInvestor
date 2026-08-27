@@ -90,12 +90,12 @@ interface ChannelState {
   stats: RunStats;
   seen: Partial<Record<FeedKey, string[]>>;
   daily: DailyStats;
-  // ET date string of the last time this channel's TOKENS were scanned for stale registrations
-  // to enqueue onto VALIDATION_QUEUE (see shouldSweepAccess) — undefined means never scanned.
-  // Gates the scan itself, not the validation — the scan is cheap (KV list only, no fetch), so
-  // it's safe to gate loosely; the actual feedTokenHasAccess fetches happen later, in bounded
-  // queue() consumer batches, never in this invocation.
-  lastValidationEnqueueDate?: string;
+  // Epoch milliseconds of the last time this channel's TOKENS were scanned for stale
+  // registrations to enqueue onto VALIDATION_QUEUE (see needsRevalidation) — undefined means
+  // never scanned. Gates the scan itself, not the validation — the scan is cheap (KV list only,
+  // no fetch), so imprecision here is free; the actual feedTokenHasAccess fetches happen later,
+  // in bounded queue() consumer batches, never in this invocation.
+  lastValidationEnqueueDate?: number;
 }
 
 function emptyDaily(date: string): DailyStats {
@@ -106,23 +106,19 @@ function emptyRunStats(): RunStats {
   return { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 };
 }
 
-// Pure so it's directly testable. Gates a channel's stale-registration scan
-// (ChannelState.lastValidationEnqueueDate) to once per ET calendar day — see issue #86. The scan
-// itself makes no fetch() calls (just a KV list), so firing an extra time near a calendar-day
-// boundary costs nothing; a calendar-day string is the right representation for "did we already
-// do the free thing today," same as the existing DailyStats/advanceDaily pattern.
-export function shouldSweepAccess(lastDate: string | undefined, todayET: string): boolean {
-  return lastDate !== todayET;
-}
-
-// A real registered device is revalidated at most this often.
+// A registered device (and a channel's stale-registration scan) is revalidated at most this
+// often.
 const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-// Pure so it's directly testable. Gates whether one specific registration
-// (TokenMeta.lastValidated) is stale enough to enqueue for revalidation — see issue #86. Unlike
-// shouldSweepAccess's calendar-day comparison, this is a real elapsed-time check: enqueueing
-// costs a real subrequest in the queue consumer, so two revalidations minutes apart shouldn't
-// both fire just because they straddle a calendar-day boundary.
+// Pure so it's directly testable. One real elapsed-time check, reused for two different gates
+// (issue #86): ChannelState.lastValidationEnqueueDate (has this channel's cheap TOKENS scan run
+// in the last ~24h) and TokenMeta.lastValidated (has this specific registration's feedToken been
+// confirmed valid in the last ~24h). A calendar-day string was tried first and rejected — see
+// project memory feedback_consistency_not_a_benefit — since it treats two events minutes apart as
+// both "due" whenever they straddle a calendar-day boundary. An epoch timestamp carries strictly
+// more information than a date string (it can always be converted to a calendar day when that
+// specific reasoning is actually needed, e.g. DailyStats/advanceDaily's daily-bucket counters —
+// the reverse conversion is lossy), so there's no case where the string was the better choice.
 export function needsRevalidation(lastValidated: number | undefined, nowMs: number): boolean {
   return lastValidated === undefined || nowMs - lastValidated >= VALIDATION_INTERVAL_MS;
 }
@@ -806,10 +802,11 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // revoked subscriber can keep receiving pushes for up to a day before being pruned, instead of
   // immediately — but this now holds at any device count, not just up to roughly the 40s.
   //
-  // Gated at two levels: lastValidationEnqueueDate (once per ET day per channel) avoids scanning
+  // Gated at two levels: lastValidationEnqueueDate (once per ~24h per channel) avoids scanning
   // TOKENS at all on every tick, and each registration's own lastValidated (stamped here and at
-  // registration time) avoids re-enqueueing a device that was already validated earlier today.
-  const doValidationEnqueue = shouldSweepAccess(state?.lastValidationEnqueueDate, todayET);
+  // registration time) avoids re-enqueueing a device that was already validated recently.
+  const nowMs = now.getTime();
+  const doValidationEnqueue = needsRevalidation(state?.lastValidationEnqueueDate, nowMs);
   const validationMessages: MessageSendRequest<ValidationQueueMessage>[] = [];
   const buckets = new Map<string, Bucket>();
   let cursor: string | undefined;
@@ -822,7 +819,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       // (a token can keep Members access while losing Stock or Options access independently), so
       // channel travels with the message and the consumer always checks the channel-appropriate
       // URL (feedTokenHasAccess picks it from CHANNEL_FEEDS[channel]), never a shared/inferred one.
-      if (doValidationEnqueue && meta?.feedToken && needsRevalidation(meta.lastValidated, now.getTime())) {
+      if (doValidationEnqueue && meta?.feedToken && needsRevalidation(meta.lastValidated, nowMs)) {
         validationMessages.push({ body: { channel, tokenKey: key.name, meta, expiration: key.expiration } });
       }
       const { filter, authors, minLength, kind, subscription } = meta ?? {};
@@ -849,7 +846,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     } catch { /* enqueueing today's validation sweep failed; notifications below are unaffected */ }
   }
 
-  const lastValidationEnqueueDate = doValidationEnqueue ? todayET : state?.lastValidationEnqueueDate;
+  const lastValidationEnqueueDate = doValidationEnqueue ? nowMs : state?.lastValidationEnqueueDate;
 
   if (buckets.size === 0) {
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
