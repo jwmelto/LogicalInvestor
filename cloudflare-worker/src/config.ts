@@ -6,12 +6,7 @@ import { FeedKeys, type Channel, type FeedKey } from '@li/core';
 // provided value is not of type 'function or ExportedHandler'."
 //
 // index.ts's exported functions (registerDevice, channelFromCron, etc.) are unaffected. Only
-// these two non-function values needed to move.
-
-// The app re-registers every push channel unconditionally on every cold launch (FeedContext), so
-// a registration that stops renewing means the device is gone (uninstalled, or never called
-// /unregister). This TTL just needs slack beyond normal usage gaps — weeks, not days — see #60.
-export const DEFAULT_TOKENS_TTL_DAYS = 30;
+// this non-function value needed to move.
 
 // The 'members' Channel bundles two distinct feeds under one push-registration grouping.
 // feedTokenHasAccess() in index.ts always checks index [0] of a channel's feed list, so order is

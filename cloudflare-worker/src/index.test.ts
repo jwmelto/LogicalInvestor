@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily } from './index';
-import { CHANNEL_FEEDS, DEFAULT_TOKENS_TTL_DAYS } from './config';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
+import { CHANNEL_FEEDS } from './config';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
 
 const FK = FeedKeys;
-const DEFAULT_TOKENS_TTL_SECONDS = DEFAULT_TOKENS_TTL_DAYS * 60 * 60 * 24;
 
 const ACTIONABLE_AUTHORS = ['sean hyman'];
 
@@ -303,11 +302,10 @@ describe('findAndStorePollToken', () => {
 });
 
 describe('registerDevice (logic, plain-object inputs)', () => {
-  function mockEnv(tokensTtlDays?: string) {
+  function mockEnv() {
     return {
       TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
       STATE: { put: vi.fn().mockResolvedValue(undefined) },
-      TOKENS_TTL_DAYS: tokensTtlDays,
     } as any;
   }
 
@@ -325,15 +323,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
-  });
-
-  it('honors TOKENS_TTL_DAYS when set, overriding the default', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
-    const env = mockEnv('7');
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
-    expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: 7 * 60 * 60 * 24 });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
   });
 
   it('lowercases and trims authors before storing', async () => {
@@ -341,7 +331,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: expect.any(Number) } });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
@@ -352,7 +342,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
@@ -429,7 +419,7 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
   });
 
   it('rejects an empty-string feed_token', async () => {
@@ -471,7 +461,7 @@ describe('/register endpoint validation — webpush subscription path', () => {
     expect(env.TOKENS.put).toHaveBeenCalledWith(
       'members:web:https://fcm.googleapis.com/fcm/send/abc',
       '1',
-      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys } }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
+      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: expect.any(Number) } },
     );
   });
 
@@ -685,84 +675,178 @@ describe('CORS', () => {
   });
 });
 
-describe('runChannel (via scheduled) — stale registration pruning', () => {
+describe('runChannel (via scheduled) — enqueues stale registrations for revalidation (issue #86)', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
-  function mockEnv() {
+  function mockEnv(keys: { name: string; metadata: Record<string, unknown> }[]) {
     const stateStore: Record<string, string | null> = {
       'run:options': runState({ optionsInsights: ['old-guid'] }),
       'poll:options': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
-    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
-      TOKENS: {
-        list: vi.fn().mockResolvedValue({
-          keys: [
-            { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
-            { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
-          ],
-          list_complete: true,
-        }),
-        delete: tokensDelete,
-      },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn().mockResolvedValue(undefined) },
+      VALIDATION_QUEUE: { sendBatch },
     } as any;
-    return { env, statePut, tokensDelete };
+    return { env, stateStore, sendBatch };
   }
 
-  it('prunes a device whose feedToken lost access, and excludes it from the push', async () => {
-    const { env, tokensDelete } = mockEnv();
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes('feed_token=poll-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      }
-      if (url.includes('feed_token=good-device-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-      }
-      if (url.includes('feed_token=bad-device-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
-      }
+  const pushFetch = (extra: (url: string) => { ok: boolean; text?: () => Promise<string> } | undefined = () => undefined) =>
+    vi.fn((url: string, _init?: RequestInit) => {
+      const custom = extra(url);
+      if (custom) return Promise.resolve(custom);
+      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
     });
+
+  it('notifies every registered device regardless of stored access state — validation is fully decoupled from the notify path', async () => {
+    const { env } = mockEnv([
+      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
+      { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
+    ]);
+    const fetchMock = pushFetch();
     vi.stubGlobal('fetch', fetchMock);
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(tokensDelete).toHaveBeenCalledWith('options:bad-push');
-
+    // No feedTokenHasAccess fetch happens inline anymore — only the poll fetch and the push send.
+    expect(fetchMock.mock.calls.every(([url]) => (url as string).includes('feed_token=poll-token') || (url as string).includes('exp.host'))).toBe(true);
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
-    const body = JSON.parse(pushCall![1]!.body as string);
-    expect(body.flatMap((m: { to: string[] }) => m.to)).toEqual(['good-push']);
-  });
-
-  it('does not prune a device on a transient access-check failure (issue #42)', async () => {
-    const { env, tokensDelete } = mockEnv();
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes('feed_token=poll-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      }
-      if (url.includes('feed_token=good-device-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-      }
-      if (url.includes('feed_token=bad-device-token')) {
-        return Promise.reject(new Error('network blip'));
-      }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
-
-    expect(tokensDelete).not.toHaveBeenCalled();
-
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
     const body = JSON.parse(pushCall![1]!.body as string);
     expect(body.flatMap((m: { to: string[] }) => m.to).sort()).toEqual(['bad-push', 'good-push']);
+  });
+
+  it('enqueues one VALIDATION_QUEUE message per registration with a feedToken, each carrying its own channel', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
+      { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
+    ]);
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).toHaveBeenCalledTimes(1);
+    const [messages] = sendBatch.mock.calls[0];
+    expect(messages).toHaveLength(2);
+    expect(messages.map((m: any) => m.body.tokenKey).sort()).toEqual(['options:bad-push', 'options:good-push']);
+    expect(messages.every((m: any) => m.body.channel === 'options')).toBe(true);
+  });
+
+  it('does not enqueue a registration validated less than 24h ago', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: 'options:fresh-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'fresh-token', lastValidated: Date.now() - 60_000 } },
+    ]);
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a registration last validated more than 24h ago', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: 'options:stale-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'stale-token', lastValidated: Date.now() - 25 * 60 * 60 * 1000 } },
+    ]);
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).toHaveBeenCalledTimes(1);
+    const [messages] = sendBatch.mock.calls[0];
+    expect(messages[0].body.tokenKey).toBe('options:stale-push');
+  });
+
+  it('does not enqueue at all once this channel has already been scanned in the last ~24h', async () => {
+    const { env, stateStore, sendBatch } = mockEnv([
+      { name: 'options:never-validated', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
+    ]);
+    stateStore['run:options'] = JSON.stringify({
+      ...JSON.parse(runState({ optionsInsights: ['old-guid'] })),
+      lastValidationEnqueueDate: Date.now() - 60_000,
+    });
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('queue() — token validation (issue #86)', () => {
+  function messageBatch(bodies: { channel: string; tokenKey: string; meta: Record<string, unknown> }[]): any {
+    return { queue: 'token-validation', messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
+  }
+
+  it('stamps lastValidated on a confirmed-access token, without setting any expirationTtl', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const tokensPut = vi.fn().mockResolvedValue(undefined);
+    const env = { TOKENS: { put: tokensPut, delete: vi.fn() } } as any;
+    const meta = { feedToken: 'valid-token', filter: 'length', authors: [], minLength: 0 };
+
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta }]), env);
+
+    expect(tokensPut).toHaveBeenCalledTimes(1);
+    const [key, value, opts] = tokensPut.mock.calls[0];
+    expect(key).toBe('options:push1');
+    expect(value).toBe('1');
+    const { lastValidated, ...restMetadata } = opts.metadata;
+    expect(restMetadata).toEqual(meta);
+    // A real epoch-millisecond stamp taken during this call, not a calendar-day string.
+    expect(lastValidated).toBeGreaterThan(Date.now() - 5000);
+    expect(lastValidated).toBeLessThanOrEqual(Date.now());
+    // Registrations don't expire on a timer — cleanup relies entirely on gone-detection and
+    // access-revalidation (issue #60), so a successful validation never sets expirationTtl.
+    expect(opts.expirationTtl).toBeUndefined();
+  });
+
+  it('deletes a token whose access was revoked, without stamping lastValidated', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const tokensPut = vi.fn().mockResolvedValue(undefined);
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = { TOKENS: { put: tokensPut, delete: tokensDelete } } as any;
+
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta: { feedToken: 'revoked-token', filter: 'length', authors: [], minLength: 0 } }]), env);
+
+    expect(tokensDelete).toHaveBeenCalledWith('options:push1');
+    expect(tokensPut).not.toHaveBeenCalled();
+  });
+
+  it('leaves a token untouched on a transient access-check failure, so it is retried next sweep', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
+    const tokensPut = vi.fn().mockResolvedValue(undefined);
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = { TOKENS: { put: tokensPut, delete: tokensDelete } } as any;
+
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta: { feedToken: 'device-token', filter: 'length', authors: [], minLength: 0 } }]), env);
+
+    expect(tokensDelete).not.toHaveBeenCalled();
+    expect(tokensPut).not.toHaveBeenCalled();
+  });
+
+  it('validates a stock registration against the Stock Insights URL, not Members Forum or Options Insights', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { TOKENS: { put: vi.fn().mockResolvedValue(undefined), delete: vi.fn() } } as any;
+
+    await worker.queue(messageBatch([{ channel: 'stock', tokenKey: 'stock:push1', meta: { feedToken: 'shared-token', filter: 'length', authors: [], minLength: 0 } }]), env);
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(CHANNEL_FEEDS.stock[0].url));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining(CHANNEL_FEEDS.options[0].url));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining(CHANNEL_FEEDS.members[0].url));
+  });
+
+  it('acks every message regardless of outcome, so Cloudflare does not auto-retry it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = { TOKENS: { put: vi.fn().mockResolvedValue(undefined), delete: vi.fn() } } as any;
+    const batch = messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta: { feedToken: 'device-token', filter: 'length', authors: [], minLength: 0 } }]);
+
+    await worker.queue(batch, env);
+
+    expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1053,7 +1137,7 @@ describe('runChannel — web push queuing', () => {
 
 describe('queue() — web push delivery', () => {
   function messageBatch(bodies: { channel: string; subscription: typeof webpushSubscription; title: string; body: string; url?: string }[]): any {
-    return { messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
+    return { queue: 'webpush-notifications', messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
   }
 
   it('sends a webpush notification for a queued message, and acks it', async () => {
@@ -1108,6 +1192,21 @@ describe('queue() — web push delivery', () => {
     ]), env)).resolves.not.toThrow();
 
     expect(fetchMock).toHaveBeenCalledWith(WEBPUSH_ENDPOINT, expect.anything()); // second message still sent
+  });
+});
+
+describe('queue() — unrecognized queue name', () => {
+  it('acks every message without acting on it, rather than misrouting into either handler', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const ack = vi.fn();
+    const batch = { queue: 'some-future-queue', messages: [{ body: { unexpected: 'shape' }, ack }] } as any;
+    const env = { ...VAPID_ENV, TOKENS: { put: vi.fn(), delete: vi.fn() } } as any;
+
+    await expect(worker.queue(batch, env)).resolves.not.toThrow();
+
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled(); // neither handler's fetch logic ran
   });
 });
 
@@ -1381,6 +1480,30 @@ describe('advanceDaily', () => {
     const yesterday = advanceDaily(undefined, '2026-01-01', stats());
     const today = advanceDaily(yesterday, '2026-01-02', stats({ itemsFetched: 1, numNewItems: 1, sent: 0 }));
     expect(today).toEqual({ date: '2026-01-02', runs: 1, itemsFetched: 1, numNewItems: 1, sent: 0 });
+  });
+});
+
+describe('needsRevalidation', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it('needs revalidation when never validated before', () => {
+    expect(needsRevalidation(undefined, Date.now())).toBe(true);
+  });
+  it('does not need revalidation less than 24h since the last one', () => {
+    const now = Date.now();
+    expect(needsRevalidation(now - DAY_MS + 1000, now)).toBe(false);
+  });
+  it('needs revalidation again once 24h have elapsed', () => {
+    const now = Date.now();
+    expect(needsRevalidation(now - DAY_MS, now)).toBe(true);
+  });
+  // Two timestamps a few minutes apart, straddling midnight, must not both read as "needs
+  // revalidation" just because the calendar date changed — that was the exact bug in the
+  // calendar-date-string version this replaced.
+  it('does not treat timestamps minutes apart as needing revalidation, even across a calendar-day boundary', () => {
+    const justBeforeMidnight = new Date('2026-01-01T23:58:00-05:00').getTime();
+    const justAfterMidnight = new Date('2026-01-02T00:02:00-05:00').getTime();
+    expect(needsRevalidation(justBeforeMidnight, justAfterMidnight)).toBe(false);
   });
 });
 

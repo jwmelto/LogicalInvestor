@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
-import { DEFAULT_TOKENS_TTL_DAYS, CHANNEL_FEEDS } from './config';
+import { CHANNEL_FEEDS } from './config';
 
 function toFilterItem(item: RssItem): FilterItem {
   return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
@@ -11,6 +11,7 @@ export interface Env {
   TOKENS: KVNamespace;
   STATE: KVNamespace;
   WEBPUSH_QUEUE: Queue<WebPushQueueMessage>;
+  VALIDATION_QUEUE: Queue<ValidationQueueMessage>;
   FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
@@ -21,7 +22,6 @@ export interface Env {
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
-  TOKENS_TTL_DAYS?: string;         // days a TOKENS registration survives without renewal, default "30"
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
   VAPID_PRIVATE_KEY: string;        // secret — set via: wrangler secret put VAPID_PRIVATE_KEY
@@ -32,10 +32,6 @@ export interface Env {
   HEARTBEAT_URL_MEMBERS?: string;
   HEARTBEAT_URL_STOCK?: string;
   HEARTBEAT_URL_OPTIONS?: string;
-}
-
-function tokensTtlSeconds(env: Pick<Env, 'TOKENS_TTL_DAYS'>): number {
-  return parseInt(env.TOKENS_TTL_DAYS ?? String(DEFAULT_TOKENS_TTL_DAYS), 10) * 60 * 60 * 24;
 }
 
 // filter/authors/minLength are required on every registration. feedToken is optional here only
@@ -50,6 +46,13 @@ interface TokenMeta {
   minLength?: number;
   kind?: 'webpush';
   subscription?: PushSubscription;
+  // Epoch milliseconds of the last time this specific registration's feedToken was confirmed to
+  // still have access to its channel — see ValidationQueueMessage/needsRevalidation. Set at
+  // registration time (access was just verified then) and after each successful validation. A
+  // real elapsed-time value, not a calendar-day string: two revalidations minutes apart
+  // shouldn't both fire just because they straddle a calendar-day boundary, since each one that
+  // does fire costs a real subrequest in the queue consumer.
+  lastValidated?: number;
 }
 
 interface RunStats {
@@ -82,6 +85,12 @@ interface ChannelState {
   stats: RunStats;
   seen: Partial<Record<FeedKey, string[]>>;
   daily: DailyStats;
+  // Epoch milliseconds of the last time this channel's TOKENS were scanned for stale
+  // registrations to enqueue onto VALIDATION_QUEUE (see needsRevalidation) — undefined means
+  // never scanned. Gates the scan itself, not the validation — the scan is cheap (KV list only,
+  // no fetch), so imprecision here is free; the actual feedTokenHasAccess fetches happen later,
+  // in bounded queue() consumer batches, never in this invocation.
+  lastValidationEnqueueDate?: number;
 }
 
 function emptyDaily(date: string): DailyStats {
@@ -90,6 +99,23 @@ function emptyDaily(date: string): DailyStats {
 
 function emptyRunStats(): RunStats {
   return { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 };
+}
+
+// A registered device (and a channel's stale-registration scan) is revalidated at most this
+// often.
+const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// Pure so it's directly testable. One real elapsed-time check, reused for two different gates
+// (issue #86): ChannelState.lastValidationEnqueueDate (has this channel's cheap TOKENS scan run
+// in the last ~24h) and TokenMeta.lastValidated (has this specific registration's feedToken been
+// confirmed valid in the last ~24h). A calendar-day string was tried first and rejected: it
+// treats two events minutes apart as both "due" whenever they straddle a calendar-day boundary.
+// An epoch timestamp carries strictly more information than a date string — it can always be
+// converted to a calendar day when that specific reasoning is actually needed, e.g.
+// DailyStats/advanceDaily's daily-bucket counters, while the reverse conversion is lossy — so
+// there's no case where the string was the better choice.
+export function needsRevalidation(lastValidated: number | undefined, nowMs: number): boolean {
+  return lastValidated === undefined || nowMs - lastValidated >= VALIDATION_INTERVAL_MS;
 }
 
 // Pure so it's directly testable. Resets the rolling counters when `todayET` doesn't match the
@@ -234,27 +260,77 @@ export default {
     await runChannel(channel, env, event);
   },
 
-  // Drains WEBPUSH_QUEUE, bounded per invocation by wrangler.toml's consumer max_batch_size —
-  // this is what keeps webpush fan-out under the 50-subrequest-per-invocation cap regardless of
-  // how many (subscriber, item) pairs a busy poll queues up. Every message is explicitly ack'd,
-  // success or failure: Cloudflare Queues auto-retries any message that isn't explicitly ack'd
-  // or retry'd, and a delayed re-send of a time-sensitive forum alert (possibly minutes or
-  // hours later, once max_retries is exhausted) is worse than a missed one — same fire-and-
-  // forget tolerance the rest of this file already applies to push sends.
-  async queue(batch: MessageBatch<WebPushQueueMessage>, env: Env): Promise<void> {
-    const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
-    await Promise.all(batch.messages.map(async (msg) => {
-      const { channel, subscription, title, body, url } = msg.body;
-      try {
-        const result = await sendWebPush(subscription, { data: { title, body, url } }, vapid);
-        // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no longer
-        // exists" signal. Prune it now, or expired subscriptions accumulate forever.
-        if (result.gone) await env.TOKENS.delete(`${channel}:web:${subscription.endpoint}`);
-      } catch { /* one message's failure must not affect the rest of the batch */ }
-      finally { msg.ack(); }
-    }));
+  // Drains WEBPUSH_QUEUE and VALIDATION_QUEUE. Cloudflare gives each consumer invocation a batch
+  // from a single queue — batch.queue says which — so one export dispatches both, matching
+  // Cloudflare's own documented multi-queue-single-consumer pattern rather than running two
+  // separate Worker scripts for what's otherwise identical batching/ack machinery. Both known
+  // queue names are matched explicitly, not one-if-else-drop-through: a batch from neither
+  // (a queue renamed on one side of wrangler.toml but not the other, say) must not silently get
+  // decoded as the wrong message shape.
+  async queue(batch: MessageBatch<WebPushQueueMessage> | MessageBatch<ValidationQueueMessage>, env: Env): Promise<void> {
+    if (batch.queue === WEBPUSH_QUEUE_NAME) {
+      await drainWebPushQueue(batch as MessageBatch<WebPushQueueMessage>, env);
+    } else if (batch.queue === VALIDATION_QUEUE_NAME) {
+      await drainValidationQueue(batch as MessageBatch<ValidationQueueMessage>, env);
+    } else {
+      // Unreachable given wrangler.toml's consumer config today. Ack rather than silently drop
+      // if it ever happens anyway — an un-acked message retries forever, and there's no handler
+      // that would ever know what to do with it.
+      batch.messages.forEach((msg) => msg.ack());
+    }
   },
 };
+
+// Queue names — must match wrangler.toml's queues.consumers[].queue values exactly; that's the
+// only thing batch.queue is compared against above.
+const WEBPUSH_QUEUE_NAME = 'webpush-notifications';
+const VALIDATION_QUEUE_NAME = 'token-validation';
+
+// Shared by both queue handlers below rather than duplicated in each: one message's failure must
+// not affect the rest of the batch, and every message is explicitly ack'd regardless of outcome
+// — Cloudflare Queues auto-retries any message that isn't explicitly ack'd or retry'd, and a
+// delayed re-send of stale queue content (minutes or hours later, once max_retries is exhausted)
+// is worse than a missed one, the same fire-and-forget tolerance this file already applies to
+// push sends generally.
+async function drainQueueSafely<Body>(batch: MessageBatch<Body>, handle: (body: Body) => Promise<void>): Promise<void> {
+  await Promise.all(batch.messages.map(async (msg) => {
+    try {
+      await handle(msg.body);
+    } catch { /* one message's failure must not affect the rest of the batch */ }
+    finally { msg.ack(); }
+  }));
+}
+
+// Bounded per invocation by wrangler.toml's consumer max_batch_size — this is what keeps webpush
+// fan-out under the 50-subrequest-per-invocation cap regardless of how many (subscriber, item)
+// pairs a busy poll queues up.
+async function drainWebPushQueue(batch: MessageBatch<WebPushQueueMessage>, env: Env): Promise<void> {
+  const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+  await drainQueueSafely(batch, async ({ channel, subscription, title, body, url }) => {
+    const result = await sendWebPush(subscription, { data: { title, body, url } }, vapid);
+    // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no longer exists"
+    // signal. Prune it now, or expired subscriptions accumulate forever.
+    if (result.gone) await env.TOKENS.delete(`${channel}:web:${subscription.endpoint}`);
+  });
+}
+
+// The actual feedTokenHasAccess fetch for a stale registration, decoupled from runChannel's
+// notify path entirely (see the enqueue side there, and ValidationQueueMessage, issue #86) — this
+// is what lets validation scale to any registered-device count without risking the 50-subrequest
+// cap, bounded the same way as webpush sends by wrangler.toml's consumer max_batch_size.
+async function drainValidationQueue(batch: MessageBatch<ValidationQueueMessage>, env: Env): Promise<void> {
+  await drainQueueSafely(batch, async ({ channel, tokenKey, meta }) => {
+    const access = meta.feedToken ? await feedTokenHasAccess(channel, meta.feedToken) : null;
+    if (access === false) {
+      await env.TOKENS.delete(tokenKey);
+    } else if (access === true) {
+      await env.TOKENS.put(tokenKey, '1', { metadata: { ...meta, lastValidated: Date.now() } satisfies TokenMeta });
+    }
+    // access === null: check itself failed (network blip, 5xx) — leave the registration
+    // untouched; only a definitive 401/403 proves access was actually revoked. Not stamping
+    // lastValidated means it's picked up again by the next day's scan.
+  });
+}
 
 // The registration page is served same-origin today, via this Worker's own Static Assets. A
 // browser never enforces CORS for a same-origin request, so this code is currently dormant. It
@@ -424,7 +500,7 @@ export interface RegisterParams {
 // no Request/env plumbing.
 export async function registerDevice(
   { channel, pushToken, subscription, filter, authors, minLength, feedToken }: RegisterParams,
-  env: Pick<Env, 'TOKENS' | 'STATE' | 'TOKENS_TTL_DAYS'>,
+  env: Pick<Env, 'TOKENS' | 'STATE'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
   if (access === null) {
@@ -435,14 +511,25 @@ export async function registerDevice(
   }
   await env.STATE.put(`poll:${channel}`, feedToken);
 
+  // lastValidated is stamped now, not left undefined — access was just confirmed above, so
+  // there's no need for the next validation sweep to immediately recheck a registration that's
+  // seconds old (see ValidationQueueMessage/needsRevalidation, issue #86).
+  const lastValidated = Date.now();
   // kind/subscription are only ever written for a webpush registration (see TokenMeta).
   // Omitting them entirely for an Expo registration keeps every pre-existing entry's shape
   // unchanged.
   const meta: TokenMeta = subscription
-    ? { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, kind: 'webpush', subscription }
-    : { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength };
+    ? { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, kind: 'webpush', subscription, lastValidated }
+    : { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, lastValidated };
   const kvKey = subscription ? `${channel}:web:${pushToken}` : `${channel}:${pushToken}`;
-  await env.TOKENS.put(kvKey, '1', { metadata: meta, expirationTtl: tokensTtlSeconds(env) });
+  // No expirationTtl: registrations don't expire on a timer. Cleanup relies entirely on
+  // gone-detection (drainWebPushQueue/drainValidationQueue prune on a confirmed-dead webpush
+  // endpoint) and access-revalidation (deletes once feedTokenHasAccess is confirmed false) — a
+  // time-based TTL was tried first (issue #60) and removed once those two mechanisms existed:
+  // it only ever protected a narrow gap neither one reaches (a channel with a dead device that
+  // never gets a real send attempted, on a feedToken whose WordPress access never lapses), judged
+  // not worth its ongoing cost for how rarely it would actually matter.
+  await env.TOKENS.put(kvKey, '1', { metadata: meta });
   return new Response('ok');
 }
 
@@ -552,6 +639,22 @@ export interface WebPushQueueMessage {
 // Cloudflare Queues caps sendBatch() at 100 messages per call.
 const QUEUE_SEND_BATCH_SIZE = 100;
 
+// One message = one (channel, registration) pair to revalidate — never one per feedToken value.
+// The same feedToken is registered separately per channel (one TOKENS entry each), and access is
+// genuinely per-channel: a token can retain Members access while losing Stock or Options access
+// independently. channel travels with every message specifically so the consumer always checks
+// the channel-appropriate URL (feedTokenHasAccess picks it from CHANNEL_FEEDS[channel]) — never
+// inferred or assumed shared across a token's other registrations.
+//
+// meta is a snapshot from the TOKENS.list() call that found this entry stale enough to enqueue —
+// the consumer needs the full metadata to rewrite the entry on a successful revalidation (KV
+// put() replaces metadata wholesale, no partial-patch API).
+export interface ValidationQueueMessage {
+  channel: Channel;
+  tokenKey: string;
+  meta: TokenMeta;
+}
+
 // Re-reads `daily` fresh from KV right before a write that follows slow work (bucket-building,
 // push-sending). A duplicate cron dispatch for the same channel can complete its own write in
 // that window; basing the next advanceDaily() call on a stale in-memory snapshot instead of a
@@ -610,6 +713,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   const claimedStats: RunStats = { ...(state?.stats ?? emptyRunStats()), lastRun: now.toISOString(), lastScheduledTime: event.scheduledTime };
   await env.STATE.put(runKey, JSON.stringify({
     stats: claimedStats, seen: state?.seen ?? {}, daily: state?.daily ?? emptyDaily(getETDate(now)),
+    lastValidationEnqueueDate: state?.lastValidationEnqueueDate,
   } satisfies ChannelState));
 
   const seenMap: Partial<Record<string, string[]>> = state?.seen ?? {};
@@ -670,32 +774,54 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (newItems.length === 0) {
     // The fetch loop above already ran (network I/O — "slow work"), so daily's base is re-read
     // fresh here rather than trusting the pre-fetch snapshot, same reasoning as the branches below.
+    // No validation scan happened — that only runs once the notify-worthy bucket-building loop
+    // below is reached — so lastValidationEnqueueDate carries forward unchanged.
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
-    await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
+    await env.STATE.put(runKey, JSON.stringify({
+      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate: state?.lastValidationEnqueueDate,
+    } satisfies ChannelState));
     return;
   }
 
+  // Access is only checked at registration time (registerDevice) otherwise. A subscription can
+  // lapse afterward, so devices are periodically revalidated — same signal findAndStorePollToken
+  // uses for stale tokens — to prune access-revoked registrations before they get another
+  // channel's worth of content pushed to them. This no longer happens inline here: it used to,
+  // gated to once per ET day per channel, but even gated to once/day the recheck itself was still
+  // one synchronous fetch per device in a single invocation, so a channel with enough registered
+  // devices could still exceed the free plan's 50-subrequest-per-invocation cap on the one tick
+  // where the sweep ran — throwing and aborting the whole tick's notifications for everyone on
+  // the channel, not just the overflow devices (issue #86).
+  //
+  // Instead, this loop only collects which registrations are stale enough to revalidate — no
+  // fetch() calls, so no subrequest cost regardless of device count — and hands them to
+  // VALIDATION_QUEUE below. The actual feedTokenHasAccess fetch happens in the queue() consumer,
+  // in its own invocation with its own subrequest budget, bounded by wrangler.toml's consumer
+  // max_batch_size the same way webpush sends are. Real tradeoff, unchanged from before: a
+  // revoked subscriber can keep receiving pushes for up to a day before being pruned, instead of
+  // immediately — but this now holds at any device count, not just up to roughly the 40s.
+  //
+  // Gated at two levels: lastValidationEnqueueDate (once per ~24h per channel) avoids scanning
+  // TOKENS at all on every tick, and each registration's own lastValidated (stamped here and at
+  // registration time) avoids re-enqueueing a device that was already validated recently.
+  const nowMs = now.getTime();
+  const doValidationEnqueue = needsRevalidation(state?.lastValidationEnqueueDate, nowMs);
+  const validationMessages: MessageSendRequest<ValidationQueueMessage>[] = [];
   const buckets = new Map<string, Bucket>();
   let cursor: string | undefined;
   do {
     const page = await env.TOKENS.list<TokenMeta>({ prefix: `${channel}:`, cursor });
     for (const key of page.keys) {
-      // Access is only checked at registration time (registerDevice). A subscription can lapse
-      // afterward, so re-verify here — same signal findAndStorePollToken uses for stale tokens —
-      // and prune dead registrations before they get another channel's worth of content pushed
-      // to them. metadata comes free with the list() call above, so this adds no extra KV reads;
-      // only an HTTP fetch per device, and only when there's new content to notify about.
-      const deviceFeedToken = key.metadata?.feedToken;
-      if (deviceFeedToken) {
-        const access = await feedTokenHasAccess(channel, deviceFeedToken);
-        if (access === false) {
-          await env.TOKENS.delete(key.name);
-          continue;
-        }
-        // access === null: check itself failed (network blip, 5xx) — leave the registration
-        // and keep notifying; only a definitive 401/403 proves access was actually revoked.
+      const meta = key.metadata;
+      // One message per (channel, registration) pair — never merged across channels. The same
+      // feedToken can be registered separately per channel, and access is genuinely per-channel
+      // (a token can keep Members access while losing Stock or Options access independently), so
+      // channel travels with the message and the consumer always checks the channel-appropriate
+      // URL (feedTokenHasAccess picks it from CHANNEL_FEEDS[channel]), never a shared/inferred one.
+      if (doValidationEnqueue && meta?.feedToken && needsRevalidation(meta.lastValidated, nowMs)) {
+        validationMessages.push({ body: { channel, tokenKey: key.name, meta } });
       }
-      const { filter, authors, minLength, kind, subscription } = key.metadata ?? {};
+      const { filter, authors, minLength, kind, subscription } = meta ?? {};
       if (!filter || authors === undefined || minLength === undefined) continue; // pre-redesign entry — skip until it re-registers
       // Devices sharing filter+authors+minLength get one shared eligibility check per item below
       // instead of one per device — negligible cost even at hundreds of distinct buckets.
@@ -711,9 +837,21 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
 
+  if (validationMessages.length > 0) {
+    try {
+      for (let i = 0; i < validationMessages.length; i += QUEUE_SEND_BATCH_SIZE) {
+        await env.VALIDATION_QUEUE.sendBatch(validationMessages.slice(i, i + QUEUE_SEND_BATCH_SIZE));
+      }
+    } catch { /* enqueueing today's validation sweep failed; notifications below are unaffected */ }
+  }
+
+  const lastValidationEnqueueDate = doValidationEnqueue ? nowMs : state?.lastValidationEnqueueDate;
+
   if (buckets.size === 0) {
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
-    await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
+    await env.STATE.put(runKey, JSON.stringify({
+      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate,
+    } satisfies ChannelState));
     return;
   }
 
@@ -774,7 +912,9 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
 
   const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
-  await env.STATE.put(runKey, JSON.stringify({ stats: runStats, seen: seenMap, daily } satisfies ChannelState));
+  await env.STATE.put(runKey, JSON.stringify({
+    stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate,
+  } satisfies ChannelState));
 }
 
 export { matchesFilter, stripReplyPrefix } from '@li/core';
