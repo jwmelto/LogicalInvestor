@@ -65,3 +65,20 @@ queue = "webpush-notifications"
 # subrequests); raise max_retries or lower max_batch_size if that shows up in practice.
 max_batch_size = 45
 max_retries = 3
+
+# Per-device access revalidation, decoupled from the polling cron's own notify path (issue #86).
+# runChannel only enqueues here (cheap: KV list, no fetch); this queue's consumer does the actual
+# feedTokenHasAccess fetch, one per message, in its own invocation with its own subrequest budget
+# — the same pattern as webpush-notifications above, applied to validation instead of sends. Run
+# `wrangler queues create token-validation` once before the first deploy that references this
+# binding.
+[[queues.producers]]
+queue = "token-validation"
+binding = "VALIDATION_QUEUE"
+
+[[queues.consumers]]
+queue = "token-validation"
+# Same reasoning as webpush-notifications' consumer above: 1 fetch per message, occasionally 1 KV
+# put/delete, kept under the free plan's 50-subrequest-per-invocation cap.
+max_batch_size = 45
+max_retries = 3

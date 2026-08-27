@@ -325,7 +325,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('honors TOKENS_TTL_DAYS when set, overriding the default', async () => {
@@ -333,7 +333,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv('7');
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: 7 * 60 * 60 * 24 });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: 7 * 60 * 60 * 24 });
   });
 
   it('lowercases and trims authors before storing', async () => {
@@ -341,7 +341,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
@@ -352,7 +352,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
@@ -429,7 +429,7 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200 }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('rejects an empty-string feed_token', async () => {
@@ -471,7 +471,7 @@ describe('/register endpoint validation — webpush subscription path', () => {
     expect(env.TOKENS.put).toHaveBeenCalledWith(
       'members:web:https://fcm.googleapis.com/fcm/send/abc',
       '1',
-      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys } }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
+      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
     );
   });
 
@@ -685,167 +685,164 @@ describe('CORS', () => {
   });
 });
 
-describe('runChannel (via scheduled) — stale registration pruning', () => {
+describe('runChannel (via scheduled) — enqueues stale registrations for revalidation (issue #86)', () => {
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
-  function mockEnv() {
+  function mockEnv(keys: { name: string; metadata: Record<string, unknown> }[]) {
     const stateStore: Record<string, string | null> = {
       'run:options': runState({ optionsInsights: ['old-guid'] }),
       'poll:options': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
-    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
-      TOKENS: {
-        list: vi.fn().mockResolvedValue({
-          keys: [
-            { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
-            { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
-          ],
-          list_complete: true,
-        }),
-        delete: tokensDelete,
-      },
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn().mockResolvedValue(undefined) },
+      VALIDATION_QUEUE: { sendBatch },
     } as any;
-    return { env, statePut, tokensDelete };
+    return { env, stateStore, sendBatch };
   }
 
-  it('prunes a device whose feedToken lost access, and excludes it from the push', async () => {
-    const { env, tokensDelete } = mockEnv();
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes('feed_token=poll-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      }
-      if (url.includes('feed_token=good-device-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-      }
-      if (url.includes('feed_token=bad-device-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
-      }
+  const pushFetch = (extra: (url: string) => { ok: boolean; text?: () => Promise<string> } | undefined = () => undefined) =>
+    vi.fn((url: string, _init?: RequestInit) => {
+      const custom = extra(url);
+      if (custom) return Promise.resolve(custom);
+      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
     });
+
+  it('notifies every registered device regardless of stored access state — validation is fully decoupled from the notify path', async () => {
+    const { env } = mockEnv([
+      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
+      { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
+    ]);
+    const fetchMock = pushFetch();
     vi.stubGlobal('fetch', fetchMock);
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(tokensDelete).toHaveBeenCalledWith('options:bad-push');
-
+    // No feedTokenHasAccess fetch happens inline anymore — only the poll fetch and the push send.
+    expect(fetchMock.mock.calls.every(([url]) => (url as string).includes('feed_token=poll-token') || (url as string).includes('exp.host'))).toBe(true);
     const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
-    const body = JSON.parse(pushCall![1]!.body as string);
-    expect(body.flatMap((m: { to: string[] }) => m.to)).toEqual(['good-push']);
-  });
-
-  it('does not prune a device on a transient access-check failure (issue #42)', async () => {
-    const { env, tokensDelete } = mockEnv();
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes('feed_token=poll-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      }
-      if (url.includes('feed_token=good-device-token')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-      }
-      if (url.includes('feed_token=bad-device-token')) {
-        return Promise.reject(new Error('network blip'));
-      }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
-
-    expect(tokensDelete).not.toHaveBeenCalled();
-
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
     const body = JSON.parse(pushCall![1]!.body as string);
     expect(body.flatMap((m: { to: string[] }) => m.to).sort()).toEqual(['bad-push', 'good-push']);
   });
+
+  it('enqueues one VALIDATION_QUEUE message per registration with a feedToken, each carrying its own channel', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
+      { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
+    ]);
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).toHaveBeenCalledTimes(1);
+    const [messages] = sendBatch.mock.calls[0];
+    expect(messages).toHaveLength(2);
+    expect(messages.map((m: any) => m.body.tokenKey).sort()).toEqual(['options:bad-push', 'options:good-push']);
+    expect(messages.every((m: any) => m.body.channel === 'options')).toBe(true);
+  });
+
+  it('does not enqueue a registration already validated today', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: 'options:fresh-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'fresh-token', lastValidated: TODAY_ET } },
+    ]);
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue at all once this channel has already been scanned today', async () => {
+    const { env, stateStore, sendBatch } = mockEnv([
+      { name: 'options:never-validated', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
+    ]);
+    stateStore['run:options'] = JSON.stringify({
+      ...JSON.parse(runState({ optionsInsights: ['old-guid'] })),
+      lastValidationEnqueueDate: TODAY_ET,
+    });
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).not.toHaveBeenCalled();
+  });
 });
 
-describe('runChannel — access-recheck sweep gating (issue #86)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
-  const itemWithAuthor = (guid: string, author: string) =>
-    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
-
-  function runStateWithSweep(lastAccessSweepDate: string | undefined): string {
-    return JSON.stringify({
-      stats: { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 },
-      seen: { optionsInsights: ['old-guid'] },
-      daily: { date: '1970-01-01', runs: 0, itemsFetched: 0, numNewItems: 0, sent: 0 },
-      lastAccessSweepDate,
-    });
+describe('queue() — token validation (issue #86)', () => {
+  function messageBatch(bodies: { channel: string; tokenKey: string; meta: Record<string, unknown>; expiration?: number }[]): any {
+    return { queue: 'token-validation', messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
   }
 
-  function mockEnv(lastAccessSweepDate: string | undefined) {
-    const stateStore: Record<string, string | null> = {
-      'run:options': runStateWithSweep(lastAccessSweepDate),
-      'poll:options': 'poll-token',
-    };
-    const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
-    const env = {
-      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
-      TOKENS: {
-        list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } }],
-          list_complete: true,
-        }),
-        delete: vi.fn().mockResolvedValue(undefined),
-      },
-    } as any;
-    return { env, stateStore };
-  }
+  it('stamps lastValidated and preserves the original expiration on a confirmed-access token', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const originalExpiration = nowSeconds + 10 * 24 * 60 * 60; // 10 days out
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const tokensPut = vi.fn().mockResolvedValue(undefined);
+    const env = { TOKENS: { put: tokensPut, delete: vi.fn() } } as any;
+    const meta = { feedToken: 'valid-token', filter: 'length', authors: [], minLength: 0 };
 
-  it('skips the per-device access recheck when already swept today', async () => {
-    const { env, stateStore } = mockEnv(TODAY_ET);
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta, expiration: originalExpiration }]), env);
 
-    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
-
-    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('feed_token=device-token'))).toBe(false);
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined(); // notification still sent despite skipping the recheck
-    const finalState = JSON.parse(stateStore['run:options']!);
-    expect(finalState.lastAccessSweepDate).toBe(TODAY_ET); // unchanged
+    expect(tokensPut).toHaveBeenCalledTimes(1);
+    const [key, value, opts] = tokensPut.mock.calls[0];
+    expect(key).toBe('options:push1');
+    expect(value).toBe('1');
+    expect(opts.metadata).toEqual({ ...meta, lastValidated: TODAY_ET });
+    // Preserves the original TTL clock rather than resetting it — within a few seconds of the
+    // originally-computed remaining TTL, not reset to a fresh full TOKENS_TTL_DAYS.
+    expect(opts.expirationTtl).toBeGreaterThan(10 * 24 * 60 * 60 - 5);
+    expect(opts.expirationTtl).toBeLessThanOrEqual(10 * 24 * 60 * 60);
   });
 
-  it('runs the per-device access recheck when never swept before, and records today\'s date', async () => {
-    const { env, stateStore } = mockEnv(undefined);
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      if (url.includes('feed_token=device-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+  it('deletes a token whose access was revoked, without stamping lastValidated', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
+    const tokensPut = vi.fn().mockResolvedValue(undefined);
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = { TOKENS: { put: tokensPut, delete: tokensDelete } } as any;
 
-    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta: { feedToken: 'revoked-token', filter: 'length', authors: [], minLength: 0 } }]), env);
 
-    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('feed_token=device-token'))).toBe(true);
-    const finalState = JSON.parse(stateStore['run:options']!);
-    expect(finalState.lastAccessSweepDate).toBe(TODAY_ET);
+    expect(tokensDelete).toHaveBeenCalledWith('options:push1');
+    expect(tokensPut).not.toHaveBeenCalled();
   });
 
-  it('runs the per-device access recheck again once the ET date rolls over', async () => {
-    const { env, stateStore } = mockEnv('1970-01-01');
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      if (url.includes('feed_token=device-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-    });
+  it('leaves a token untouched on a transient access-check failure, so it is retried next sweep', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
+    const tokensPut = vi.fn().mockResolvedValue(undefined);
+    const tokensDelete = vi.fn().mockResolvedValue(undefined);
+    const env = { TOKENS: { put: tokensPut, delete: tokensDelete } } as any;
+
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta: { feedToken: 'device-token', filter: 'length', authors: [], minLength: 0 } }]), env);
+
+    expect(tokensDelete).not.toHaveBeenCalled();
+    expect(tokensPut).not.toHaveBeenCalled();
+  });
+
+  it('validates a stock registration against the Stock Insights URL, not Members Forum or Options Insights', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
     vi.stubGlobal('fetch', fetchMock);
+    const env = { TOKENS: { put: vi.fn().mockResolvedValue(undefined), delete: vi.fn() } } as any;
 
-    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+    await worker.queue(messageBatch([{ channel: 'stock', tokenKey: 'stock:push1', meta: { feedToken: 'shared-token', filter: 'length', authors: [], minLength: 0 } }]), env);
 
-    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('feed_token=device-token'))).toBe(true);
-    const finalState = JSON.parse(stateStore['run:options']!);
-    expect(finalState.lastAccessSweepDate).toBe(TODAY_ET);
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(CHANNEL_FEEDS.stock[0].url));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining(CHANNEL_FEEDS.options[0].url));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining(CHANNEL_FEEDS.members[0].url));
+  });
+
+  it('acks every message regardless of outcome, so Cloudflare does not auto-retry it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
+    const env = { TOKENS: { put: vi.fn().mockResolvedValue(undefined), delete: vi.fn() } } as any;
+    const batch = messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta: { feedToken: 'device-token', filter: 'length', authors: [], minLength: 0 } }]);
+
+    await worker.queue(batch, env);
+
+    expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
   });
 });
 
