@@ -263,13 +263,21 @@ export default {
   // Drains WEBPUSH_QUEUE and VALIDATION_QUEUE. Cloudflare gives each consumer invocation a batch
   // from a single queue — batch.queue says which — so one export dispatches both, matching
   // Cloudflare's own documented multi-queue-single-consumer pattern rather than running two
-  // separate Worker scripts for what's otherwise identical batching/ack machinery.
+  // separate Worker scripts for what's otherwise identical batching/ack machinery. Both known
+  // queue names are matched explicitly, not one-if-else-drop-through: a batch from neither
+  // (a queue renamed on one side of wrangler.toml but not the other, say) must not silently get
+  // decoded as the wrong message shape.
   async queue(batch: MessageBatch<WebPushQueueMessage> | MessageBatch<ValidationQueueMessage>, env: Env): Promise<void> {
-    if (batch.queue === VALIDATION_QUEUE_NAME) {
+    if (batch.queue === WEBPUSH_QUEUE_NAME) {
+      await drainWebPushQueue(batch as MessageBatch<WebPushQueueMessage>, env);
+    } else if (batch.queue === VALIDATION_QUEUE_NAME) {
       await drainValidationQueue(batch as MessageBatch<ValidationQueueMessage>, env);
-      return;
+    } else {
+      // Unreachable given wrangler.toml's consumer config today. Ack rather than silently drop
+      // if it ever happens anyway — an un-acked message retries forever, and there's no handler
+      // that would ever know what to do with it.
+      batch.messages.forEach((msg) => msg.ack());
     }
-    await drainWebPushQueue(batch as MessageBatch<WebPushQueueMessage>, env);
   },
 };
 
@@ -278,25 +286,32 @@ export default {
 const WEBPUSH_QUEUE_NAME = 'webpush-notifications';
 const VALIDATION_QUEUE_NAME = 'token-validation';
 
-// Bounded per invocation by wrangler.toml's consumer max_batch_size — this is what keeps webpush
-// fan-out under the 50-subrequest-per-invocation cap regardless of how many (subscriber, item)
-// pairs a busy poll queues up. Every message is explicitly ack'd, success or failure: Cloudflare
-// Queues auto-retries any message that isn't explicitly ack'd or retry'd, and a delayed re-send
-// of a time-sensitive forum alert (possibly minutes or hours later, once max_retries is
-// exhausted) is worse than a missed one — same fire-and-forget tolerance the rest of this file
-// already applies to push sends.
-async function drainWebPushQueue(batch: MessageBatch<WebPushQueueMessage>, env: Env): Promise<void> {
-  const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+// Shared by both queue handlers below rather than duplicated in each: one message's failure must
+// not affect the rest of the batch, and every message is explicitly ack'd regardless of outcome
+// — Cloudflare Queues auto-retries any message that isn't explicitly ack'd or retry'd, and a
+// delayed re-send of stale queue content (minutes or hours later, once max_retries is exhausted)
+// is worse than a missed one, the same fire-and-forget tolerance this file already applies to
+// push sends generally.
+async function drainQueueSafely<Body>(batch: MessageBatch<Body>, handle: (body: Body) => Promise<void>): Promise<void> {
   await Promise.all(batch.messages.map(async (msg) => {
-    const { channel, subscription, title, body, url } = msg.body;
     try {
-      const result = await sendWebPush(subscription, { data: { title, body, url } }, vapid);
-      // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no longer
-      // exists" signal. Prune it now, or expired subscriptions accumulate forever.
-      if (result.gone) await env.TOKENS.delete(`${channel}:web:${subscription.endpoint}`);
+      await handle(msg.body);
     } catch { /* one message's failure must not affect the rest of the batch */ }
     finally { msg.ack(); }
   }));
+}
+
+// Bounded per invocation by wrangler.toml's consumer max_batch_size — this is what keeps webpush
+// fan-out under the 50-subrequest-per-invocation cap regardless of how many (subscriber, item)
+// pairs a busy poll queues up.
+async function drainWebPushQueue(batch: MessageBatch<WebPushQueueMessage>, env: Env): Promise<void> {
+  const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+  await drainQueueSafely(batch, async ({ channel, subscription, title, body, url }) => {
+    const result = await sendWebPush(subscription, { data: { title, body, url } }, vapid);
+    // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no longer exists"
+    // signal. Prune it now, or expired subscriptions accumulate forever.
+    if (result.gone) await env.TOKENS.delete(`${channel}:web:${subscription.endpoint}`);
+  });
 }
 
 // The actual feedTokenHasAccess fetch for a stale registration, decoupled from runChannel's
@@ -304,23 +319,17 @@ async function drainWebPushQueue(batch: MessageBatch<WebPushQueueMessage>, env: 
 // is what lets validation scale to any registered-device count without risking the 50-subrequest
 // cap, bounded the same way as webpush sends by wrangler.toml's consumer max_batch_size.
 async function drainValidationQueue(batch: MessageBatch<ValidationQueueMessage>, env: Env): Promise<void> {
-  await Promise.all(batch.messages.map(async (msg) => {
-    const { channel, tokenKey, meta } = msg.body;
-    try {
-      const access = meta.feedToken ? await feedTokenHasAccess(channel, meta.feedToken) : null;
-      if (access === false) {
-        await env.TOKENS.delete(tokenKey);
-      } else if (access === true) {
-        await env.TOKENS.put(tokenKey, '1', {
-          metadata: { ...meta, lastValidated: Date.now() } satisfies TokenMeta,
-        });
-      }
-      // access === null: check itself failed (network blip, 5xx) — leave the registration
-      // untouched; only a definitive 401/403 proves access was actually revoked. Not stamping
-      // lastValidated means it's picked up again by the next day's scan.
-    } catch { /* one message's failure must not affect the rest of the batch */ }
-    finally { msg.ack(); }
-  }));
+  await drainQueueSafely(batch, async ({ channel, tokenKey, meta }) => {
+    const access = meta.feedToken ? await feedTokenHasAccess(channel, meta.feedToken) : null;
+    if (access === false) {
+      await env.TOKENS.delete(tokenKey);
+    } else if (access === true) {
+      await env.TOKENS.put(tokenKey, '1', { metadata: { ...meta, lastValidated: Date.now() } satisfies TokenMeta });
+    }
+    // access === null: check itself failed (network blip, 5xx) — leave the registration
+    // untouched; only a definitive 401/403 proves access was actually revoked. Not stamping
+    // lastValidated means it's picked up again by the next day's scan.
+  });
 }
 
 // The registration page is served same-origin today, via this Worker's own Static Assets. A

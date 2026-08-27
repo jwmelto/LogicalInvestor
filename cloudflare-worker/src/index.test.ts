@@ -1137,7 +1137,7 @@ describe('runChannel — web push queuing', () => {
 
 describe('queue() — web push delivery', () => {
   function messageBatch(bodies: { channel: string; subscription: typeof webpushSubscription; title: string; body: string; url?: string }[]): any {
-    return { messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
+    return { queue: 'webpush-notifications', messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
   }
 
   it('sends a webpush notification for a queued message, and acks it', async () => {
@@ -1192,6 +1192,21 @@ describe('queue() — web push delivery', () => {
     ]), env)).resolves.not.toThrow();
 
     expect(fetchMock).toHaveBeenCalledWith(WEBPUSH_ENDPOINT, expect.anything()); // second message still sent
+  });
+});
+
+describe('queue() — unrecognized queue name', () => {
+  it('acks every message without acting on it, rather than misrouting into either handler', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const ack = vi.fn();
+    const batch = { queue: 'some-future-queue', messages: [{ body: { unexpected: 'shape' }, ack }] } as any;
+    const env = { ...VAPID_ENV, TOKENS: { put: vi.fn(), delete: vi.fn() } } as any;
+
+    await expect(worker.queue(batch, env)).resolves.not.toThrow();
+
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled(); // neither handler's fetch logic ran
   });
 });
 
