@@ -10,6 +10,7 @@ function toFilterItem(item: RssItem): FilterItem {
 export interface Env {
   TOKENS: KVNamespace;
   STATE: KVNamespace;
+  WEBPUSH_QUEUE: Queue<WebPushQueueMessage>;
   FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
@@ -202,8 +203,9 @@ export default {
   //     or { subscription: { endpoint, keys: { p256dh, auth } }, channel, filter, authors, minLength, feed_token }
   //   POST /unregister  { token, channel } or { subscription: { endpoint }, channel }
   //   POST /test-push   { token, channel, feed_token } or { subscription, channel, feed_token }
-  //     sends one immediate notification straight to this device, bypassing polling entirely —
-  //     for confirming a registration actually receives pushes.
+  //     bypasses polling entirely, to confirm a registration actually receives pushes. Expo
+  //     sends immediately; a webpush subscription is enqueued through the same WEBPUSH_QUEUE a
+  //     real alert uses, so 'ok' there means queued, not confirmed delivered.
   //
   //   token        — Expo push token (device identifier for APNs/FCM delivery), RN app only
   //   subscription — browser PushManager subscription object, web page only. Mutually exclusive
@@ -230,6 +232,27 @@ export default {
       ctx.waitUntil(fetch(heartbeatUrl).catch(() => {}));
     }
     await runChannel(channel, env, event);
+  },
+
+  // Drains WEBPUSH_QUEUE, bounded per invocation by wrangler.toml's consumer max_batch_size —
+  // this is what keeps webpush fan-out under the 50-subrequest-per-invocation cap regardless of
+  // how many (subscriber, item) pairs a busy poll queues up. Every message is explicitly ack'd,
+  // success or failure: Cloudflare Queues auto-retries any message that isn't explicitly ack'd
+  // or retry'd, and a delayed re-send of a time-sensitive forum alert (possibly minutes or
+  // hours later, once max_retries is exhausted) is worse than a missed one — same fire-and-
+  // forget tolerance the rest of this file already applies to push sends.
+  async queue(batch: MessageBatch<WebPushQueueMessage>, env: Env): Promise<void> {
+    const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+    await Promise.all(batch.messages.map(async (msg) => {
+      const { channel, subscription, title, body, url } = msg.body;
+      try {
+        const result = await sendWebPush(subscription, { data: { title, body, url } }, vapid);
+        // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no longer
+        // exists" signal. Prune it now, or expired subscriptions accumulate forever.
+        if (result.gone) await env.TOKENS.delete(`${channel}:web:${subscription.endpoint}`);
+      } catch { /* one message's failure must not affect the rest of the batch */ }
+      finally { msg.ack(); }
+    }));
   },
 };
 
@@ -430,14 +453,14 @@ export interface TestPushParams {
   feedToken: string;
 }
 
-// Sends one immediate notification straight to the requesting device. It bypasses the poll,
-// detect, and filter pipeline entirely, to confirm a registration actually receives pushes.
+// Bypasses the poll/detect/filter pipeline, to confirm a registration actually receives pushes
+// through the same delivery path a real alert would use.
 //
 // Uses the same feed_token gate as registerDevice. This proves access before sending, so it
 // can't be used to spam an arbitrary subscription.
 export async function sendTestPush(
   { channel, pushToken, subscription, feedToken }: TestPushParams,
-  env: Pick<Env, 'VAPID_SUBJECT' | 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY'>,
+  env: Pick<Env, 'WEBPUSH_QUEUE'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
   if (access === null) {
@@ -451,12 +474,16 @@ export async function sendTestPush(
   const body = 'If you can see this, push notifications are working.';
 
   if (subscription) {
-    const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
+    // Enqueued through the same WEBPUSH_QUEUE runChannel uses, rather than sent inline, so this
+    // exercises the real delivery path (queue wiring, deployed consumer) instead of a shortcut
+    // that could report success while the operational path is broken. 'ok' means queued, not
+    // confirmed delivered — the encrypted send, and any resulting subscription-pruning, happens
+    // in the queue() consumer, asynchronously.
     try {
-      const result = await sendWebPush(subscription, { data: { title, body } }, vapid);
-      return result.ok ? new Response('ok') : new Response('send failed', { status: 502 });
+      await env.WEBPUSH_QUEUE.sendBatch([{ body: { channel, subscription, title, body } }]);
+      return new Response('ok');
     } catch {
-      return new Response('send failed', { status: 502 });
+      return new Response('enqueue failed', { status: 502 });
     }
   }
 
@@ -510,6 +537,20 @@ export async function findAndStorePollToken(channel: Channel, env: Pick<Env, 'TO
 }
 
 interface Bucket { filter: ContentFilter; authors: string[]; minLength: number; tokens: string[]; webpushSubs: PushSubscription[] }
+
+// Web Push has no bulk-send endpoint, so one queue message = one (subscriber, item) send. The
+// consumer (see the queue() handler below) does the actual encryption/fetch, in its own
+// invocation with its own 50-subrequest budget, separate from the polling cron's.
+export interface WebPushQueueMessage {
+  channel: Channel;
+  subscription: PushSubscription;
+  title: string;
+  body: string;
+  url?: string;
+}
+
+// Cloudflare Queues caps sendBatch() at 100 messages per call.
+const QUEUE_SEND_BATCH_SIZE = 100;
 
 // Re-reads `daily` fresh from KV right before a write that follows slow work (bucket-building,
 // push-sending). A duplicate cron dispatch for the same channel can complete its own write in
@@ -680,7 +721,6 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // this shortens wall-clock duration (fetch() wait doesn't count against the Worker's CPU-time
   // limit either way, but a shorter invocation is still less exposed to Cloudflare's separate
   // wall-clock duration cap). A failure in one bucket's send must not skip the others.
-  const vapid: VapidKeys = { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY };
   const sentCounts = await Promise.all(
     Array.from(buckets.values()).map(async (bucket) => {
       const toNotify = freshItems
@@ -709,24 +749,22 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       }
 
       if (bucket.webpushSubs.length > 0) {
-        // Web Push has no bulk-send endpoint. This is a protocol constraint. One encrypted
-        // request per subscription per item, run concurrently instead of sequentially.
-        const results = await Promise.all(
-          bucket.webpushSubs.flatMap((sub) =>
-            toNotify.map((item) =>
-              sendWebPush(sub, { data: { title: formatTitle(item), body: item.description.slice(0, 150) || 'New post', url: item.link } }, vapid)
-                .then(async (result) => {
-                  // gone:true (HTTP 404 or 410) is the protocol's standard "subscription no
-                  // longer exists" signal. Prune it now, or expired subscriptions accumulate
-                  // forever.
-                  if (result.gone) await env.TOKENS.delete(`${channel}:web:${sub.endpoint}`);
-                  return result;
-                })
-                .catch(() => ({ ok: false, gone: false }))
-            )
-          )
+        // Web Push has no bulk-send endpoint, so every (subscriber, item) pair is queued as its
+        // own message rather than sent inline here — the actual encrypted send happens in the
+        // queue() consumer below, in its own invocation with its own subrequest budget. This
+        // invocation only pays for the queue.sendBatch() calls, not for len(subs)*len(items)
+        // fetches.
+        const messages: MessageSendRequest<WebPushQueueMessage>[] = bucket.webpushSubs.flatMap((sub) =>
+          toNotify.map((item) => ({
+            body: { channel, subscription: sub, title: formatTitle(item), body: item.description.slice(0, 150) || 'New post', url: item.link },
+          }))
         );
-        if (results.some((r) => r.ok)) sent += toNotify.length;
+        try {
+          for (let i = 0; i < messages.length; i += QUEUE_SEND_BATCH_SIZE) {
+            await env.WEBPUSH_QUEUE.sendBatch(messages.slice(i, i + QUEUE_SEND_BATCH_SIZE));
+          }
+          sent += toNotify.length;
+        } catch { /* this bucket's webpush enqueue failed; other buckets are unaffected */ }
       }
 
       return sent;

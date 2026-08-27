@@ -49,3 +49,19 @@ id = "ee1f4e5de20d45ddb00894a8f118094c"
 [[kv_namespaces]]
 binding = "STATE"
 id = "837495a5d5114a5abb02a3d4cdd83dd2"
+
+# Webpush fan-out (one message per subscriber-per-item — Web Push has no bulk-send endpoint).
+# Free-plan compatible as of 2026-02-04 (10,000 ops/day). Run `wrangler queues create
+# webpush-notifications` once before the first deploy that references this binding.
+[[queues.producers]]
+queue = "webpush-notifications"
+binding = "WEBPUSH_QUEUE"
+
+[[queues.consumers]]
+queue = "webpush-notifications"
+# Keeps each consumer invocation's subrequest count (1 fetch to the push service per message,
+# plus an occasional KV delete for an expired subscription) under the free plan's 50/invocation
+# cap. ponytail: a batch that's all-expired subscriptions could still exceed it (each pays 2
+# subrequests); raise max_retries or lower max_batch_size if that shows up in practice.
+max_batch_size = 45
+max_retries = 3
