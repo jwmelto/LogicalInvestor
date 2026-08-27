@@ -113,12 +113,12 @@ const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 // Pure so it's directly testable. One real elapsed-time check, reused for two different gates
 // (issue #86): ChannelState.lastValidationEnqueueDate (has this channel's cheap TOKENS scan run
 // in the last ~24h) and TokenMeta.lastValidated (has this specific registration's feedToken been
-// confirmed valid in the last ~24h). A calendar-day string was tried first and rejected — see
-// project memory feedback_consistency_not_a_benefit — since it treats two events minutes apart as
-// both "due" whenever they straddle a calendar-day boundary. An epoch timestamp carries strictly
-// more information than a date string (it can always be converted to a calendar day when that
-// specific reasoning is actually needed, e.g. DailyStats/advanceDaily's daily-bucket counters —
-// the reverse conversion is lossy), so there's no case where the string was the better choice.
+// confirmed valid in the last ~24h). A calendar-day string was tried first and rejected: it
+// treats two events minutes apart as both "due" whenever they straddle a calendar-day boundary.
+// An epoch timestamp carries strictly more information than a date string — it can always be
+// converted to a calendar day when that specific reasoning is actually needed, e.g.
+// DailyStats/advanceDaily's daily-bucket counters, while the reverse conversion is lossy — so
+// there's no case where the string was the better choice.
 export function needsRevalidation(lastValidated: number | undefined, nowMs: number): boolean {
   return lastValidated === undefined || nowMs - lastValidated >= VALIDATION_INTERVAL_MS;
 }
