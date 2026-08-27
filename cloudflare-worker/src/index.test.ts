@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
-import { CHANNEL_FEEDS, DEFAULT_TOKENS_TTL_DAYS } from './config';
+import { CHANNEL_FEEDS } from './config';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
 
 const FK = FeedKeys;
-const DEFAULT_TOKENS_TTL_SECONDS = DEFAULT_TOKENS_TTL_DAYS * 60 * 60 * 24;
 
 const ACTIONABLE_AUTHORS = ['sean hyman'];
 
@@ -303,11 +302,10 @@ describe('findAndStorePollToken', () => {
 });
 
 describe('registerDevice (logic, plain-object inputs)', () => {
-  function mockEnv(tokensTtlDays?: string) {
+  function mockEnv() {
     return {
       TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
       STATE: { put: vi.fn().mockResolvedValue(undefined) },
-      TOKENS_TTL_DAYS: tokensTtlDays,
     } as any;
   }
 
@@ -325,15 +323,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
-  });
-
-  it('honors TOKENS_TTL_DAYS when set, overriding the default', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
-    const env = mockEnv('7');
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
-    expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: 7 * 60 * 60 * 24 });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
   });
 
   it('lowercases and trims authors before storing', async () => {
@@ -341,7 +331,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: expect.any(Number) } });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
@@ -352,7 +342,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
@@ -429,7 +419,7 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
   });
 
   it('rejects an empty-string feed_token', async () => {
@@ -471,7 +461,7 @@ describe('/register endpoint validation — webpush subscription path', () => {
     expect(env.TOKENS.put).toHaveBeenCalledWith(
       'members:web:https://fcm.googleapis.com/fcm/send/abc',
       '1',
-      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
+      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: expect.any(Number) } },
     );
   });
 
@@ -787,19 +777,17 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
 });
 
 describe('queue() — token validation (issue #86)', () => {
-  function messageBatch(bodies: { channel: string; tokenKey: string; meta: Record<string, unknown>; expiration?: number }[]): any {
+  function messageBatch(bodies: { channel: string; tokenKey: string; meta: Record<string, unknown> }[]): any {
     return { queue: 'token-validation', messages: bodies.map((body) => ({ body, ack: vi.fn() })) };
   }
 
-  it('stamps lastValidated and preserves the original expiration on a confirmed-access token', async () => {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const originalExpiration = nowSeconds + 10 * 24 * 60 * 60; // 10 days out
+  it('stamps lastValidated on a confirmed-access token, without setting any expirationTtl', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const tokensPut = vi.fn().mockResolvedValue(undefined);
     const env = { TOKENS: { put: tokensPut, delete: vi.fn() } } as any;
     const meta = { feedToken: 'valid-token', filter: 'length', authors: [], minLength: 0 };
 
-    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta, expiration: originalExpiration }]), env);
+    await worker.queue(messageBatch([{ channel: 'options', tokenKey: 'options:push1', meta }]), env);
 
     expect(tokensPut).toHaveBeenCalledTimes(1);
     const [key, value, opts] = tokensPut.mock.calls[0];
@@ -810,10 +798,9 @@ describe('queue() — token validation (issue #86)', () => {
     // A real epoch-millisecond stamp taken during this call, not a calendar-day string.
     expect(lastValidated).toBeGreaterThan(Date.now() - 5000);
     expect(lastValidated).toBeLessThanOrEqual(Date.now());
-    // Preserves the original TTL clock rather than resetting it — within a few seconds of the
-    // originally-computed remaining TTL, not reset to a fresh full TOKENS_TTL_DAYS.
-    expect(opts.expirationTtl).toBeGreaterThan(10 * 24 * 60 * 60 - 5);
-    expect(opts.expirationTtl).toBeLessThanOrEqual(10 * 24 * 60 * 60);
+    // Registrations don't expire on a timer — cleanup relies entirely on gone-detection and
+    // access-revalidation (issue #60), so a successful validation never sets expirationTtl.
+    expect(opts.expirationTtl).toBeUndefined();
   });
 
   it('deletes a token whose access was revoked, without stamping lastValidated', async () => {

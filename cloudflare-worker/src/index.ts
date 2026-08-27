@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
-import { DEFAULT_TOKENS_TTL_DAYS, CHANNEL_FEEDS } from './config';
+import { CHANNEL_FEEDS } from './config';
 
 function toFilterItem(item: RssItem): FilterItem {
   return { feedKey: item.feedKey, author: item.author, title: item.title, content: item.description };
@@ -22,7 +22,6 @@ export interface Env {
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
-  TOKENS_TTL_DAYS?: string;         // days a TOKENS registration survives without renewal, default "30"
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
   VAPID_PRIVATE_KEY: string;        // secret — set via: wrangler secret put VAPID_PRIVATE_KEY
@@ -33,10 +32,6 @@ export interface Env {
   HEARTBEAT_URL_MEMBERS?: string;
   HEARTBEAT_URL_STOCK?: string;
   HEARTBEAT_URL_OPTIONS?: string;
-}
-
-function tokensTtlSeconds(env: Pick<Env, 'TOKENS_TTL_DAYS'>): number {
-  return parseInt(env.TOKENS_TTL_DAYS ?? String(DEFAULT_TOKENS_TTL_DAYS), 10) * 60 * 60 * 24;
 }
 
 // filter/authors/minLength are required on every registration. feedToken is optional here only
@@ -310,22 +305,14 @@ async function drainWebPushQueue(batch: MessageBatch<WebPushQueueMessage>, env: 
 // cap, bounded the same way as webpush sends by wrangler.toml's consumer max_batch_size.
 async function drainValidationQueue(batch: MessageBatch<ValidationQueueMessage>, env: Env): Promise<void> {
   await Promise.all(batch.messages.map(async (msg) => {
-    const { channel, tokenKey, meta, expiration } = msg.body;
+    const { channel, tokenKey, meta } = msg.body;
     try {
       const access = meta.feedToken ? await feedTokenHasAccess(channel, meta.feedToken) : null;
       if (access === false) {
         await env.TOKENS.delete(tokenKey);
       } else if (access === true) {
-        const nowMs = Date.now();
-        // Preserves the original expiration rather than resetting the TTL clock — a device
-        // that's stopped re-registering should still expire on schedule even while validation
-        // keeps confirming its (still-valid) old feedToken. KV requires expirationTtl >= 60s.
-        const remainingTtl = expiration
-          ? Math.max(60, expiration - Math.floor(nowMs / 1000))
-          : tokensTtlSeconds(env);
         await env.TOKENS.put(tokenKey, '1', {
-          metadata: { ...meta, lastValidated: nowMs } satisfies TokenMeta,
-          expirationTtl: remainingTtl,
+          metadata: { ...meta, lastValidated: Date.now() } satisfies TokenMeta,
         });
       }
       // access === null: check itself failed (network blip, 5xx) — leave the registration
@@ -504,7 +491,7 @@ export interface RegisterParams {
 // no Request/env plumbing.
 export async function registerDevice(
   { channel, pushToken, subscription, filter, authors, minLength, feedToken }: RegisterParams,
-  env: Pick<Env, 'TOKENS' | 'STATE' | 'TOKENS_TTL_DAYS'>,
+  env: Pick<Env, 'TOKENS' | 'STATE'>,
 ): Promise<Response> {
   const access = await feedTokenHasAccess(channel, feedToken);
   if (access === null) {
@@ -526,7 +513,14 @@ export async function registerDevice(
     ? { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, kind: 'webpush', subscription, lastValidated }
     : { feedToken, filter, authors: authors.map((a) => a.trim().toLowerCase()), minLength, lastValidated };
   const kvKey = subscription ? `${channel}:web:${pushToken}` : `${channel}:${pushToken}`;
-  await env.TOKENS.put(kvKey, '1', { metadata: meta, expirationTtl: tokensTtlSeconds(env) });
+  // No expirationTtl: registrations don't expire on a timer. Cleanup relies entirely on
+  // gone-detection (drainWebPushQueue/drainValidationQueue prune on a confirmed-dead webpush
+  // endpoint) and access-revalidation (deletes once feedTokenHasAccess is confirmed false) — a
+  // time-based TTL was tried first (issue #60) and removed once those two mechanisms existed:
+  // it only ever protected a narrow gap neither one reaches (a channel with a dead device that
+  // never gets a real send attempted, on a feedToken whose WordPress access never lapses), judged
+  // not worth its ongoing cost for how rarely it would actually matter.
+  await env.TOKENS.put(kvKey, '1', { metadata: meta });
   return new Response('ok');
 }
 
@@ -643,17 +637,13 @@ const QUEUE_SEND_BATCH_SIZE = 100;
 // the channel-appropriate URL (feedTokenHasAccess picks it from CHANNEL_FEEDS[channel]) — never
 // inferred or assumed shared across a token's other registrations.
 //
-// meta/expiration are a snapshot from the TOKENS.list() call that found this entry stale enough
-// to enqueue. The consumer needs the full metadata to rewrite the entry on a successful
-// revalidation (KV put() replaces metadata wholesale, no partial-patch API), and the original
-// expiration timestamp to preserve the registration's TTL clock rather than resetting it — a
-// device that's stopped re-registering should still expire on schedule even while validation
-// keeps confirming its (still-valid) old feedToken.
+// meta is a snapshot from the TOKENS.list() call that found this entry stale enough to enqueue —
+// the consumer needs the full metadata to rewrite the entry on a successful revalidation (KV
+// put() replaces metadata wholesale, no partial-patch API).
 export interface ValidationQueueMessage {
   channel: Channel;
   tokenKey: string;
   meta: TokenMeta;
-  expiration?: number;
 }
 
 // Re-reads `daily` fresh from KV right before a write that follows slow work (bucket-building,
@@ -820,7 +810,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       // channel travels with the message and the consumer always checks the channel-appropriate
       // URL (feedTokenHasAccess picks it from CHANNEL_FEEDS[channel]), never a shared/inferred one.
       if (doValidationEnqueue && meta?.feedToken && needsRevalidation(meta.lastValidated, nowMs)) {
-        validationMessages.push({ body: { channel, tokenKey: key.name, meta, expiration: key.expiration } });
+        validationMessages.push({ body: { channel, tokenKey: key.name, meta } });
       }
       const { filter, authors, minLength, kind, subscription } = meta ?? {};
       if (!filter || authors === undefined || minLength === undefined) continue; // pre-redesign entry — skip until it re-registers
