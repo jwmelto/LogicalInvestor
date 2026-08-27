@@ -51,10 +51,13 @@ interface TokenMeta {
   minLength?: number;
   kind?: 'webpush';
   subscription?: PushSubscription;
-  // ET date string of the last time this specific registration's feedToken was confirmed to
-  // still have access to its channel — see ValidationQueueMessage/shouldSweepAccess. Set at
-  // registration time (access was just verified then) and after each successful validation.
-  lastValidated?: string;
+  // Epoch milliseconds of the last time this specific registration's feedToken was confirmed to
+  // still have access to its channel — see ValidationQueueMessage/needsRevalidation. Set at
+  // registration time (access was just verified then) and after each successful validation. A
+  // real elapsed-time value, not a calendar-day string: two revalidations minutes apart
+  // shouldn't both fire just because they straddle a calendar-day boundary, since each one that
+  // does fire costs a real subrequest in the queue consumer.
+  lastValidated?: number;
 }
 
 interface RunStats {
@@ -103,17 +106,25 @@ function emptyRunStats(): RunStats {
   return { lastRun: '', lastNotified: null, itemsFetched: 0, numNewItems: 0, sent: 0 };
 }
 
-// Pure so it's directly testable. Dual use, both "is X due to happen again today": gating a
-// channel's stale-registration scan (ChannelState.lastValidationEnqueueDate), and gating whether
-// one specific registration is stale enough to enqueue (TokenMeta.lastValidated) — see issue #86.
-// The underlying reason is the same either way: doing the actual feedTokenHasAccess fetch on
-// every notify-worthy tick, for every device, risked exceeding the free plan's
-// 50-subrequest-per-invocation cap as registered-device count grew, which throws and aborts the
-// whole tick's notifications, not just the overflow devices. Validation now happens in
-// VALIDATION_QUEUE's own bounded consumer batches instead, decoupled from the notify path
-// entirely — see runChannel and the queue() handler.
+// Pure so it's directly testable. Gates a channel's stale-registration scan
+// (ChannelState.lastValidationEnqueueDate) to once per ET calendar day — see issue #86. The scan
+// itself makes no fetch() calls (just a KV list), so firing an extra time near a calendar-day
+// boundary costs nothing; a calendar-day string is the right representation for "did we already
+// do the free thing today," same as the existing DailyStats/advanceDaily pattern.
 export function shouldSweepAccess(lastDate: string | undefined, todayET: string): boolean {
   return lastDate !== todayET;
+}
+
+// A real registered device is revalidated at most this often.
+const VALIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// Pure so it's directly testable. Gates whether one specific registration
+// (TokenMeta.lastValidated) is stale enough to enqueue for revalidation — see issue #86. Unlike
+// shouldSweepAccess's calendar-day comparison, this is a real elapsed-time check: enqueueing
+// costs a real subrequest in the queue consumer, so two revalidations minutes apart shouldn't
+// both fire just because they straddle a calendar-day boundary.
+export function needsRevalidation(lastValidated: number | undefined, nowMs: number): boolean {
+  return lastValidated === undefined || nowMs - lastValidated >= VALIDATION_INTERVAL_MS;
 }
 
 // Pure so it's directly testable. Resets the rolling counters when `todayET` doesn't match the
@@ -302,7 +313,6 @@ async function drainWebPushQueue(batch: MessageBatch<WebPushQueueMessage>, env: 
 // is what lets validation scale to any registered-device count without risking the 50-subrequest
 // cap, bounded the same way as webpush sends by wrangler.toml's consumer max_batch_size.
 async function drainValidationQueue(batch: MessageBatch<ValidationQueueMessage>, env: Env): Promise<void> {
-  const todayET = getETDate(new Date());
   await Promise.all(batch.messages.map(async (msg) => {
     const { channel, tokenKey, meta, expiration } = msg.body;
     try {
@@ -310,14 +320,15 @@ async function drainValidationQueue(batch: MessageBatch<ValidationQueueMessage>,
       if (access === false) {
         await env.TOKENS.delete(tokenKey);
       } else if (access === true) {
+        const nowMs = Date.now();
         // Preserves the original expiration rather than resetting the TTL clock — a device
         // that's stopped re-registering should still expire on schedule even while validation
         // keeps confirming its (still-valid) old feedToken. KV requires expirationTtl >= 60s.
         const remainingTtl = expiration
-          ? Math.max(60, expiration - Math.floor(Date.now() / 1000))
+          ? Math.max(60, expiration - Math.floor(nowMs / 1000))
           : tokensTtlSeconds(env);
         await env.TOKENS.put(tokenKey, '1', {
-          metadata: { ...meta, lastValidated: todayET } satisfies TokenMeta,
+          metadata: { ...meta, lastValidated: nowMs } satisfies TokenMeta,
           expirationTtl: remainingTtl,
         });
       }
@@ -510,8 +521,8 @@ export async function registerDevice(
 
   // lastValidated is stamped now, not left undefined — access was just confirmed above, so
   // there's no need for the next validation sweep to immediately recheck a registration that's
-  // seconds old (see ValidationQueueMessage/shouldSweepAccess, issue #86).
-  const lastValidated = getETDate(new Date());
+  // seconds old (see ValidationQueueMessage/needsRevalidation, issue #86).
+  const lastValidated = Date.now();
   // kind/subscription are only ever written for a webpush registration (see TokenMeta).
   // Omitting them entirely for an Expo registration keeps every pre-existing entry's shape
   // unchanged.
@@ -811,7 +822,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       // (a token can keep Members access while losing Stock or Options access independently), so
       // channel travels with the message and the consumer always checks the channel-appropriate
       // URL (feedTokenHasAccess picks it from CHANNEL_FEEDS[channel]), never a shared/inferred one.
-      if (doValidationEnqueue && meta?.feedToken && shouldSweepAccess(meta.lastValidated, todayET)) {
+      if (doValidationEnqueue && meta?.feedToken && needsRevalidation(meta.lastValidated, now.getTime())) {
         validationMessages.push({ body: { channel, tokenKey: key.name, meta, expiration: key.expiration } });
       }
       const { filter, authors, minLength, kind, subscription } = meta ?? {};

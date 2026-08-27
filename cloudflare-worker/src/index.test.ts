@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, shouldSweepAccess } from './index';
+import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, shouldSweepAccess, needsRevalidation } from './index';
 import { CHANNEL_FEEDS, DEFAULT_TOKENS_TTL_DAYS } from './config';
 import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
 import type { FeedKey, FilterItem } from '@li/core';
@@ -325,7 +325,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('honors TOKENS_TTL_DAYS when set, overriding the default', async () => {
@@ -333,7 +333,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv('7');
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: 7 * 60 * 60 * 24 });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: 7 * 60 * 60 * 24 });
   });
 
   it('lowercases and trims authors before storing', async () => {
@@ -341,7 +341,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     const env = mockEnv();
     const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
@@ -352,7 +352,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
@@ -429,7 +429,7 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS });
   });
 
   it('rejects an empty-string feed_token', async () => {
@@ -471,7 +471,7 @@ describe('/register endpoint validation — webpush subscription path', () => {
     expect(env.TOKENS.put).toHaveBeenCalledWith(
       'members:web:https://fcm.googleapis.com/fcm/send/abc',
       '1',
-      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: TODAY_ET }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
+      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: expect.any(Number) }, expirationTtl: DEFAULT_TOKENS_TTL_SECONDS },
     );
   });
 
@@ -746,15 +746,28 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
     expect(messages.every((m: any) => m.body.channel === 'options')).toBe(true);
   });
 
-  it('does not enqueue a registration already validated today', async () => {
+  it('does not enqueue a registration validated less than 24h ago', async () => {
     const { env, sendBatch } = mockEnv([
-      { name: 'options:fresh-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'fresh-token', lastValidated: TODAY_ET } },
+      { name: 'options:fresh-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'fresh-token', lastValidated: Date.now() - 60_000 } },
     ]);
     vi.stubGlobal('fetch', pushFetch());
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(sendBatch).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a registration last validated more than 24h ago', async () => {
+    const { env, sendBatch } = mockEnv([
+      { name: 'options:stale-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'stale-token', lastValidated: Date.now() - 25 * 60 * 60 * 1000 } },
+    ]);
+    vi.stubGlobal('fetch', pushFetch());
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(sendBatch).toHaveBeenCalledTimes(1);
+    const [messages] = sendBatch.mock.calls[0];
+    expect(messages[0].body.tokenKey).toBe('options:stale-push');
   });
 
   it('does not enqueue at all once this channel has already been scanned today', async () => {
@@ -792,7 +805,11 @@ describe('queue() — token validation (issue #86)', () => {
     const [key, value, opts] = tokensPut.mock.calls[0];
     expect(key).toBe('options:push1');
     expect(value).toBe('1');
-    expect(opts.metadata).toEqual({ ...meta, lastValidated: TODAY_ET });
+    const { lastValidated, ...restMetadata } = opts.metadata;
+    expect(restMetadata).toEqual(meta);
+    // A real epoch-millisecond stamp taken during this call, not a calendar-day string.
+    expect(lastValidated).toBeGreaterThan(Date.now() - 5000);
+    expect(lastValidated).toBeLessThanOrEqual(Date.now());
     // Preserves the original TTL clock rather than resetting it — within a few seconds of the
     // originally-computed remaining TTL, not reset to a fresh full TOKENS_TTL_DAYS.
     expect(opts.expirationTtl).toBeGreaterThan(10 * 24 * 60 * 60 - 5);
@@ -1473,6 +1490,30 @@ describe('shouldSweepAccess', () => {
   });
   it('sweeps again once the ET date rolls over', () => {
     expect(shouldSweepAccess('2026-01-01', '2026-01-02')).toBe(true);
+  });
+});
+
+describe('needsRevalidation', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it('needs revalidation when never validated before', () => {
+    expect(needsRevalidation(undefined, Date.now())).toBe(true);
+  });
+  it('does not need revalidation less than 24h since the last one', () => {
+    const now = Date.now();
+    expect(needsRevalidation(now - DAY_MS + 1000, now)).toBe(false);
+  });
+  it('needs revalidation again once 24h have elapsed', () => {
+    const now = Date.now();
+    expect(needsRevalidation(now - DAY_MS, now)).toBe(true);
+  });
+  // A real elapsed-time check, unlike shouldSweepAccess's calendar-day comparison: two
+  // timestamps a few minutes apart, straddling midnight, must not both read as "needs
+  // revalidation" just because the calendar date changed.
+  it('does not treat timestamps minutes apart as needing revalidation, even across a calendar-day boundary', () => {
+    const justBeforeMidnight = new Date('2026-01-01T23:58:00-05:00').getTime();
+    const justAfterMidnight = new Date('2026-01-02T00:02:00-05:00').getTime();
+    expect(needsRevalidation(justBeforeMidnight, justAfterMidnight)).toBe(false);
   });
 });
 
