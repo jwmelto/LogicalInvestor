@@ -1561,6 +1561,26 @@ describe('GET /status auth', () => {
   });
 });
 
+describe('GET /status — version metadata', () => {
+  it('surfaces CF_VERSION_METADATA verbatim so a live response traces back to its deploy', async () => {
+    const versionMetadata = { id: 'abc123', tag: 'a1b2c3d', timestamp: '2026-08-28T00:00:00Z' };
+    const env = {
+      FEED_TOKEN: 'secret',
+      CF_VERSION_METADATA: versionMetadata,
+      TOKENS: { list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }) },
+      STATE: { get: vi.fn().mockResolvedValue(null) },
+    } as any;
+
+    const res = await worker.fetch(
+      new Request('https://worker.test/status', { headers: { Authorization: 'Bearer secret' } }),
+      env,
+    );
+
+    const body = await res.json() as { version: unknown };
+    expect(body.version).toEqual(versionMetadata);
+  });
+});
+
 describe('GET /status — registration counts by delivery kind', () => {
   it('splits registeredTokens into registeredExpo and registeredWebpush per channel', async () => {
     const env = {

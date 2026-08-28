@@ -431,6 +431,8 @@ Access revalidation is fully decoupled from `runChannel`'s notify path: `runChan
 
 Every `ValidationQueueMessage` carries its own `channel` — access is genuinely per-channel (a token can retain Members access while losing Stock or Options access independently), and `feedTokenHasAccess(channel, feedToken)` picks the channel-appropriate URL internally, so messages are never merged or deduped by `feedToken` alone across channels.
 
+**Deploying with a version tag**: `npm run deploy` (`cloudflare-worker/deploy.sh`) rather than a bare `wrangler deploy` — it hard-blocks if `cloudflare-worker/`, `packages/core/`, or `web-push/` have uncommitted changes (the three paths that actually make up what this Worker deploys), then runs `wrangler deploy --tag "$(git rev-parse --short HEAD)" --message "<latest commit subject>"`. The `[version_metadata]` binding (`wrangler.toml`) exposes that tag back to the running Worker as `env.CF_VERSION_METADATA`, surfaced in `GET /status`'s `version` field — so a live response, or a report of a live issue, always traces back to the exact commit that produced it. Unrelated in-progress changes elsewhere in the monorepo (the RN app, say) never block a Worker deploy, since the dirty-check is scoped to only the paths this Worker's deploy actually contains.
+
 **Checking Worker status**: `GET /status` requires the Worker's `FEED_TOKEN` secret as a Bearer header — not a query param, so it can't be checked by pasting a URL into a browser (no `WWW-Authenticate` challenge is sent, so browsers won't prompt for credentials either). Use curl:
 ```bash
 curl -H "Authorization: Bearer $FEED_TOKEN" https://logicalinvestor-push.logicalinvestor.workers.dev/status

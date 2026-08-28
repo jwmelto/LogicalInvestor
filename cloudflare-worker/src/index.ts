@@ -32,6 +32,9 @@ export interface Env {
   HEARTBEAT_URL_MEMBERS?: string;
   HEARTBEAT_URL_STOCK?: string;
   HEARTBEAT_URL_OPTIONS?: string;
+  // Populated by the [version_metadata] binding in wrangler.toml — tag is the git short SHA
+  // deploy.sh passes via `wrangler deploy --tag`, surfaced through GET /status.
+  CF_VERSION_METADATA: WorkerVersionMetadata;
 }
 
 // filter/authors/minLength are required on every registration. feedToken is optional here only
@@ -379,7 +382,11 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     if (!timingSafeEqualStr(secret, env.FEED_TOKEN)) {
       return new Response('unauthorized', { status: 401 });
     }
-    const result: Record<string, unknown> = {};
+    const result: Record<string, unknown> = {
+      // tag is the git short SHA deploy.sh passes via `wrangler deploy --tag` — traces this
+      // exact running response back to the commit that produced it.
+      version: env.CF_VERSION_METADATA,
+    };
     const todayET = getETDate(new Date());
     for (const channel of CHANNELS) {
       const [tokens, runJson, pollToken] = await Promise.all([
