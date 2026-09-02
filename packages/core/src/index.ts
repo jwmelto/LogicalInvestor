@@ -168,6 +168,10 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // framing, not a directive. "You can sell half if you wish" would otherwise match
   // pass-sell-fraction outright; nothing previously distinguished optional permission from a call.
   [/\bif you (wish|want to)\b|\bnothing wrong (with|if)\b/i,               'fail-hypothetical'],
+  // Same permissive-framing category as above, third person: "if someone... they want to choose
+  // to sell half, they can always do that" describes an optional individual choice, not a call —
+  // same discourse function as "if you want to", different pronoun.
+  [/\bwants? to choose to\b/i,                                              'fail-hypothetical'],
   // #82: "it can still take any one of these paths, you might sell half..." — scenario-branching
   // hedge language, same spirit as the #66 "could either...or" two-sided hedge but a different
   // construction. ponytail: narrow to "paths/scenarios/outcomes" nouns actually seen in reports;
@@ -196,7 +200,7 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\$\d+(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\b(buy|enter)\b|\b(buy|enter)\b(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\$\d+/i, 'pass-buy-with-price'],
   // #82: "sell it all" — the fraction word doesn't always sit directly after the verb; an
   // intervening pronoun is common, natural phrasing missed by the original bare-adjacency regex.
-  [/\bsell(?:ing)?\s+(?:it\s+)?(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,   'pass-sell-fraction'],
+  [/\b(sell(?:ing)?|sold)\s+(?:it\s+)?(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,   'pass-sell-fraction'],
   // Bare "averaging down" is discussed constantly as general market commentary — a live false
   // positive ("in some cases, that'll give us averaging down opportunities...") had no directive
   // verb anywhere near it, just abstract description. Unlike every other POS_PATTERN, the old

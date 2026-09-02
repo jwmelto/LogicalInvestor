@@ -72,6 +72,12 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad("There's nothing wrong if you want to sell all, but we're not doing that officially."), MIN)).toBe('fail-hypothetical');
   });
 
+  // Third-person variant of the same permissive framing: "wants to choose to" describes an
+  // optional individual choice, not a directive, even though "sell half" appears literally.
+  test('fail-hypothetical: "wants to choose to" third-person permissive framing', () => {
+    expect(classifySignal(pad("If someone is up 20-30% in a short period of time and they want to choose to sell half, they can always do that, even without confirmation from me."), MIN)).toBe('fail-hypothetical');
+  });
+
   test('fail-too-short: no pattern match and below minLength', () => {
     expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });
@@ -136,6 +142,14 @@ describe('classifySignal — positive patterns', () => {
 
   test('pass-sell-fraction', () => {
     expect(classifySignal(pad('With y\'all being up 21%-22% in under 2 trading days, I\'d consider selling half of your remaining half'), MIN)).toBe('pass-sell-fraction');
+  });
+
+  // Past tense: "hasn't sold half" is a real reported phrasing the bare sell(?:ing)? alternation
+  // missed entirely (fail-no-signal). The one negative example using "sold half" ("we've already
+  // sold half...") is already caught earlier by the more specific fail-historical pattern, so
+  // widening the verb form here doesn't risk it.
+  test('pass-sell-fraction: past tense "sold half"', () => {
+    expect(classifySignal(pad("If anyone hasn't sold half, it's a good time to do that, now, as long as you're up at least 20% or more."), MIN)).toBe('pass-sell-fraction');
   });
 
   test('pass-averaging-down', () => {
