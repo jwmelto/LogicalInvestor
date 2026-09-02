@@ -44,17 +44,26 @@ export interface HybridResult extends NearestNeighborResult {
 
 // Closed-class discourse markers (hedge modals, personal-address, historical reference,
 // negation) are reliable enough to gate on directly — no reason to make the embedding step
-// re-derive what a keyword already answers with confidence. IMMEDIATELY gets the same
-// treatment on the positive side: it's a literal author convention (see its comment in
-// index.ts), not open-ended phrasing, so it's exactly as gate-safe as the negative markers —
-// unlike the rest of POS_PATTERNS (sell-fraction, averaging-down, ...), which stay with
-// nearest-neighbor because they're the topically-confusable, directive-vs-retrospective cases
-// this prototype exists to handle. Only text that clears both gates falls through.
+// re-derive what a keyword already answers with confidence.
+//
+// Every POS_PATTERN gates the same way, not just IMMEDIATELY. An earlier version trusted only
+// IMMEDIATELY here, leaving the rest (sell-fraction, tranche-price, buy-with-price, ...) to
+// nearest-neighbor on the theory that they're topically-confusable, directive-vs-retrospective
+// cases. Measured leave-one-out against the calibration set showed the opposite: nearest-neighbor
+// was overriding cases regex already got right — e.g. "Buy Quixtol (QTPZ) at the market as long
+// as the stock is at $66 per share or LOWER" is an unambiguous match for pass-buy-with-price, but
+// its nearest embedding neighbor happened to be a different, unrelated example. Gating regex's
+// positive result in fixed every such regression (6 missed alerts) at the cost of reintroducing
+// regex's own false positives on cases nearest-neighbor had been correctly overriding (3 false
+// alarms) — the right trade when a missed alert costs more than a false alarm, which is the case
+// here (a subscriber missing a real buy call vs. one extra notification). Only text with no
+// keyword opinion at all (fail-no-signal/fail-too-short) reaches nearest-neighbor now — exactly
+// the open-ended discourse-judgment cases this prototype exists to handle.
 export function classifyActionableHybrid(text: string, vector: number[], examples: LabeledVector[]): HybridResult {
   if (matchNegativePattern(text)) {
     return { isActionable: false, nearestText: text, similarity: 1, viaKeyword: true };
   }
-  if (matchPositivePattern(text) === 'pass-immediately') {
+  if (matchPositivePattern(text) !== null) {
     return { isActionable: true, nearestText: text, similarity: 1, viaKeyword: true };
   }
   return { ...nearestNeighbor(vector, examples), viaKeyword: false };
