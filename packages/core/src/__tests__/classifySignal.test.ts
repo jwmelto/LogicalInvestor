@@ -50,6 +50,28 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad("I'd not encourage entries this high up above 200-day and 200-week moving averages. I'd either hold what you've got or sell some more but not buy anything more. We're ultimately looking to exit at $18ish."), MIN)).toBe('fail-negated-instruction');
   });
 
+  // A full real post: a rhetorical aside about consumer purchases ("if you don't buy their
+  // product...") used the same negation-adjacent-to-buy shape #79 fixed, but conditional "if you
+  // don't" framing describes a hypothetical, not the reader's own position — it shouldn't
+  // suppress a genuine tranche-price directive appearing later in the same post.
+  test('pass-tranche-price: an unrelated "if you don\'t buy X" aside does not suppress a real directive later in the post', () => {
+    expect(classifySignal(pad("So, if you don't buy their product, then you're not funding them. 2nd tranche: $121."), MIN)).toBe('pass-tranche-price');
+  });
+
+  test('fail-negated-instruction: still fires for a direct declarative negation (not conditional)', () => {
+    expect(classifySignal(pad("I'd either hold what you've got or sell some more but not buy anything more."), MIN)).toBe('fail-negated-instruction');
+  });
+
+  // "You can sell half if you wish" would otherwise match pass-sell-fraction outright —
+  // permissive, take-it-or-leave-it framing isn't a directive.
+  test('fail-hypothetical: "if you wish" permissive framing suppresses sell-fraction match', () => {
+    expect(classifySignal(pad('Good. You can sell half if you wish. Our ultimate target is $18ish.'), MIN)).toBe('fail-hypothetical');
+  });
+
+  test('fail-hypothetical: "nothing wrong with/if" permissive framing', () => {
+    expect(classifySignal(pad("There's nothing wrong if you want to sell all, but we're not doing that officially."), MIN)).toBe('fail-hypothetical');
+  });
+
   test('fail-too-short: no pattern match and below minLength', () => {
     expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });

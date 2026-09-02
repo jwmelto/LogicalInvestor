@@ -155,7 +155,19 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // fix for negation adjacent to the verb, not every possible negative framing further away.
   // Window kept tight (4 chars) so it doesn't also catch unrelated "ask/buy quote" market-mechanics
   // phrasing (e.g. "not the ask/buy quote"), which has ~9 chars between "not" and "buy".
-  [/\b(not|n't|never|don'?t|doesn'?t|didn'?t)\b[\s\S]{0,4}\b(buy|enter)\b/i, 'fail-negated-instruction'],
+  // Excludes "if you don't buy X, then Y" conditional framing — a real false positive on a full
+  // post where a rhetorical aside about consumer purchases ("if you don't buy their beer/wine...
+  // you're not funding them") suppressed a genuine tranche-price buy call elsewhere in the same
+  // post. A veto from one narrow regex shouldn't outweigh a real, unrelated directive; the fix is
+  // making the regex itself stop firing on this shape, not weakening the veto generally — a
+  // sentence-scoped veto was tried and rejected, since it also broke the #82 "already sold
+  // half...officially still holding" case (a later, unrelated-looking "selling half" mention in
+  // the same retrospective paragraph), the exact discourse-judgment problem regex can't solve.
+  [/(?<!\bif\b[^.!?]{0,12})\b(not|n't|never|don'?t|doesn'?t|didn'?t)\b[\s\S]{0,4}\b(buy|enter)\b/i, 'fail-negated-instruction'],
+  // "if you wish" / "if you want to" / "nothing wrong with X" — permissive, take-it-or-leave-it
+  // framing, not a directive. "You can sell half if you wish" would otherwise match
+  // pass-sell-fraction outright; nothing previously distinguished optional permission from a call.
+  [/\bif you (wish|want to)\b|\bnothing wrong (with|if)\b/i,               'fail-hypothetical'],
   // #82: "it can still take any one of these paths, you might sell half..." — scenario-branching
   // hedge language, same spirit as the #66 "could either...or" two-sided hedge but a different
   // construction. ponytail: narrow to "paths/scenarios/outcomes" nouns actually seen in reports;
