@@ -82,6 +82,24 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
   });
 
+  // Real post-deploy false alarm: "Good job. Congrats!" had no other signal, so it reached
+  // nearest-neighbor and matched purely on generic congratulatory tone.
+  test('fail-acknowledgment: "good job" reacting to a reported outcome, not a directive', () => {
+    expect(classifySignal(pad('Good job. Congrats!'), MIN)).toBe('fail-acknowledgment');
+  });
+
+  // "Congrats" alone is deliberately not a marker -- an existing true positive opens with it
+  // before the real directive.
+  test('pass-sell-fraction: "Congrats" alone does not suppress a real directive that follows', () => {
+    expect(classifySignal(pad("Congrats. Earnings on 9/10 after the bell. If you haven't sold half, you might."), MIN)).toBe('pass-sell-fraction');
+  });
+
+  // Real post-deploy false alarm: "Yes, but it depends on where your last /2nd tranche is." --
+  // conditional-on-individual-circumstances framing, same category as "in your case".
+  test('fail-personal-advice: "it depends" frames the answer as conditional on the individual', () => {
+    expect(classifySignal(pad('Yes, but it depends on where your last 2nd tranche is.'), MIN)).toBe('fail-personal-advice');
+  });
+
   // #82
   test('fail-hypothetical: "any one of these paths" scenario-branching hedge', () => {
     expect(classifySignal(pad("Because it can still take any one of these paths, you might sell half (since you're up 30%) and keep the rest and that sets you up better in case the lower scenarios unfold."), MIN)).toBe('fail-hypothetical');

@@ -60,4 +60,24 @@ describe('classifyActionableHybrid — keyword gate + nearest-neighbor fallback'
     }
     expect(CALIBRATION.length).toBeGreaterThan(0);
   });
+
+  // A real post-deploy false alarm ("Good job. Congrats!") matched a positive example at
+  // similarity 0.697, below the lowest correct match observed anywhere in the calibration set's
+  // own leave-one-out distribution (0.707) -- too little real content in the query for cosine
+  // similarity to judge reliably. The floor defaults a low-confidence match to not-actionable
+  // regardless of which label its nearest neighbor happens to carry.
+  test('a low-similarity match defaults to not-actionable, even against a positive neighbor', () => {
+    const examples: LabeledVector[] = [{ text: 'irrelevant', isActionable: true, vector: [1, 0] }];
+    const orthogonalQuery = [0, 1]; // similarity 0 to the only example -- far below the floor
+    const result = classifyActionableHybrid('Thanks, appreciate it.', orthogonalQuery, examples);
+    expect(result.isActionable).toBe(false);
+    expect(result.viaKeyword).toBe(false);
+  });
+
+  test('a high-similarity match is trusted as-is', () => {
+    const examples: LabeledVector[] = [{ text: 'irrelevant', isActionable: true, vector: [1, 0] }];
+    const identicalQuery = [1, 0]; // similarity 1 -- well above the floor
+    const result = classifyActionableHybrid('Thanks, appreciate it.', identicalQuery, examples);
+    expect(result.isActionable).toBe(true);
+  });
 });

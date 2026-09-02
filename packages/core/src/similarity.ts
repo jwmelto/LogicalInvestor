@@ -42,6 +42,17 @@ export interface HybridResult extends NearestNeighborResult {
   viaKeyword: boolean;
 }
 
+// Below this, nearest-neighbor's answer isn't trusted -- default to not-actionable instead.
+// Grounded in the calibration set's own leave-one-out distribution: every correct match observed
+// scores >= 0.707; a real post-deploy false alarm ("Good job. Congrats!", matched purely on
+// generic congratulatory tone with nothing else to anchor on) scored 0.697, below that floor.
+// 0.70 sits just under the lowest correct match seen. This doesn't fix within-distribution
+// confusions -- the one remaining leave-one-out miss scores 0.834, well above any reasonable
+// floor -- it's specifically a safety net for low-content queries with too little signal to
+// judge at all, not a general accuracy lever. Based on only 9 leave-one-out data points that
+// currently reach this path; worth revisiting as real misses accumulate.
+const MIN_CONFIDENT_SIMILARITY = 0.7;
+
 // Closed-class discourse markers (hedge modals, personal-address, historical reference,
 // negation) are reliable enough to gate on directly — no reason to make the embedding step
 // re-derive what a keyword already answers with confidence.
@@ -66,5 +77,7 @@ export function classifyActionableHybrid(text: string, vector: number[], example
   if (matchPositivePattern(text) !== null) {
     return { isActionable: true, nearestText: text, similarity: 1, viaKeyword: true };
   }
-  return { ...nearestNeighbor(vector, examples), viaKeyword: false };
+  const result = nearestNeighbor(vector, examples);
+  const isActionable = result.similarity >= MIN_CONFIDENT_SIMILARITY && result.isActionable;
+  return { ...result, isActionable, viaKeyword: false };
 }

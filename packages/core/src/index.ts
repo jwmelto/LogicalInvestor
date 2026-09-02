@@ -141,6 +141,7 @@ export type ActionableResult =
   | 'fail-hypothetical'
   | 'fail-generic-practice'
   | 'fail-negated-instruction'
+  | 'fail-acknowledgment'
   | 'fail-too-short'
   | 'fail-no-signal';
 
@@ -191,6 +192,17 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // report of action already taken, not a new call, distinct from #66's "I was urging" (a past
   // reference to a specific prior recommendation vs. this being a statement of current position).
   [/\bwe'?ve already (sold|bought|entered|exited)\b/i,                         'fail-historical'],
+  // A real post-deploy false alarm: "Good job. Congrats!" reached nearest-neighbor (no other
+  // signal) and matched purely on generic congratulatory tone. "Good job" is a reaction to a
+  // reported outcome, not a directive — distinct from fail-historical (a past-tense reference to
+  // a prior *recommendation*, not praise for how something turned out. "Congrats"/"Congratulations"
+  // deliberately excluded: an existing true positive ("Congrats. Earnings on 9/10 after the bell.
+  // If you haven't sold half, you might.") opens with it before the real directive.
+  [/\bgood job\b/i,                                                            'fail-acknowledgment'],
+  // Another real post-deploy false alarm: "Yes, but it depends on where your last /2nd tranche
+  // is." "It depends" frames the answer as conditional on the individual's own situation, same
+  // personal-advice category as "in your case" / "I'd personally" above.
+  [/\bit depends\b/i,                                                          'fail-personal-advice'],
 ];
 
 const POS_PATTERNS: [RegExp, ActionableResult][] = [
