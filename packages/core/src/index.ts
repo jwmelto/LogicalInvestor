@@ -1,4 +1,13 @@
 import { decode as decodeHtmlEntities } from 'he';
+import { classifyActionableHybrid, type LabeledVector } from './similarity';
+import actionableCalibrationFixture from './data/actionableCalibration.fixture.json';
+
+export { classifyActionableHybrid, type LabeledVector };
+
+// The pinned bge-large-en-v1.5 vectors backing the hybrid actionable classifier (see
+// similarity.ts). Bundled statically -- updating the calibration set means a new commit and
+// deploy, same as any other data change, not a runtime fetch.
+export const ACTIONABLE_CALIBRATION_EXAMPLES: LabeledVector[] = actionableCalibrationFixture.examples;
 
 export const MAX_SEEN_IDS_PER_FEED = 500;
 
@@ -251,14 +260,24 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// actionableAuthors is asserted to be lowercase.
-function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
-  const text = item.content ?? '';
+// The author/topic-star gate alone, factored out of isActionablePost so the Worker can reuse it
+// to decide whether an item is worth spending a live embedding call on, without re-deriving these
+// three lines. actionableAuthors is asserted to be lowercase.
+export function isActionableCandidate(item: FilterItem, actionableAuthors: string[]): boolean {
   const author = (item.author ?? '').toLowerCase();
   const isActionableAuthor = actionableAuthors.some((a) => author.includes(a));
   const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
   const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
-  return isActionableAuthor && topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
+  return isActionableAuthor && topicPass;
+}
+
+// Regex-only actionable check. Exported: the Worker calls this directly for content the hybrid
+// classifier doesn't cover (Options Insights, which has no calibration data yet) and as the
+// fallback when a live embedding call fails. actionableAuthors is asserted to be lowercase.
+export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
+  if (!isActionableCandidate(item, actionableAuthors)) return false;
+  const text = item.content ?? '';
+  return matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
 }
 
 // Empty authors list = no author restriction. `authors` is asserted to be lowercase.
@@ -268,25 +287,26 @@ export function authorMatches(author: string | undefined, authors: string[]): bo
   return authors.some((f) => a.includes(f));
 }
 
-type TierMatcher = (item: FilterItem, authors: string[], minLength: number, actionableAuthors: string[]) => boolean;
+// The resolved per-item classification the Worker computes once per poll cycle, shared across
+// every notification bucket. `members` is checked first and short-circuits `actionable` entirely
+// (never computed, regex or hybrid) since Members Area bypasses every filter tier regardless of
+// actionable-ness — there's no reason to spend a regex check, let alone a live embedding call, on
+// content whose notification eligibility doesn't depend on it.
+export interface ItemClassification {
+  members: boolean;
+  actionable: boolean;
+}
 
-// Each tier owns its own answer to "does this item qualify," the same way FEEDS[k].isVisible()
-// answers visibility per feed rather than one function special-casing every key. Members Area
-// itself is handled once, in matchesFilter's bypass below, before any of these run.
-const TIER_MATCHERS: Record<ContentFilter, TierMatcher> = {
-  members: () => false,
-  actionable: (item, _authors, _minLength, actionableAuthors) => isActionablePost(item, actionableAuthors),
-  // 'length' is a strict superset of 'actionable': an actionable post qualifies unconditionally,
-  // same as at the 'actionable' tier itself (no whitelist check). The personal whitelist only
-  // gates the other way in — merely-long content from a whitelisted author.
-  length: (item, authors, minLength, actionableAuthors) =>
-    isActionablePost(item, actionableAuthors) ||
-    (authorMatches(item.author, authors) && (item.content ?? '').length >= minLength),
-};
-
-// Members Area is unconditional — no author or content check. Every other tier delegates to its
-// own matcher in TIER_MATCHERS.
-export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, actionableAuthors: string[]): boolean {
-  if (item.feedKey === FeedKeys.membersArea) return true;
-  return TIER_MATCHERS[filter](item, authors, minLength, actionableAuthors);
+// Members Area is unconditional; every other tier is a pure function of the already-resolved
+// classification plus this bucket's own settings. matchesFilter no longer computes
+// actionable-ness itself — see ItemClassification's comment for why that's resolved upstream,
+// once per item, not per bucket.
+export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, classification: ItemClassification): boolean {
+  if (classification.members) return true;
+  if (filter === 'members') return false;
+  if (classification.actionable) return true;
+  // 'length' is a strict superset of 'actionable': an actionable post already qualified above.
+  // The personal whitelist only gates the other way in — merely-long content from a whitelisted
+  // author.
+  return filter === 'length' && authorMatches(item.author, authors) && (item.content ?? '').length >= minLength;
 }

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
 import { CHANNEL_FEEDS } from './config';
-import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL } from '@li/core';
-import type { FeedKey, FilterItem } from '@li/core';
+import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost, ACTIONABLE_CALIBRATION_EXAMPLES } from '@li/core';
+import type { FeedKey, FilterItem, ItemClassification } from '@li/core';
 
 const FK = FeedKeys;
 
@@ -49,9 +49,17 @@ function runState(seen: Record<string, string[]>): string {
 
 beforeEach(() => { vi.restoreAllMocks(); });
 
-// matchesFilter(item, filter, authors, minLength, actionableAuthors) is the one function a
-// device's alerting decision goes through. One describe block per tier, each covering only what
-// that tier requires.
+// classify() mirrors the once-per-item, regex-only computation runChannel() does before the
+// bucket loop (the non-hybrid path — these tests exercise tier dispatch and regex-driven
+// actionable-ness, not the live embedding call, which is covered separately below).
+function classify(testItem: FilterItem, actionableAuthors: string[]): ItemClassification {
+  const members = testItem.feedKey === FK.membersArea;
+  return members ? { members: true, actionable: false } : { members: false, actionable: isActionablePost(testItem, actionableAuthors) };
+}
+
+// matchesFilter(item, filter, authors, minLength, classification) is the one function a device's
+// alerting decision goes through. One describe block per tier, each covering only what that tier
+// requires.
 describe('matchesFilter', () => {
   describe('members tier', () => {
     it.each([
@@ -60,81 +68,84 @@ describe('matchesFilter', () => {
       ['actionable-signal content', item(FK.membersArea, { description: longWithSignal })],
       ['negative-pattern content', item(FK.membersArea, { description: longNegative })],
     ])('a Members Area post (%s) alerts regardless of author', (_desc, testItem) => {
-      expect(matchesFilter(testItem, 'members', ['someone else'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
-      expect(matchesFilter(testItem, 'members', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(testItem, 'members', ['someone else'], MIN, classify(testItem, ACTIONABLE_AUTHORS))).toBe(true);
+      expect(matchesFilter(testItem, 'members', [], MIN, classify(testItem, ACTIONABLE_AUTHORS))).toBe(true);
     });
 
     it('a post outside Members Area does not alert', () => {
-      expect(matchesFilter(item(FK.membersForum, { description: longWithSignal }), 'members', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      const post = item(FK.membersForum, { description: longWithSignal });
+      expect(matchesFilter(post, 'members', [ACTIONABLE_AUTHORS[0]], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(false);
     });
   });
 
   describe('actionable tier', () => {
     it('an actionable-signal post by an ACTIONABLE_AUTHORS author alerts', () => {
       const post = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: longWithSignal });
-      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     });
 
     it('an actionable-signal post by an author outside ACTIONABLE_AUTHORS does not alert', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
-      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(false);
     });
 
     it('a non-actionable post does not alert, regardless of author', () => {
-      expect(matchesFilter(item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
-      expect(matchesFilter(item(FK.membersForum, { author: 'Joe Blow', description: long }), 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      const signed = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: long });
+      const other = item(FK.membersForum, { author: 'Joe Blow', description: long });
+      expect(matchesFilter(signed, 'actionable', [], MIN, classify(signed, ACTIONABLE_AUTHORS))).toBe(false);
+      expect(matchesFilter(other, 'actionable', [], MIN, classify(other, ACTIONABLE_AUTHORS))).toBe(false);
     });
 
     it('ACTIONABLE_AUTHORS is a live parameter: changing it changes who can alert', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: longWithSignal });
-      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
-      expect(matchesFilter(post, 'actionable', [], MIN, ['joe blow'])).toBe(true);
+      expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(false);
+      expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ['joe blow']))).toBe(true);
     });
 
     it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
       const starred = item(feedKey, { title: '*VUTS Trade', description: longWithSignal });
       const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
-      expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(true);
-      expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(starred, ACTIONABLE_AUTHORS))).toBe(true);
+      expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(unstarred, ACTIONABLE_AUTHORS))).toBe(false);
     });
 
     it('a negative-pattern post does not alert at the actionable tier, but can still alert at the length tier', () => {
       const post = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: longNegative });
-      expect(matchesFilter(post, 'actionable', [], MIN, ACTIONABLE_AUTHORS)).toBe(false);
-      expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(false);
+      expect(matchesFilter(post, 'length', [], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     });
   });
 
   describe('length tier', () => {
     it('a long-enough post by a whitelisted author alerts', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
-      expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(post, 'length', ['joe blow'], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     });
 
     it('a long-enough post by a non-whitelisted author does not alert', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: long });
-      expect(matchesFilter(post, 'length', [ACTIONABLE_AUTHORS[0]], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(post, 'length', [ACTIONABLE_AUTHORS[0]], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(false);
     });
 
     it('an empty author whitelist means no author restriction', () => {
       const post = item(FK.membersForum, { author: 'Anyone At All', description: long });
-      expect(matchesFilter(post, 'length', [], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(post, 'length', [], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     });
 
     it('a post shorter than minLength does not alert, even from a whitelisted author', () => {
       const post = item(FK.membersForum, { author: 'Joe Blow', description: 'short' });
-      expect(matchesFilter(post, 'length', ['joe blow'], MIN, ACTIONABLE_AUTHORS)).toBe(false);
+      expect(matchesFilter(post, 'length', ['joe blow'], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(false);
     });
   });
 
-  // Spans both tiers deliberately: each verifies a different formula (TIER_MATCHERS.actionable
-  // vs. TIER_MATCHERS.length) independently, so parameterizing doesn't drop coverage — it removes
-  // what would otherwise be two byte-for-byte-identical test bodies.
+  // Spans both tiers deliberately: each verifies a different formula (the actionable-tier
+  // shortcut vs. the length-tier OR) independently, so parameterizing doesn't drop coverage — it
+  // removes what would otherwise be two byte-for-byte-identical test bodies.
   it.each(['actionable', 'length'] as const)(
     "a device's personal author whitelist does not restrict an actionable post at the %s tier",
     (filter) => {
       const post = item(FK.membersForum, { author: ACTIONABLE_AUTHORS[0], description: longWithSignal });
-      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     }
   );
 
@@ -146,7 +157,7 @@ describe('matchesFilter', () => {
     'a Members Area post alerts at the %s tier, regardless of author or content',
     (filter) => {
       const post = item(FK.membersArea, { author: 'nobody in particular', description: '' });
-      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, ACTIONABLE_AUTHORS)).toBe(true);
+      expect(matchesFilter(post, filter, ['someone else entirely'], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     }
   );
 });
@@ -1023,6 +1034,140 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
 
     const finalState = JSON.parse(stateStore['run:members']!);
     expect(finalState.stats.sent).toBe(1); // only the second (successful) bucket counted
+  });
+});
+
+// The hybrid classifier only applies to Members Forum and Stock Insights content whose regex
+// check is genuinely undecided — see runChannel's classification loop. These tests exercise that
+// loop end to end via worker.scheduled(), mocking env.AI.run rather than calling the classifier
+// functions directly, since the "classify once per poll cycle, not once per bucket" property only
+// exists at the runChannel level.
+describe('runChannel — hybrid actionable classification (Members Forum + Stock Insights)', () => {
+  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
+  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+  // Deliberately free of every NEG_PATTERN/POS_PATTERN keyword -- classifySignal returns
+  // fail-no-signal for this text, which is what makes it a hybrid candidate in the first place.
+  const AMBIGUOUS = 'Thinking this one might set up nicely over the next few weeks.';
+  const itemXml = (guid: string, description: string, title = 't') =>
+    `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>${title}</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${description}</description></item></channel></rss>`;
+
+  function membersEnv(aiRun: ReturnType<typeof vi.fn>) {
+    const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
+    return {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'members:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0 } }],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      AI: { run: aiRun },
+    } as any;
+  }
+
+  it('a Members Forum post with an ambiguous regex verdict becomes an AI candidate, and a positive hybrid result drives the alert', async () => {
+    const knownExample = ACTIONABLE_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
+    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }); // Members Area: nothing new
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(aiRun.mock.calls[0][1].text).toEqual([AMBIGUOUS]);
+    expect(pushCalls).toBe(1); // the 'actionable' bucket alerted on the hybrid-positive result
+  });
+
+  it('an AI call failure falls back to not-actionable without throwing', async () => {
+    const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(pushCalls).toBe(0); // fell back to not-actionable, same as pre-wiring regex-only behavior
+  });
+
+  it('zero candidates means env.AI.run is never called', async () => {
+    const aiRun = vi.fn();
+    const env = membersEnv(aiRun);
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }); // nothing new anywhere
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(aiRun).not.toHaveBeenCalled();
+  });
+
+  it('an Options Insights post never becomes a hybrid candidate, even with ambiguous content', async () => {
+    const aiRun = vi.fn();
+    const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [{ name: 'options:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0 } }],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      AI: { run: aiRun },
+    } as any;
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', AMBIGUOUS, '*Starred Trade')) })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(aiRun).not.toHaveBeenCalled(); // Options Insights has no calibration data yet -- regex-only fallback
+  });
+
+  it('multiple buckets sharing one ambiguous Members Forum item result in exactly one env.AI.run call', async () => {
+    const knownExample = ACTIONABLE_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
+    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
+    const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
+    const env = {
+      STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
+      TOKENS: {
+        list: vi.fn().mockResolvedValue({
+          keys: [
+            { name: 'members:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0 } },
+            { name: 'members:push-b', metadata: { filter: 'length', authors: [], minLength: 0 } },
+          ],
+          list_complete: true,
+        }),
+        delete: vi.fn().mockResolvedValue(undefined),
+      },
+      AI: { run: aiRun },
+    } as any;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(aiRun).toHaveBeenCalledTimes(1); // shared across both buckets, not once each
   });
 });
 

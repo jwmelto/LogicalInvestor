@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, matchNegativePattern, matchPositivePattern, classifyActionableHybrid, ACTIONABLE_CALIBRATION_EXAMPLES, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
 import { CHANNEL_FEEDS } from './config';
 
@@ -12,6 +12,7 @@ export interface Env {
   STATE: KVNamespace;
   WEBPUSH_QUEUE: Queue<WebPushQueueMessage>;
   VALIDATION_QUEUE: Queue<ValidationQueueMessage>;
+  AI: Ai; // Workers AI binding -- embeddings for the hybrid actionable classifier (Members Forum + Stock Insights only)
   FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
@@ -862,6 +863,50 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     return;
   }
 
+  // Classify every fresh item once here, shared by every bucket below — not once per bucket. A
+  // live embedding call from inside the per-bucket loop would re-embed the same post once per
+  // bucket, wasting latency and Workers AI neuron budget. `members` is checked first and
+  // short-circuits `actionable` entirely (regex and embeddings both skipped) since Members Area
+  // bypasses every filter tier regardless of actionable-ness.
+  //
+  // The hybrid classifier only covers Members Forum and Stock Insights (both stock-pick content
+  // in the vocabulary its calibration set is built from, differing only in the star-gate Stock
+  // Insights requires) -- this is a per-feed condition, not per-channel: Members Forum is bundled
+  // under the 'members' channel for push-registration purposes only. Options Insights has no
+  // calibration data yet and stays on the regex-only path via isActionablePost.
+  const classifications = new Map<string, ItemClassification>();
+  const hybridCandidates: RssItem[] = [];
+  for (const rssItem of freshItems) {
+    const fi = toFilterItem(rssItem);
+    if (fi.feedKey === FeedKeys.membersArea) {
+      classifications.set(rssItem.guid, { members: true, actionable: false });
+      continue;
+    }
+    const text = fi.content ?? '';
+    const isStockPickFeed = fi.feedKey === FeedKeys.membersForum || fi.feedKey === FeedKeys.stockInsights;
+    const regexUndecided = matchNegativePattern(text) === null && matchPositivePattern(text) === null;
+    if (isStockPickFeed && regexUndecided && isActionableCandidate(fi, actionableAuthors)) {
+      hybridCandidates.push(rssItem); // resolved after the batch AI call below
+      continue;
+    }
+    classifications.set(rssItem.guid, { members: false, actionable: isActionablePost(fi, actionableAuthors) });
+  }
+
+  if (hybridCandidates.length > 0) {
+    try {
+      const texts = hybridCandidates.map((rssItem) => rssItem.description);
+      const result = await env.AI.run('@cf/baai/bge-large-en-v1.5', { text: texts }) as { data: number[][] };
+      hybridCandidates.forEach((rssItem, i) => {
+        const hybrid = classifyActionableHybrid(rssItem.description, result.data[i], ACTIONABLE_CALIBRATION_EXAMPLES);
+        classifications.set(rssItem.guid, { members: false, actionable: hybrid.isActionable });
+      });
+    } catch {
+      // AI call failed this cycle -- these candidates already know regex was undecided, so they
+      // fall back to not-actionable, identical to today's pre-wiring behavior for this content.
+      hybridCandidates.forEach((rssItem) => classifications.set(rssItem.guid, { members: false, actionable: false }));
+    }
+  }
+
   // Push-sends are independent per bucket, so they run concurrently rather than one at a time —
   // this shortens wall-clock duration (fetch() wait doesn't count against the Worker's CPU-time
   // limit either way, but a shorter invocation is still less exposed to Cloudflare's separate
@@ -869,7 +914,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   const sentCounts = await Promise.all(
     Array.from(buckets.values()).map(async (bucket) => {
       const toNotify = freshItems
-        .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength, actionableAuthors))
+        .filter((item) => matchesFilter(toFilterItem(item), bucket.filter, bucket.authors, bucket.minLength, classifications.get(item.guid)!))
         .slice(0, 5);
       if (toNotify.length === 0) return 0;
 
