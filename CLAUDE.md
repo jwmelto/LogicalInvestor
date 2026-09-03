@@ -406,15 +406,12 @@ and `ForumFeed`'s long-press "Add author to alerts" gesture (`addPushAuthor`) bo
 `unregisterPushToken()`, `getPushFilter()`, `getPushAuthors()`, `getPushMinLength()`
 
 **Worker-side filtering**: the app only sends filter *settings* at registration time.
-Every matching decision (`matchesFilter` in `@li/core`, called from the cron handler in `cloudflare-worker/src/index.ts`) runs in the Worker.
-Members Area always notifies, at every tier — an unconditional bypass in `matchesFilter`, checked before any tier logic runs.
-For every other feed, the three tiers (`FILTER_TIERS` in `@li/core`: `members`, `actionable`, `length`) are narrow to broad, each a strict superset of the one before it:
-- `members`: nothing else notifies.
-- `actionable`: the post must satisfy all of:
-  - Author is in the Worker's own `ACTIONABLE_AUTHORS` list (`env.ACTIONABLE_AUTHORS`, default "Sean Hyman") — not the device's personal author whitelist.
-  - For Stock/Options Insights only: the topic title starts with `*`.
-  - Content passes both the actionable-signal negative and positive pattern checks.
-- `length`: everything that qualifies at `actionable` still qualifies here unconditionally, plus anything matching the device's own author whitelist with content at least `minLength` characters long.
+Every matching decision runs in the Worker, in `runChannel` (`cloudflare-worker/src/index.ts`), via two steps that are deliberately separate:
+
+1. **Classification, once per item per poll cycle.** Before the per-bucket notification loop, `runChannel` walks `freshItems` once and resolves each into an `ItemClassification` (`@li/core`): `{ members: boolean, actionable: boolean }`. `members` is checked first — a plain `feedKey === membersArea` comparison — and short-circuits `actionable` entirely (never computed, regex or embeddings) whenever it's true, since Members Area bypasses every tier regardless of actionable-ness. When `members` is false, `actionable` is resolved by whichever of these applies:
+   - **Members Forum or Stock Insights, and the regex check is undecided** (`classifySignal` returns `fail-no-signal`/`fail-too-short`, i.e. neither a `NEG_PATTERNS` nor `POS_PATTERNS` match) — these are the only two feeds the hybrid classifier's calibration set covers, differing only in the star-gate Stock Insights requires. All such items across the whole poll cycle are batched into **one** `env.AI.run()` call (the `[ai]` binding in `wrangler.toml`), embedded via `@cf/baai/bge-large-en-v1.5`, and resolved through `classifyActionableHybrid` (`packages/core/src/similarity.ts`) against the pinned calibration vectors (`ACTIONABLE_CALIBRATION_EXAMPLES`, from `packages/core/src/data/actionableCalibration.fixture.json`). Batching one call per poll cycle, not one per item, is deliberate — the same content would otherwise get re-embedded once per notification bucket. A failed/errored AI call falls back to `actionable: false` for just that cycle's candidates, never blocks the run.
+   - **Everything else** (Options Insights, or any item where regex already has an opinion) — `isActionablePost` (`@li/core`, regex-only): author is in the Worker's own `ACTIONABLE_AUTHORS` list (`env.ACTIONABLE_AUTHORS`, default "Sean Hyman") — not the device's personal author whitelist — the topic title starts with `*` for Stock/Options Insights, and content passes both the actionable-signal negative and positive pattern checks (`matchNegativePattern`/`matchPositivePattern`).
+2. **Dispatch, per bucket, reusing that classification.** `matchesFilter(item, filter, authors, minLength, classification)` takes the already-resolved `ItemClassification` — it no longer computes actionable-ness itself. The three tiers (`FILTER_TIERS` in `@li/core`: `members`, `actionable`, `length`) are narrow to broad, each a strict superset of the one before it: `members` alerts only when `classification.members`; `actionable` alerts when `classification.actionable`; `length` alerts on either `classification.actionable` or the device's own author whitelist with content at least `minLength` characters long.
 
 Every `/register` call includes `feed_token` — `registerPushChannel()` and `updatePushSettings()` both always send it.
 The Worker uses it to verify access before storing the registration; see `cloudflare-worker/src/index.ts` for how each channel checks it.

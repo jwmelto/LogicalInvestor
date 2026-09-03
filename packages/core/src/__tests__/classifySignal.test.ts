@@ -50,8 +50,86 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad("I'd not encourage entries this high up above 200-day and 200-week moving averages. I'd either hold what you've got or sell some more but not buy anything more. We're ultimately looking to exit at $18ish."), MIN)).toBe('fail-negated-instruction');
   });
 
-  test('fail-too-short: no pattern match and below minLength', () => {
-    expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
+  // A full real post: a rhetorical aside about consumer purchases ("if you don't buy their
+  // product...") used the same negation-adjacent-to-buy shape #79 fixed, but conditional "if you
+  // don't" framing describes a hypothetical, not the reader's own position — it shouldn't
+  // suppress a genuine tranche-price directive appearing later in the same post.
+  test('pass-tranche-price: an unrelated "if you don\'t buy X" aside does not suppress a real directive later in the post', () => {
+    expect(classifySignal(pad("So, if you don't buy their product, then you're not funding them. 2nd tranche: $121."), MIN)).toBe('pass-tranche-price');
+  });
+
+  test('fail-negated-instruction: still fires for a direct declarative negation (not conditional)', () => {
+    expect(classifySignal(pad("I'd either hold what you've got or sell some more but not buy anything more."), MIN)).toBe('fail-negated-instruction');
+  });
+
+  // "You can sell half if you wish" would otherwise match pass-sell-fraction outright —
+  // permissive, take-it-or-leave-it framing isn't a directive.
+  test('fail-hypothetical: "if you wish" permissive framing suppresses sell-fraction match', () => {
+    expect(classifySignal(pad('Good. You can sell half if you wish. Our ultimate target is $18ish.'), MIN)).toBe('fail-hypothetical');
+  });
+
+  test('fail-hypothetical: "nothing wrong with/if" permissive framing', () => {
+    expect(classifySignal(pad("There's nothing wrong if you want to sell all, but we're not doing that officially."), MIN)).toBe('fail-hypothetical');
+  });
+
+  // Third-person variant of the same permissive framing: "wants to choose to" describes an
+  // optional individual choice, not a directive, even though "sell half" appears literally.
+  test('fail-hypothetical: "wants to choose to" third-person permissive framing', () => {
+    expect(classifySignal(pad("If someone is up 20-30% in a short period of time and they want to choose to sell half, they can always do that, even without confirmation from me."), MIN)).toBe('fail-hypothetical');
+  });
+
+  // Has an action verb (so it clears the new fail-no-action-verb gate) but no other pattern
+  // matches and it's below minLength.
+  test('fail-too-short: no pattern match, has an action verb, and below minLength', () => {
+    expect(classifySignal('general discussion about when to sell', MIN)).toBe('fail-too-short');
+  });
+
+  // No action verb anywhere -- necessary-condition gate resolves this before length is even
+  // considered, regardless of minLength.
+  test('fail-no-action-verb: no pattern match and no trade-action verb present', () => {
+    expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-no-action-verb');
+  });
+
+  // Real post-deploy false alarm this gate resolves directly: the exact leave-one-out case
+  // chased for most of a session, sharing dense topical vocabulary (tranches, moving averages)
+  // with a genuine directive elsewhere in the calibration set, but containing no action verb of
+  // its own.
+  test('fail-no-action-verb: status update with no action verb, despite shared topical vocabulary', () => {
+    expect(classifySignal(pad("I'm keeping my eye on it to see if we need to keep it at $145. Our 3rd tranche still doesn't make it down to the lowest shaded zone, but that zone is a mile below the 200-week moving average."), MIN)).toBe('fail-no-action-verb');
+  });
+
+  // "buy recommendation" is a noun-phrase reference to the historical call, not a live verb --
+  // must not falsely clear the gate on the literal string "buy" alone.
+  test('fail-no-action-verb: "buy recommendation" does not count as a live action verb', () => {
+    expect(classifySignal(pad('All 3 tranches are known from the original buy recommendation in the newsletter.'), MIN)).toBe('fail-no-action-verb');
+  });
+
+  // Real post-deploy false alarm: "Good job. Congrats!" had no other signal, so it reached
+  // nearest-neighbor and matched purely on generic congratulatory tone.
+  test('fail-acknowledgment: "good job" reacting to a reported outcome, not a directive', () => {
+    expect(classifySignal(pad('Good job. Congrats!'), MIN)).toBe('fail-acknowledgment');
+  });
+
+  // "Congrats" alone is deliberately not a marker -- an existing true positive opens with it
+  // before the real directive.
+  test('pass-sell-fraction: "Congrats" alone does not suppress a real directive that follows', () => {
+    expect(classifySignal(pad("Congrats. Earnings on 9/10 after the bell. If you haven't sold half, you might."), MIN)).toBe('pass-sell-fraction');
+  });
+
+  // Real post-deploy false alarm: "Yes, but it depends on where your last /2nd tranche is." --
+  // conditional-on-individual-circumstances framing, same category as "in your case".
+  test('fail-personal-advice: "it depends" frames the answer as conditional on the individual', () => {
+    expect(classifySignal(pad('Yes, but it depends on where your last 2nd tranche is.'), MIN)).toBe('fail-personal-advice');
+  });
+
+  // #82
+  test('fail-hypothetical: "any one of these paths" scenario-branching hedge', () => {
+    expect(classifySignal(pad("Because it can still take any one of these paths, you might sell half (since you're up 30%) and keep the rest and that sets you up better in case the lower scenarios unfold."), MIN)).toBe('fail-hypothetical');
+  });
+
+  // #82
+  test('fail-historical: "we\'ve already sold half" retrospective status report', () => {
+    expect(classifySignal(pad("Glad you did well, but here's our official stance on it: Since we've already sold half, we're officially still holding what we've got. If it continues higher, great, we'll reap more profits. If it pulls back, great, we can re-establish our half sold around $22ish and if it drops further, great, we can get in averaging downs at $20 and $15. So, we're poised to do well if it rockets higher from here or pulls back, because of how we allocate capital to it and because of how we've managed risks (by selling half)."), MIN)).toBe('fail-historical');
   });
 });
 
@@ -106,6 +184,14 @@ describe('classifySignal — positive patterns', () => {
     expect(classifySignal(pad('With y\'all being up 21%-22% in under 2 trading days, I\'d consider selling half of your remaining half'), MIN)).toBe('pass-sell-fraction');
   });
 
+  // Past tense: "hasn't sold half" is a real reported phrasing the bare sell(?:ing)? alternation
+  // missed entirely (fail-no-signal). The one negative example using "sold half" ("we've already
+  // sold half...") is already caught earlier by the more specific fail-historical pattern, so
+  // widening the verb form here doesn't risk it.
+  test('pass-sell-fraction: past tense "sold half"', () => {
+    expect(classifySignal(pad("If anyone hasn't sold half, it's a good time to do that, now, as long as you're up at least 20% or more."), MIN)).toBe('pass-sell-fraction');
+  });
+
   test('pass-averaging-down', () => {
     expect(classifySignal(pad('If GHK dips anywhere into the $81ish area, that\'s close enough to get your averaging down'), MIN)).toBe('pass-averaging-down');
   });
@@ -150,7 +236,19 @@ describe('classifySignal — positive patterns', () => {
     expect(classifySignal(pad("You can sell half now. We'll eye it a lot closer between $90ish and $100ish. Also, its got earnings coming out on 8/05 before the bell."), MIN)).toBe('pass-sell-fraction');
   });
 
-  test('fail-no-signal: general discussion', () => {
-    expect(classifySignal(pad('Warren Buffett talks about how the world is yours if you can keep your head about you when others lose theirs'), MIN)).toBe('fail-no-signal');
+  test('fail-no-action-verb: general discussion, no trade-action verb present', () => {
+    expect(classifySignal(pad('Warren Buffett talks about how the world is yours if you can keep your head about you when others lose theirs'), MIN)).toBe('fail-no-action-verb');
+  });
+
+  // #82: true-positive anchor — direct "sell half" instruction, kept passing so future
+  // NEG_PATTERNS tightening doesn't start suppressing it.
+  test('pass-sell-fraction: #82 anchor — "sell half" ahead of an earnings date', () => {
+    expect(classifySignal(pad("If you've not done a \"sell half\" on VNP yet and you're up 20%+, I'd go ahead and do that now, with them reporting earnings tomorrow before the bell and we don't know if it'll rally or sell-off, near-term."), MIN)).toBe('pass-sell-fraction');
+  });
+
+  // #82: missed alert — "sell it all" has a pronoun between the verb and the fraction word,
+  // which the original bare-adjacency regex missed entirely (fail-no-signal).
+  test('pass-sell-fraction: "sell it all" with an intervening pronoun', () => {
+    expect(classifySignal(pad("No prob. Also, if VNP gets to $90-$91ish, I'm fine for us to officially sell it all, We'd be up minimally 30%, for those who only got in one tranche. For those who got in two tranches, it's even more."), MIN)).toBe('pass-sell-fraction');
   });
 });

@@ -1,0 +1,6 @@
+name = "li-embed-scratch"
+main = "generate-embeddings.worker.ts"
+compatibility_date = "2024-12-01"
+
+[ai]
+binding = "AI"

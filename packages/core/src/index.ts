@@ -1,4 +1,13 @@
 import { decode as decodeHtmlEntities } from 'he';
+import { classifyActionableHybrid, type LabeledVector } from './similarity';
+import actionableCalibrationFixture from './data/actionableCalibration.fixture.json';
+
+export { classifyActionableHybrid, type LabeledVector };
+
+// The pinned bge-large-en-v1.5 vectors backing the hybrid actionable classifier (see
+// similarity.ts). Bundled statically -- updating the calibration set means a new commit and
+// deploy, same as any other data change, not a runtime fetch.
+export const ACTIONABLE_CALIBRATION_EXAMPLES: LabeledVector[] = actionableCalibrationFixture.examples;
 
 export const MAX_SEEN_IDS_PER_FEED = 500;
 
@@ -132,6 +141,8 @@ export type ActionableResult =
   | 'fail-hypothetical'
   | 'fail-generic-practice'
   | 'fail-negated-instruction'
+  | 'fail-acknowledgment'
+  | 'fail-no-action-verb'
   | 'fail-too-short'
   | 'fail-no-signal';
 
@@ -155,7 +166,44 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // fix for negation adjacent to the verb, not every possible negative framing further away.
   // Window kept tight (4 chars) so it doesn't also catch unrelated "ask/buy quote" market-mechanics
   // phrasing (e.g. "not the ask/buy quote"), which has ~9 chars between "not" and "buy".
-  [/\b(not|n't|never|don'?t|doesn'?t|didn'?t)\b[\s\S]{0,4}\b(buy|enter)\b/i, 'fail-negated-instruction'],
+  // Excludes "if you don't buy X, then Y" conditional framing — a real false positive on a full
+  // post where a rhetorical aside about consumer purchases ("if you don't buy their beer/wine...
+  // you're not funding them") suppressed a genuine tranche-price buy call elsewhere in the same
+  // post. A veto from one narrow regex shouldn't outweigh a real, unrelated directive; the fix is
+  // making the regex itself stop firing on this shape, not weakening the veto generally — a
+  // sentence-scoped veto was tried and rejected, since it also broke the #82 "already sold
+  // half...officially still holding" case (a later, unrelated-looking "selling half" mention in
+  // the same retrospective paragraph), the exact discourse-judgment problem regex can't solve.
+  [/(?<!\bif\b[^.!?]{0,12})\b(not|n't|never|don'?t|doesn'?t|didn'?t)\b[\s\S]{0,4}\b(buy|enter)\b/i, 'fail-negated-instruction'],
+  // "if you wish" / "if you want to" / "nothing wrong with X" — permissive, take-it-or-leave-it
+  // framing, not a directive. "You can sell half if you wish" would otherwise match
+  // pass-sell-fraction outright; nothing previously distinguished optional permission from a call.
+  [/\bif you (wish|want to)\b|\bnothing wrong (with|if)\b/i,               'fail-hypothetical'],
+  // Same permissive-framing category as above, third person: "if someone... they want to choose
+  // to sell half, they can always do that" describes an optional individual choice, not a call —
+  // same discourse function as "if you want to", different pronoun.
+  [/\bwants? to choose to\b/i,                                              'fail-hypothetical'],
+  // #82: "it can still take any one of these paths, you might sell half..." — scenario-branching
+  // hedge language, same spirit as the #66 "could either...or" two-sided hedge but a different
+  // construction. ponytail: narrow to "paths/scenarios/outcomes" nouns actually seen in reports;
+  // a genuine directive that also happens to use this phrasing ("any one of these paths, sell
+  // half now regardless") would false-negative too — widen the noun alternation if that shows up.
+  [/\bany one of (these|those|the)\s+(paths|scenarios|outcomes)\b/i,          'fail-hypothetical'],
+  // #82: "we've already sold half, we're officially still holding" — a retrospective status
+  // report of action already taken, not a new call, distinct from #66's "I was urging" (a past
+  // reference to a specific prior recommendation vs. this being a statement of current position).
+  [/\bwe'?ve already (sold|bought|entered|exited)\b/i,                         'fail-historical'],
+  // A real post-deploy false alarm: "Good job. Congrats!" reached nearest-neighbor (no other
+  // signal) and matched purely on generic congratulatory tone. "Good job" is a reaction to a
+  // reported outcome, not a directive — distinct from fail-historical (a past-tense reference to
+  // a prior *recommendation*, not praise for how something turned out. "Congrats"/"Congratulations"
+  // deliberately excluded: an existing true positive ("Congrats. Earnings on 9/10 after the bell.
+  // If you haven't sold half, you might.") opens with it before the real directive.
+  [/\bgood job\b/i,                                                            'fail-acknowledgment'],
+  // Another real post-deploy false alarm: "Yes, but it depends on where your last /2nd tranche
+  // is." "It depends" frames the answer as conditional on the individual's own situation, same
+  // personal-advice category as "in your case" / "I'd personally" above.
+  [/\bit depends\b/i,                                                          'fail-personal-advice'],
 ];
 
 const POS_PATTERNS: [RegExp, ActionableResult][] = [
@@ -172,7 +220,9 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   // followed by whitespace. 200 is a sanity backstop against pathological run-on sentences, not
   // the primary boundary.
   [/\$\d+(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\b(buy|enter)\b|\b(buy|enter)\b(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\$\d+/i, 'pass-buy-with-price'],
-  [/\bsell(?:ing)?\s+(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,             'pass-sell-fraction'],
+  // #82: "sell it all" — the fraction word doesn't always sit directly after the verb; an
+  // intervening pronoun is common, natural phrasing missed by the original bare-adjacency regex.
+  [/\b(sell(?:ing)?|sold)\s+(?:it\s+)?(half|all|a\s+third|a\s+quarter|\d+\/\d+)\b/i,   'pass-sell-fraction'],
   // Bare "averaging down" is discussed constantly as general market commentary — a live false
   // positive ("in some cases, that'll give us averaging down opportunities...") had no directive
   // verb anywhere near it, just abstract description. Unlike every other POS_PATTERN, the old
@@ -187,14 +237,46 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
 ];
 
-function matchNegativePattern(text: string): ActionableResult | null {
+// Necessary-condition check: a real directive always names a trade action, in some form, even
+// when phrased as a modal ("you can sell half now"), infinitive ("close enough to get your
+// averaging down in"), or first-person announcement ("we're getting into X now") rather than a
+// bare command. Grammatical mood was tried and rejected as the discriminating axis: 89% of real
+// positive examples in the calibration set have no bare-imperative clause at all, since this
+// author overwhelmingly softens directives with modals rather than issuing bare commands.
+// Absence of any of these verb forms is necessary, not sufficient, evidence of
+// non-actionability — see its placement in classifySignal below, strictly after both pattern
+// arrays, so it only narrows the residual ambiguous bucket and never overrides an established
+// verb-free positive signal like pass-tranche-price ("2nd tranche: $121" carries no verb at all
+// by this newsletter's own convention).
+//
+// Excludes "buy recommendation"/"rating"/"call"/"alert" — a noun-phrase reference to the
+// original historical call ("the buy recommendation from the newsletter"), not a live verb.
+// Found via a real false match on a genuine negative example that otherwise relied on
+// nearest-neighbor and got it wrong.
+const ACTION_VERB = /\b(buy|buys|buying|bought)\b(?!\s+(recommendation|rating|call|alert))|\b(sell|sells|selling|sold|enter|enters|entering|entered|get\s+in(?:to)?|gets\s+in(?:to)?|getting\s+in(?:to)?|got\s+in(?:to)?|exit|exits|exiting|exited|hold|holds|holding|held|close|closes|closing|closed|roll|rolls|rolling|rolled|average[ds]?\s+down|averaging\s+down|add|adds|adding|added|trim|trims|trimming|trimmed)\b/i;
+
+// Exported for the embeddings-similarity prototype (see similarity.ts): closed-class discourse
+// markers (hedge modals, personal-address phrases, negation) are reliably keyword-detectable —
+// the whack-a-mole history on this file is about open-ended phrasing (directive vs. retrospective
+// framing), not these markers, so there's no reason for a hybrid classifier to re-derive them.
+export function matchNegativePattern(text: string): ActionableResult | null {
   for (const [re, clause] of NEG_PATTERNS) {
     if (re.test(text)) return clause;
   }
   return null;
 }
 
-function matchPositivePattern(text: string): ActionableResult | null {
+// Exported for the embeddings-similarity prototype (see similarity.ts) — classifyActionableHybrid
+// applies this itself, in the same order as classifySignal (after both pattern arrays, never
+// before), since it calls matchNegativePattern/matchPositivePattern directly rather than going
+// through classifySignal.
+export function containsActionVerb(text: string): boolean {
+  return ACTION_VERB.test(text);
+}
+
+// Exported for the embeddings-similarity prototype (see similarity.ts) — see matchNegativePattern's
+// comment above for why this file's reliable literal markers are reused rather than re-derived.
+export function matchPositivePattern(text: string): ActionableResult | null {
   for (const [re, clause] of POS_PATTERNS) {
     if (re.test(text)) return clause;
   }
@@ -206,6 +288,7 @@ export function classifySignal(text: string, minLength: number): ActionableResul
   if (neg) return neg;
   const pos = matchPositivePattern(text);
   if (pos) return pos;
+  if (!ACTION_VERB.test(text)) return 'fail-no-action-verb';
   return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
 }
 
@@ -213,18 +296,42 @@ export function containsActionableSignal(text: string, minLength = 200): boolean
   return classifySignal(text, minLength).startsWith('pass');
 }
 
+// True only for the two outcomes that mean "the regex/action-verb gate has no opinion either
+// way" -- every other ActionableResult (every pass-*, and every fail-* that isn't one of these
+// two) is a definitive verdict from classifySignal, not something that should fall through to a
+// live embedding call. The single place this distinction is expressed, so classifyActionableHybrid
+// and the Worker's hybrid-candidacy check can't drift from each other or from classifySignal
+// itself -- see classifyActionableHybrid's comment for why that drift is a real, not
+// hypothetical, risk.
+export function isSignalUndecided(result: ActionableResult): boolean {
+  return result === 'fail-no-signal' || result === 'fail-too-short';
+}
+
 export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// actionableAuthors is asserted to be lowercase.
-function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
-  const text = item.content ?? '';
+// The author/topic-star gate alone, factored out of isActionablePost so the Worker can reuse it
+// to decide whether an item is worth spending a live embedding call on, without re-deriving these
+// three lines. actionableAuthors is asserted to be lowercase.
+export function isActionableCandidate(item: FilterItem, actionableAuthors: string[]): boolean {
   const author = (item.author ?? '').toLowerCase();
   const isActionableAuthor = actionableAuthors.some((a) => author.includes(a));
   const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
   const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
-  return isActionableAuthor && topicPass && matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
+  return isActionableAuthor && topicPass;
+}
+
+// Regex-only actionable check. Exported: the Worker calls this directly for content the hybrid
+// classifier doesn't cover (Options Insights, which has no calibration data yet) and as the
+// fallback when a live embedding call fails. actionableAuthors is asserted to be lowercase.
+// Goes through classifySignal (via containsActionableSignal) rather than re-deriving the
+// pattern/action-verb sequence by hand -- that duplication is exactly what let the action-verb
+// gate silently miss classifyActionableHybrid and the Worker's candidacy check the first time it
+// was added.
+export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
+  if (!isActionableCandidate(item, actionableAuthors)) return false;
+  return containsActionableSignal(item.content ?? '', 0);
 }
 
 // Empty authors list = no author restriction. `authors` is asserted to be lowercase.
@@ -234,25 +341,26 @@ export function authorMatches(author: string | undefined, authors: string[]): bo
   return authors.some((f) => a.includes(f));
 }
 
-type TierMatcher = (item: FilterItem, authors: string[], minLength: number, actionableAuthors: string[]) => boolean;
+// The resolved per-item classification the Worker computes once per poll cycle, shared across
+// every notification bucket. `members` is checked first and short-circuits `actionable` entirely
+// (never computed, regex or hybrid) since Members Area bypasses every filter tier regardless of
+// actionable-ness — there's no reason to spend a regex check, let alone a live embedding call, on
+// content whose notification eligibility doesn't depend on it.
+export interface ItemClassification {
+  members: boolean;
+  actionable: boolean;
+}
 
-// Each tier owns its own answer to "does this item qualify," the same way FEEDS[k].isVisible()
-// answers visibility per feed rather than one function special-casing every key. Members Area
-// itself is handled once, in matchesFilter's bypass below, before any of these run.
-const TIER_MATCHERS: Record<ContentFilter, TierMatcher> = {
-  members: () => false,
-  actionable: (item, _authors, _minLength, actionableAuthors) => isActionablePost(item, actionableAuthors),
-  // 'length' is a strict superset of 'actionable': an actionable post qualifies unconditionally,
-  // same as at the 'actionable' tier itself (no whitelist check). The personal whitelist only
-  // gates the other way in — merely-long content from a whitelisted author.
-  length: (item, authors, minLength, actionableAuthors) =>
-    isActionablePost(item, actionableAuthors) ||
-    (authorMatches(item.author, authors) && (item.content ?? '').length >= minLength),
-};
-
-// Members Area is unconditional — no author or content check. Every other tier delegates to its
-// own matcher in TIER_MATCHERS.
-export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, actionableAuthors: string[]): boolean {
-  if (item.feedKey === FeedKeys.membersArea) return true;
-  return TIER_MATCHERS[filter](item, authors, minLength, actionableAuthors);
+// Members Area is unconditional; every other tier is a pure function of the already-resolved
+// classification plus this bucket's own settings. matchesFilter no longer computes
+// actionable-ness itself — see ItemClassification's comment for why that's resolved upstream,
+// once per item, not per bucket.
+export function matchesFilter(item: FilterItem, filter: ContentFilter, authors: string[], minLength: number, classification: ItemClassification): boolean {
+  if (classification.members) return true;
+  if (filter === 'members') return false;
+  if (classification.actionable) return true;
+  // 'length' is a strict superset of 'actionable': an actionable post already qualified above.
+  // The personal whitelist only gates the other way in — merely-long content from a whitelisted
+  // author.
+  return filter === 'length' && authorMatches(item.author, authors) && (item.content ?? '').length >= minLength;
 }
