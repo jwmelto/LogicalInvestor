@@ -1,4 +1,4 @@
-import { matchNegativePattern, matchPositivePattern } from './index';
+import { matchNegativePattern, matchPositivePattern, containsActionVerb } from './index';
 
 export interface LabeledVector {
   text: string;
@@ -76,6 +76,13 @@ export function classifyActionableHybrid(text: string, vector: number[], example
   }
   if (matchPositivePattern(text) !== null) {
     return { isActionable: true, nearestText: text, similarity: 1, viaKeyword: true };
+  }
+  // Same necessary-condition gate classifySignal applies, checked in the same order (strictly
+  // after both pattern arrays) -- classifyActionableHybrid calls matchNegativePattern/
+  // matchPositivePattern directly rather than going through classifySignal, so this has to be
+  // applied here too, not inherited automatically.
+  if (!containsActionVerb(text)) {
+    return { isActionable: false, nearestText: text, similarity: 1, viaKeyword: true };
   }
   const result = nearestNeighbor(vector, examples);
   const isActionable = result.similarity >= MIN_CONFIDENT_SIMILARITY && result.isActionable;

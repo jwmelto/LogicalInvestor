@@ -1047,7 +1047,9 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   // Deliberately free of every NEG_PATTERN/POS_PATTERN keyword -- classifySignal returns
   // fail-no-signal for this text, which is what makes it a hybrid candidate in the first place.
-  const AMBIGUOUS = 'Thinking this one might set up nicely over the next few weeks.';
+  // Has a real action verb ("enter") so it clears the necessary-condition gate and genuinely
+  // reaches the AI candidacy path -- neither NEG_PATTERNS nor POS_PATTERNS match it either way.
+  const AMBIGUOUS = 'Thinking about whether to enter over the next few weeks.';
   const itemXml = (guid: string, description: string, title = 't') =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>${title}</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${description}</description></item></channel></rss>`;
 

@@ -142,6 +142,7 @@ export type ActionableResult =
   | 'fail-generic-practice'
   | 'fail-negated-instruction'
   | 'fail-acknowledgment'
+  | 'fail-no-action-verb'
   | 'fail-too-short'
   | 'fail-no-signal';
 
@@ -236,6 +237,24 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
 ];
 
+// Necessary-condition check: a real directive always names a trade action, in some form, even
+// when phrased as a modal ("you can sell half now"), infinitive ("close enough to get your
+// averaging down in"), or first-person announcement ("we're getting into X now") rather than a
+// bare command. Grammatical mood was tried and rejected as the discriminating axis: 89% of real
+// positive examples in the calibration set have no bare-imperative clause at all, since this
+// author overwhelmingly softens directives with modals rather than issuing bare commands.
+// Absence of any of these verb forms is necessary, not sufficient, evidence of
+// non-actionability — see its placement in classifySignal below, strictly after both pattern
+// arrays, so it only narrows the residual ambiguous bucket and never overrides an established
+// verb-free positive signal like pass-tranche-price ("2nd tranche: $121" carries no verb at all
+// by this newsletter's own convention).
+//
+// Excludes "buy recommendation"/"rating"/"call"/"alert" — a noun-phrase reference to the
+// original historical call ("the buy recommendation from the newsletter"), not a live verb.
+// Found via a real false match on a genuine negative example that otherwise relied on
+// nearest-neighbor and got it wrong.
+const ACTION_VERB = /\b(buy|buys|buying|bought)\b(?!\s+(recommendation|rating|call|alert))|\b(sell|sells|selling|sold|enter|enters|entering|entered|get\s+in(?:to)?|gets\s+in(?:to)?|getting\s+in(?:to)?|got\s+in(?:to)?|exit|exits|exiting|exited|hold|holds|holding|held|close|closes|closing|closed|roll|rolls|rolling|rolled|average[ds]?\s+down|averaging\s+down|add|adds|adding|added|trim|trims|trimming|trimmed)\b/i;
+
 // Exported for the embeddings-similarity prototype (see similarity.ts): closed-class discourse
 // markers (hedge modals, personal-address phrases, negation) are reliably keyword-detectable —
 // the whack-a-mole history on this file is about open-ended phrasing (directive vs. retrospective
@@ -245,6 +264,14 @@ export function matchNegativePattern(text: string): ActionableResult | null {
     if (re.test(text)) return clause;
   }
   return null;
+}
+
+// Exported for the embeddings-similarity prototype (see similarity.ts) — classifyActionableHybrid
+// applies this itself, in the same order as classifySignal (after both pattern arrays, never
+// before), since it calls matchNegativePattern/matchPositivePattern directly rather than going
+// through classifySignal.
+export function containsActionVerb(text: string): boolean {
+  return ACTION_VERB.test(text);
 }
 
 // Exported for the embeddings-similarity prototype (see similarity.ts) — see matchNegativePattern's
@@ -261,6 +288,7 @@ export function classifySignal(text: string, minLength: number): ActionableResul
   if (neg) return neg;
   const pos = matchPositivePattern(text);
   if (pos) return pos;
+  if (!ACTION_VERB.test(text)) return 'fail-no-action-verb';
   return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
 }
 

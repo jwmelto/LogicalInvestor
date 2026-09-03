@@ -69,7 +69,7 @@ describe('classifyActionableHybrid — keyword gate + nearest-neighbor fallback'
   test('a low-similarity match defaults to not-actionable, even against a positive neighbor', () => {
     const examples: LabeledVector[] = [{ text: 'irrelevant', isActionable: true, vector: [1, 0] }];
     const orthogonalQuery = [0, 1]; // similarity 0 to the only example -- far below the floor
-    const result = classifyActionableHybrid('Thanks, appreciate it.', orthogonalQuery, examples);
+    const result = classifyActionableHybrid('Thinking about entering later.', orthogonalQuery, examples);
     expect(result.isActionable).toBe(false);
     expect(result.viaKeyword).toBe(false);
   });
@@ -77,7 +77,7 @@ describe('classifyActionableHybrid — keyword gate + nearest-neighbor fallback'
   test('a high-similarity match is trusted as-is', () => {
     const examples: LabeledVector[] = [{ text: 'irrelevant', isActionable: true, vector: [1, 0] }];
     const identicalQuery = [1, 0]; // similarity 1 -- well above the floor
-    const result = classifyActionableHybrid('Thanks, appreciate it.', identicalQuery, examples);
+    const result = classifyActionableHybrid('Thinking about entering later.', identicalQuery, examples);
     expect(result.isActionable).toBe(true);
   });
 });

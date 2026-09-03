@@ -78,8 +78,30 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad("If someone is up 20-30% in a short period of time and they want to choose to sell half, they can always do that, even without confirmation from me."), MIN)).toBe('fail-hypothetical');
   });
 
-  test('fail-too-short: no pattern match and below minLength', () => {
-    expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-too-short');
+  // Has an action verb (so it clears the new fail-no-action-verb gate) but no other pattern
+  // matches and it's below minLength.
+  test('fail-too-short: no pattern match, has an action verb, and below minLength', () => {
+    expect(classifySignal('general discussion about when to sell', MIN)).toBe('fail-too-short');
+  });
+
+  // No action verb anywhere -- necessary-condition gate resolves this before length is even
+  // considered, regardless of minLength.
+  test('fail-no-action-verb: no pattern match and no trade-action verb present', () => {
+    expect(classifySignal('general portfolio discussion', MIN)).toBe('fail-no-action-verb');
+  });
+
+  // Real post-deploy false alarm this gate resolves directly: the exact leave-one-out case
+  // chased for most of a session, sharing dense topical vocabulary (tranches, moving averages)
+  // with a genuine directive elsewhere in the calibration set, but containing no action verb of
+  // its own.
+  test('fail-no-action-verb: status update with no action verb, despite shared topical vocabulary', () => {
+    expect(classifySignal(pad("I'm keeping my eye on it to see if we need to keep it at $145. Our 3rd tranche still doesn't make it down to the lowest shaded zone, but that zone is a mile below the 200-week moving average."), MIN)).toBe('fail-no-action-verb');
+  });
+
+  // "buy recommendation" is a noun-phrase reference to the historical call, not a live verb --
+  // must not falsely clear the gate on the literal string "buy" alone.
+  test('fail-no-action-verb: "buy recommendation" does not count as a live action verb', () => {
+    expect(classifySignal(pad('All 3 tranches are known from the original buy recommendation in the newsletter.'), MIN)).toBe('fail-no-action-verb');
   });
 
   // Real post-deploy false alarm: "Good job. Congrats!" had no other signal, so it reached
@@ -214,8 +236,8 @@ describe('classifySignal — positive patterns', () => {
     expect(classifySignal(pad("You can sell half now. We'll eye it a lot closer between $90ish and $100ish. Also, its got earnings coming out on 8/05 before the bell."), MIN)).toBe('pass-sell-fraction');
   });
 
-  test('fail-no-signal: general discussion', () => {
-    expect(classifySignal(pad('Warren Buffett talks about how the world is yours if you can keep your head about you when others lose theirs'), MIN)).toBe('fail-no-signal');
+  test('fail-no-action-verb: general discussion, no trade-action verb present', () => {
+    expect(classifySignal(pad('Warren Buffett talks about how the world is yours if you can keep your head about you when others lose theirs'), MIN)).toBe('fail-no-action-verb');
   });
 
   // #82: true-positive anchor — direct "sell half" instruction, kept passing so future
