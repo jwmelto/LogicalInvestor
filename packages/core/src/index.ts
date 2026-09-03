@@ -296,6 +296,17 @@ export function containsActionableSignal(text: string, minLength = 200): boolean
   return classifySignal(text, minLength).startsWith('pass');
 }
 
+// True only for the two outcomes that mean "the regex/action-verb gate has no opinion either
+// way" -- every other ActionableResult (every pass-*, and every fail-* that isn't one of these
+// two) is a definitive verdict from classifySignal, not something that should fall through to a
+// live embedding call. The single place this distinction is expressed, so classifyActionableHybrid
+// and the Worker's hybrid-candidacy check can't drift from each other or from classifySignal
+// itself -- see classifyActionableHybrid's comment for why that drift is a real, not
+// hypothetical, risk.
+export function isSignalUndecided(result: ActionableResult): boolean {
+  return result === 'fail-no-signal' || result === 'fail-too-short';
+}
+
 export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
@@ -314,10 +325,13 @@ export function isActionableCandidate(item: FilterItem, actionableAuthors: strin
 // Regex-only actionable check. Exported: the Worker calls this directly for content the hybrid
 // classifier doesn't cover (Options Insights, which has no calibration data yet) and as the
 // fallback when a live embedding call fails. actionableAuthors is asserted to be lowercase.
+// Goes through classifySignal (via containsActionableSignal) rather than re-deriving the
+// pattern/action-verb sequence by hand -- that duplication is exactly what let the action-verb
+// gate silently miss classifyActionableHybrid and the Worker's candidacy check the first time it
+// was added.
 export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
   if (!isActionableCandidate(item, actionableAuthors)) return false;
-  const text = item.content ?? '';
-  return matchNegativePattern(text) === null && matchPositivePattern(text) !== null;
+  return containsActionableSignal(item.content ?? '', 0);
 }
 
 // Empty authors list = no author restriction. `authors` is asserted to be lowercase.

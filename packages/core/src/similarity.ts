@@ -1,4 +1,4 @@
-import { matchNegativePattern, matchPositivePattern, containsActionVerb } from './index';
+import { classifySignal, isSignalUndecided } from './index';
 
 export interface LabeledVector {
   text: string;
@@ -55,7 +55,9 @@ const MIN_CONFIDENT_SIMILARITY = 0.7;
 
 // Closed-class discourse markers (hedge modals, personal-address, historical reference,
 // negation) are reliable enough to gate on directly — no reason to make the embedding step
-// re-derive what a keyword already answers with confidence.
+// re-derive what a keyword already answers with confidence. Same for the necessary-condition
+// action-verb check (see ACTION_VERB in index.ts) — absence of any trade-action verb is a
+// definitive negative, not something worth spending a live embedding call to re-confirm.
 //
 // Every POS_PATTERN gates the same way, not just IMMEDIATELY. An earlier version trusted only
 // IMMEDIATELY here, leaving the rest (sell-fraction, tranche-price, buy-with-price, ...) to
@@ -68,21 +70,19 @@ const MIN_CONFIDENT_SIMILARITY = 0.7;
 // regex's own false positives on cases nearest-neighbor had been correctly overriding (3 false
 // alarms) — the right trade when a missed alert costs more than a false alarm, which is the case
 // here (a subscriber missing a real buy call vs. one extra notification). Only text with no
-// keyword opinion at all (fail-no-signal/fail-too-short) reaches nearest-neighbor now — exactly
-// the open-ended discourse-judgment cases this prototype exists to handle.
+// keyword opinion at all reaches nearest-neighbor now — exactly the open-ended discourse-judgment
+// cases this prototype exists to handle.
+//
+// Goes through classifySignal, the single source of truth for what regex/action-verb resolves
+// definitively, rather than re-deriving the pattern sequence by hand: the action-verb gate was
+// added to classifySignal, correctly, but this function still called matchNegativePattern/
+// matchPositivePattern directly and silently missed it — caught only by re-running the
+// leave-one-out suite, not by inspection. Duplicating the sequence is what made that possible;
+// routing through classifySignal is what prevents it recurring for the next gate added here.
 export function classifyActionableHybrid(text: string, vector: number[], examples: LabeledVector[]): HybridResult {
-  if (matchNegativePattern(text)) {
-    return { isActionable: false, nearestText: text, similarity: 1, viaKeyword: true };
-  }
-  if (matchPositivePattern(text) !== null) {
-    return { isActionable: true, nearestText: text, similarity: 1, viaKeyword: true };
-  }
-  // Same necessary-condition gate classifySignal applies, checked in the same order (strictly
-  // after both pattern arrays) -- classifyActionableHybrid calls matchNegativePattern/
-  // matchPositivePattern directly rather than going through classifySignal, so this has to be
-  // applied here too, not inherited automatically.
-  if (!containsActionVerb(text)) {
-    return { isActionable: false, nearestText: text, similarity: 1, viaKeyword: true };
+  const signal = classifySignal(text, 0);
+  if (!isSignalUndecided(signal)) {
+    return { isActionable: signal.startsWith('pass'), nearestText: text, similarity: 1, viaKeyword: true };
   }
   const result = nearestNeighbor(vector, examples);
   const isActionable = result.similarity >= MIN_CONFIDENT_SIMILARITY && result.isActionable;

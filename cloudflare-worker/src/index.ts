@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, matchNegativePattern, matchPositivePattern, containsActionVerb, classifyActionableHybrid, ACTIONABLE_CALIBRATION_EXAMPLES, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, ACTIONABLE_CALIBRATION_EXAMPLES, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
 import { CHANNEL_FEEDS } from './config';
 
@@ -884,10 +884,10 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     }
     const text = fi.content ?? '';
     const isStockPickFeed = fi.feedKey === FeedKeys.membersForum || fi.feedKey === FeedKeys.stockInsights;
-    // containsActionVerb must be checked here too, not just inside classifyActionableHybrid --
-    // a verb-free item is definitively resolvable without embeddings, so it shouldn't be sent to
-    // the AI batch as a "candidate" in the first place.
-    const regexUndecided = matchNegativePattern(text) === null && matchPositivePattern(text) === null && containsActionVerb(text);
+    // isSignalUndecided must be checked here too, not just inside classifyActionableHybrid -- an
+    // item classifySignal already has a definitive opinion on (positive, negative, or missing an
+    // action verb) shouldn't be sent to the AI batch as a "candidate" in the first place.
+    const regexUndecided = isSignalUndecided(classifySignal(text, 0));
     if (isStockPickFeed && regexUndecided && isActionableCandidate(fi, actionableAuthors)) {
       hybridCandidates.push(rssItem); // resolved after the batch AI call below
       continue;
