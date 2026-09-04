@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
 import { CHANNEL_FEEDS } from './config';
-import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost, ACTIONABLE_CALIBRATION_EXAMPLES } from '@li/core';
+import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost, ACTIONABLE_CALIBRATION_EXAMPLES, OPTIONS_CALIBRATION_EXAMPLES } from '@li/core';
 import type { FeedKey, FilterItem, ItemClassification } from '@li/core';
 
 const FK = FeedKeys;
@@ -102,9 +102,15 @@ describe('matchesFilter', () => {
       expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ['joe blow']))).toBe(true);
     });
 
-    it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
-      const starred = item(feedKey, { title: '*VUTS Trade', description: longWithSignal });
-      const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
+    // Each feed's own signal text: stock-pick vocabulary ("new pick") only resolves against
+    // STOCK_POS_PATTERNS, options vocabulary (strike/put/expiry) only against OPTIONS_POS_PATTERNS
+    // -- see actionableStrategyFor (@li/core).
+    it.each([
+      [FK.stockInsights, longWithSignal],
+      [FK.optionsInsights, 'You can get into the January $55 strike put, 2026 expiry now.'],
+    ])('%s requires a starred title to alert', (feedKey, description) => {
+      const starred = item(feedKey, { title: '*VUTS Trade', description });
+      const unstarred = item(feedKey, { title: 'Discussion post', description });
       expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(starred, ACTIONABLE_AUTHORS))).toBe(true);
       expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(unstarred, ACTIONABLE_AUTHORS))).toBe(false);
     });
@@ -1037,12 +1043,12 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
   });
 });
 
-// The hybrid classifier only applies to Members Forum and Stock Insights content whose regex
-// check is genuinely undecided — see runChannel's classification loop. These tests exercise that
-// loop end to end via worker.scheduled(), mocking env.AI.run rather than calling the classifier
-// functions directly, since the "classify once per poll cycle, not once per bucket" property only
-// exists at the runChannel level.
-describe('runChannel — hybrid actionable classification (Members Forum + Stock Insights)', () => {
+// The hybrid classifier applies to every non-Members-Area feed's content whose regex check is
+// genuinely undecided — see runChannel's classification loop and actionableStrategyFor (@li/core).
+// These tests exercise that loop end to end via worker.scheduled(), mocking env.AI.run rather than
+// calling the classifier functions directly, since the "classify once per poll cycle, not once per
+// bucket" property only exists at the runChannel level.
+describe('runChannel — hybrid actionable classification', () => {
   const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   // Deliberately free of every NEG_PATTERN/POS_PATTERN keyword -- classifySignal returns
@@ -1118,8 +1124,9 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
     expect(aiRun).not.toHaveBeenCalled();
   });
 
-  it('an Options Insights post never becomes a hybrid candidate, even with ambiguous content', async () => {
-    const aiRun = vi.fn();
+  it('an Options Insights post with an ambiguous regex verdict becomes an AI candidate, resolved against its own calibration set', async () => {
+    const knownExample = OPTIONS_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
+    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
     const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
@@ -1132,14 +1139,18 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
       },
       AI: { run: aiRun },
     } as any;
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', AMBIGUOUS, '*Starred Trade')) })
-    );
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', AMBIGUOUS, '*Starred Trade')) });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(aiRun).not.toHaveBeenCalled(); // Options Insights has no calibration data yet -- regex-only fallback
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(aiRun.mock.calls[0][1].text).toEqual([AMBIGUOUS]);
+    expect(pushCalls).toBe(1); // the 'actionable' bucket alerted on the hybrid-positive result
   });
 
   it('multiple buckets sharing one ambiguous Members Forum item result in exactly one env.AI.run call', async () => {

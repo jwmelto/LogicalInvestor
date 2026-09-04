@@ -1,4 +1,4 @@
-import { matchesFilter, isActionablePost, isActionableCandidate, FeedKeys, type FilterItem, type ItemClassification } from '../index';
+import { matchesFilter, isActionablePost, isActionableCandidate, actionableStrategyFor, FeedKeys, type FilterItem, type ItemClassification } from '../index';
 
 const ACTIONABLE_AUTHORS = ['sean hyman'];
 
@@ -32,6 +32,35 @@ describe('isActionablePost (regex-only)', () => {
 
   it('is false with no regex signal at all', () => {
     expect(isActionablePost(item({ content: 'Just checking in, nothing new today.' }), ACTIONABLE_AUTHORS)).toBe(false);
+  });
+
+  it('resolves an Options Insights post against its own pattern set, not stock-pick vocabulary', () => {
+    const post = item({ feedKey: FeedKeys.optionsInsights, title: '*Trade', content: 'You can get into the January $55 strike put, 2026 expiry now.' });
+    expect(isActionablePost(post, ACTIONABLE_AUTHORS)).toBe(true);
+  });
+
+  it('a stock-pick-only signal does not resolve as actionable on Options Insights', () => {
+    const post = item({ feedKey: FeedKeys.optionsInsights, title: '*Trade', content: "I've got a new pick for subscribers this month." });
+    expect(isActionablePost(post, ACTIONABLE_AUTHORS)).toBe(false);
+  });
+
+  it('is false for Members Area, which has no actionable strategy', () => {
+    const post = item({ feedKey: FeedKeys.membersArea, content: 'You need to get into this position IMMEDIATELY.' });
+    expect(isActionablePost(post, ACTIONABLE_AUTHORS)).toBe(false);
+  });
+});
+
+describe('actionableStrategyFor', () => {
+  it('has an empty pattern set and calibration for Members Area, which bypasses the actionable tier entirely', () => {
+    expect(actionableStrategyFor(FeedKeys.membersArea)).toEqual({ posPatterns: [], calibration: [] });
+  });
+
+  it.each([FeedKeys.membersForum, FeedKeys.stockInsights])('%s shares the same stock-pick strategy object', (feedKey) => {
+    expect(actionableStrategyFor(feedKey)).toBe(actionableStrategyFor(FeedKeys.membersForum));
+  });
+
+  it('Options Insights has its own strategy, distinct from the stock-pick one', () => {
+    expect(actionableStrategyFor(FeedKeys.optionsInsights)).not.toBe(actionableStrategyFor(FeedKeys.stockInsights));
   });
 });
 

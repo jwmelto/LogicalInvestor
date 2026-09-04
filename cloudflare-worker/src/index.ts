@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, ACTIONABLE_CALIBRATION_EXAMPLES, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, actionableStrategyFor, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
 import { CHANNEL_FEEDS } from './config';
 
@@ -869,11 +869,12 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // short-circuits `actionable` entirely (regex and embeddings both skipped) since Members Area
   // bypasses every filter tier regardless of actionable-ness.
   //
-  // The hybrid classifier only covers Members Forum and Stock Insights (both stock-pick content
-  // in the vocabulary its calibration set is built from, differing only in the star-gate Stock
-  // Insights requires) -- this is a per-feed condition, not per-channel: Members Forum is bundled
-  // under the 'members' channel for push-registration purposes only. Options Insights has no
-  // calibration data yet and stays on the regex-only path via isActionablePost.
+  // The hybrid classifier covers every non-Members-Area feed. Each feed's own ActionableStrategy
+  // (actionableStrategyFor in @li/core) supplies both which regex patterns count as definitive and
+  // which calibration set the embedding fallback compares against -- Members Forum and Stock
+  // Insights share the stock-pick strategy (both stock-pick content, differing only in the
+  // star-gate Stock Insights requires; Members Forum is bundled under the 'members' channel for
+  // push-registration purposes only, unrelated to this), Options Insights has its own.
   const classifications = new Map<string, ItemClassification>();
   const hybridCandidates: RssItem[] = [];
   for (const rssItem of freshItems) {
@@ -883,12 +884,12 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       continue;
     }
     const text = fi.content ?? '';
-    const isStockPickFeed = fi.feedKey === FeedKeys.membersForum || fi.feedKey === FeedKeys.stockInsights;
+    const strategy = actionableStrategyFor(fi.feedKey);
     // isSignalUndecided must be checked here too, not just inside classifyActionableHybrid -- an
     // item classifySignal already has a definitive opinion on (positive, negative, or missing an
     // action verb) shouldn't be sent to the AI batch as a "candidate" in the first place.
-    const regexUndecided = isSignalUndecided(classifySignal(text, 0));
-    if (isStockPickFeed && regexUndecided && isActionableCandidate(fi, actionableAuthors)) {
+    const regexUndecided = isSignalUndecided(classifySignal(text, 0, strategy.posPatterns));
+    if (regexUndecided && isActionableCandidate(fi, actionableAuthors)) {
       hybridCandidates.push(rssItem); // resolved after the batch AI call below
       continue;
     }
@@ -900,7 +901,8 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       const texts = hybridCandidates.map((rssItem) => rssItem.description);
       const result = await env.AI.run('@cf/baai/bge-large-en-v1.5', { text: texts }) as { data: number[][] };
       hybridCandidates.forEach((rssItem, i) => {
-        const hybrid = classifyActionableHybrid(rssItem.description, result.data[i], ACTIONABLE_CALIBRATION_EXAMPLES);
+        const strategy = actionableStrategyFor(rssItem.feedKey);
+        const hybrid = classifyActionableHybrid(rssItem.description, result.data[i], strategy.calibration, strategy.posPatterns);
         classifications.set(rssItem.guid, { members: false, actionable: hybrid.isActionable });
       });
     } catch {
