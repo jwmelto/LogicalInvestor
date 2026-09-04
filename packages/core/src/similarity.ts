@@ -1,4 +1,4 @@
-import { classifySignal, isSignalUndecided } from './index';
+import { classifySignal, isSignalUndecided, type ActionableResult } from './index';
 
 export interface LabeledVector {
   text: string;
@@ -79,8 +79,14 @@ const MIN_CONFIDENT_SIMILARITY = 0.7;
 // matchPositivePattern directly and silently missed it — caught only by re-running the
 // leave-one-out suite, not by inspection. Duplicating the sequence is what made that possible;
 // routing through classifySignal is what prevents it recurring for the next gate added here.
-export function classifyActionableHybrid(text: string, vector: number[], examples: LabeledVector[]): HybridResult {
-  const signal = classifySignal(text, 0);
+//
+// examples and posPatterns both come from the same forum's ActionableStrategy (see
+// actionableStrategyFor in index.ts) -- a caller comparing against one forum's calibration set
+// while gating on a different forum's regex patterns would be a real, silent bug, not a
+// hypothetical one, so both are threaded through together from the same lookup rather than chosen
+// independently at each call site.
+export function classifyActionableHybrid(text: string, vector: number[], examples: LabeledVector[], posPatterns?: [RegExp, ActionableResult][]): HybridResult {
+  const signal = classifySignal(text, 0, posPatterns);
   if (!isSignalUndecided(signal)) {
     return { isActionable: signal.startsWith('pass'), nearestText: text, similarity: 1, viaKeyword: true };
   }

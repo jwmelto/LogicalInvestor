@@ -1,6 +1,7 @@
-import { classifySignal } from '../index';
+import { classifySignal, actionableStrategyFor, FeedKeys } from '../index';
 
 const MIN = 200;
+const OPTIONS_PATTERNS = actionableStrategyFor(FeedKeys.optionsInsights).posPatterns;
 
 function pad(s: string): string {
   return s.padEnd(MIN + 1, ' .');
@@ -250,5 +251,45 @@ describe('classifySignal — positive patterns', () => {
   // which the original bare-adjacency regex missed entirely (fail-no-signal).
   test('pass-sell-fraction: "sell it all" with an intervening pronoun', () => {
     expect(classifySignal(pad("No prob. Also, if VNP gets to $90-$91ish, I'm fine for us to officially sell it all, We'd be up minimally 30%, for those who only got in one tranche. For those who got in two tranches, it's even more."), MIN)).toBe('pass-sell-fraction');
+  });
+});
+
+describe('classifySignal — Options Insights pattern set (actionableStrategyFor)', () => {
+  test('pass-options-contract: strike + put + literal "expiry" together, no verb required', () => {
+    expect(classifySignal('Yes, correct. JCI PUT MAR 2026 $95 strike, 2026 expiry.', 0, OPTIONS_PATTERNS)).toBe('pass-options-contract');
+  });
+
+  test('pass-options-contract: strike + call + month/year expiry, no literal "expiry" word', () => {
+    expect(classifySignal('Yes, correct. JCI CALL MAR 2026 $95 strike', 0, OPTIONS_PATTERNS)).toBe('pass-options-contract');
+  });
+
+  test('pass-options-contract: strike/put/expiry split across sentences still matches', () => {
+    expect(classifySignal('The January $90 strike put has enough liquidity for our purposes. 2026 expiry. It can be entered now.', 0, OPTIONS_PATTERNS)).toBe('pass-options-contract');
+  });
+
+  test('a bare 4-digit year does not satisfy the expiry token on its own', () => {
+    expect(classifySignal('WMB down 4% in 2026, still holding the $95 strike put.', 0, OPTIONS_PATTERNS)).not.toBe('pass-options-contract');
+  });
+
+  test('educational content about strike/put mechanics, with no expiry mentioned, is not a contract signal', () => {
+    expect(classifySignal("The put's strike price and the buy/sell price are two different things.", 0, OPTIONS_PATTERNS)).not.toBe('pass-options-contract');
+  });
+
+  test('stock-pick vocabulary ("new pick") is not recognized against the options pattern set', () => {
+    expect(classifySignal("I've got a new pick for subscribers this month.", 0, OPTIONS_PATTERNS)).not.toBe('pass-new-pick');
+  });
+
+  test('"capture profits" clears the action-verb gate and reaches the ambiguous bucket instead of failing outright', () => {
+    const result = classifySignal('Anyone else up a quick 20% in such a short time can capture profits as well.', 0, OPTIONS_PATTERNS);
+    expect(result).not.toBe('fail-no-action-verb');
+  });
+
+  test('"buy to open"/"buy-to-open" mechanics explanations are left undecided, not resolved as a false positive', () => {
+    // Options Insights has no pass-buy-with-price pattern at all (that's stock-pick vocabulary),
+    // so a $ near "buy" here can't resolve as a definitive positive regardless -- it's left
+    // undecided for the embedding fallback, whose calibration set includes this exact example
+    // labeled not-actionable.
+    const result = classifySignal('$9.89 would be 25% up from your buy to open price. If you bought and the contract filled, then the ask quote/price hit your buy-to-open buy limit order.', 0, OPTIONS_PATTERNS);
+    expect(result).toBe('fail-no-signal');
   });
 });
