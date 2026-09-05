@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, actionableStrategyFor, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, actionableStrategyFor, resolveIntentGate, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
+import { classifySellFractionIntent } from './intentClassifier';
 import { CHANNEL_FEEDS } from './config';
 
 function toFilterItem(item: RssItem): FilterItem {
@@ -22,6 +23,7 @@ export interface Env {
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
+  SELL_FRACTION_INTENT_TEMPERATURE?: string; // classifySellFractionIntent's model temperature (0-5, lower = less call-to-call variance), default "0"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
@@ -72,6 +74,27 @@ interface RunStats {
   lastScheduledTime?: number;
 }
 
+// One entry per classifySellFractionIntent call, kept for GET /status review -- every decision,
+// not a sample, since volume through this specific gate (pass-sell-fraction candidates only) is
+// low enough that logging all of it costs nothing. Deliberately NOT its own KV key/write: this
+// channel's poll cadence is already "close enough to [Workers KV's free-tier 1,000 writes/day
+// cap] for write count per invocation to matter" (issue #32, see ChannelState below), so this
+// rides along inside the one write ChannelState already makes per poll instead of adding one
+// write per candidate.
+interface IntentLogEntry {
+  guid: string;
+  text: string;
+  timestamp: string;
+  reasoning?: string;
+  evidence?: string;
+  label?: string;
+  confidence?: string;
+  actionable?: boolean;
+  error?: string;
+}
+
+const INTENT_LOG_MAX_ENTRIES = 50;
+
 interface DailyStats {
   date: string;
   runs: number;
@@ -95,6 +118,7 @@ interface ChannelState {
   // no fetch), so imprecision here is free; the actual feedTokenHasAccess fetches happen later,
   // in bounded queue() consumer batches, never in this invocation.
   lastValidationEnqueueDate?: number;
+  intentLog?: IntentLogEntry[];
 }
 
 function emptyDaily(date: string): DailyStats {
@@ -417,6 +441,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         // Only surface daily as "today's" if a poll has actually run today — an unrolled-over
         // stale date (no poll yet today) must not be mislabeled as today's stats.
         todayStats: state?.daily && state.daily.date === todayET ? state.daily : null,
+        // Every classifySellFractionIntent decision, newest first -- see IntentLogEntry's comment
+        // for why this rides along in ChannelState instead of its own KV key per entry.
+        intentLog: state?.intentLog ? [...state.intentLog].reverse() : [],
       };
     }
     return new Response(JSON.stringify(result, null, 2), {
@@ -692,6 +719,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // app's job (its own reconciliation on every foreground refresh), not the Worker's. See
   // "Server-side alerting model" in the design doc for why a cap exists at all.
   const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
+  const sellFractionIntentTemperature = parseFloat(env.SELL_FRACTION_INTENT_TEMPERATURE ?? '0');
   // Who can trigger the 'actionable' tier.
   const actionableAuthors = (env.ACTIONABLE_AUTHORS ?? 'Sean Hyman').split(',').map((a) => a.trim().toLowerCase());
   const runKey = `run:${channel}`; // see ChannelState
@@ -721,7 +749,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   const claimedStats: RunStats = { ...(state?.stats ?? emptyRunStats()), lastRun: now.toISOString(), lastScheduledTime: event.scheduledTime };
   await env.STATE.put(runKey, JSON.stringify({
     stats: claimedStats, seen: state?.seen ?? {}, daily: state?.daily ?? emptyDaily(getETDate(now)),
-    lastValidationEnqueueDate: state?.lastValidationEnqueueDate,
+    lastValidationEnqueueDate: state?.lastValidationEnqueueDate, intentLog: state?.intentLog,
   } satisfies ChannelState));
 
   const seenMap: Partial<Record<string, string[]>> = state?.seen ?? {};
@@ -786,7 +814,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     // below is reached — so lastValidationEnqueueDate carries forward unchanged.
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
     await env.STATE.put(runKey, JSON.stringify({
-      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate: state?.lastValidationEnqueueDate,
+      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate: state?.lastValidationEnqueueDate, intentLog: state?.intentLog,
     } satisfies ChannelState));
     return;
   }
@@ -858,7 +886,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (buckets.size === 0) {
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
     await env.STATE.put(runKey, JSON.stringify({
-      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate,
+      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate, intentLog: state?.intentLog,
     } satisfies ChannelState));
     return;
   }
@@ -877,6 +905,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // push-registration purposes only, unrelated to this), Options Insights has its own.
   const classifications = new Map<string, ItemClassification>();
   const hybridCandidates: RssItem[] = [];
+  const intentCandidates: RssItem[] = [];
   for (const rssItem of freshItems) {
     const fi = toFilterItem(rssItem);
     if (fi.feedKey === FeedKeys.membersArea) {
@@ -885,12 +914,21 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     }
     const text = fi.content ?? '';
     const strategy = actionableStrategyFor(fi.feedKey);
+    const signal = classifySignal(text, 0, strategy.posPatterns);
     // isSignalUndecided must be checked here too, not just inside classifyActionableHybrid -- an
     // item classifySignal already has a definitive opinion on (positive, negative, or missing an
     // action verb) shouldn't be sent to the AI batch as a "candidate" in the first place.
-    const regexUndecided = isSignalUndecided(classifySignal(text, 0, strategy.posPatterns));
-    if (regexUndecided && isActionableCandidate(fi, actionableAuthors)) {
+    if (isSignalUndecided(signal) && isActionableCandidate(fi, actionableAuthors)) {
       hybridCandidates.push(rssItem); // resolved after the batch AI call below
+      continue;
+    }
+    // pass-sell-fraction is the one regex pattern with a measured accuracy problem (see
+    // resolveIntentGate's comment in @li/core) -- "sell half"/"sell all" is used identically by a
+    // genuine directive, personal advice, and general strategy education. Every other pass-*/
+    // fail-* result is 100% correct on the full calibration set, so only this one gets routed to
+    // the intent-confirmation step rather than trusted immediately.
+    if (signal === 'pass-sell-fraction' && isActionableCandidate(fi, actionableAuthors)) {
+      intentCandidates.push(rssItem); // resolved after the intent-confirmation batch below
       continue;
     }
     classifications.set(rssItem.guid, { members: false, actionable: isActionablePost(fi, actionableAuthors) });
@@ -910,6 +948,32 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       // fall back to not-actionable, identical to today's pre-wiring behavior for this content.
       hybridCandidates.forEach((rssItem) => classifications.set(rssItem.guid, { members: false, actionable: false }));
     }
+  }
+
+  const newIntentLogEntries: IntentLogEntry[] = [];
+  if (intentCandidates.length > 0) {
+    // One call per candidate, not batched -- unlike embeddings, text generation has no batch
+    // input shape. allSettled (not one try/catch around the whole group) so one candidate's
+    // model/schema failure doesn't discard the others' real verdicts.
+    const outcomes = await Promise.allSettled(
+      intentCandidates.map((rssItem) => classifySellFractionIntent(env, rssItem.description, sellFractionIntentTemperature)),
+    );
+    intentCandidates.forEach((rssItem, i) => {
+      const outcome = outcomes[i];
+      if (outcome.status === 'fulfilled') {
+        const gate = resolveIntentGate(outcome.value);
+        newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), ...outcome.value, actionable: gate.actionable });
+        classifications.set(rssItem.guid, { members: false, actionable: gate.actionable });
+      } else {
+        // Model/schema failure this cycle -- fail open to the regex's own positive verdict.
+        // Unlike the hybrid-candidates fallback above (which fails closed because regex had no
+        // opinion at all), regex already found a real pass-sell-fraction signal here, so an AI
+        // hiccup shouldn't suppress it -- a missed alert costs more than a false alarm.
+        console.error('sell-fraction intent check failed, falling back to regex verdict', rssItem.guid, outcome.reason);
+        newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), error: String(outcome.reason), actionable: true });
+        classifications.set(rssItem.guid, { members: false, actionable: true });
+      }
+    });
   }
 
   // Push-sends are independent per bucket, so they run concurrently rather than one at a time —
@@ -969,8 +1033,9 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
 
   const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
+  const intentLog = [...(state?.intentLog ?? []), ...newIntentLogEntries].slice(-INTENT_LOG_MAX_ENTRIES);
   await env.STATE.put(runKey, JSON.stringify({
-    stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate,
+    stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate, intentLog,
   } satisfies ChannelState));
 }
 

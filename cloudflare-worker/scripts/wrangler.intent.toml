@@ -1,0 +1,6 @@
+name = "li-intent-scratch"
+main = "test-intent-classifier.worker.ts"
+compatibility_date = "2024-12-01"
+
+[ai]
+binding = "AI"

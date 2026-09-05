@@ -156,8 +156,9 @@
   },
   {
     "text": "While it should have more upside still to go, overall, it could certainly justify a huge % pullback before further advancement. So, being up that much in a mere 6-months of us being in it...I'd sell half of that half.\n\nMassive returns that we don't want to let get away, no matter where FQ goes from here.",
-    "isActionable": false,
-    "source": "full-post-neg-16-2026-09"
+    "isActionable": true,
+    "labelConfidence": "low",
+    "source": "full-post-pos-14-2026-09"
   },
   {
     "text": "I've got a new pick for subscribers this month that you need to get into IMMEDIATELY and not delay.\n\n1st Tranche: $210 or below. (FQ is trading in the $198's right now).\n\n2nd Tranche: $176\n\n3rd Tranche: $145\n\nI think it can easily reach $275 or more, over time.",
@@ -228,5 +229,41 @@
     "text": "Everyone sell ALL of your Zavrix (ZVR) shares at the market immediately. I'll have the official sell alert out in a bit.",
     "isActionable": true,
     "source": "full-post-pos-13-2026-09"
+  },
+  {
+    "text": "The two most likely paths for Kentrova (KTRV) over time. MACD buy signal. Price stretched far below the 200-week moving average.",
+    "isActionable": false,
+    "source": "fail-technical-only-2026-09"
+  },
+  {
+    "text": "Ways that we use volatility to our advantage:\n\n1) We let downside volatility give us great eventual buying opportunities\n\n2) We benefit from the snapback/upside volatility and then,\n\n3) We sell half (or if up enough even half of that remaining half), so that when the next downside volatility happens, it's far less impactful because we have so fewer share on the pullback than we did on the volatile rise higher.\n\nSo, volatility is our friend and not our enemy. Many people think volatility is bad because they don't know how to work with volatility...so it works against them.",
+    "isActionable": false,
+    "source": "fail-general-philosophy-2026-09"
+  },
+  {
+    "text": "I'd consider selling half. We should see it eventually get to $300-$325ish over time, even if a sizable dip happens first.",
+    "isActionable": true,
+    "labelConfidence": "medium",
+    "source": "full-post-pos-15-2026-09"
+  },
+  {
+    "text": "While you can sell all, I'd sell half of what you have now and not sell the rest until the $200-$220ish region. And there may come a sizable dip before we get there.",
+    "isActionable": false,
+    "source": "fail-personal-advice-2026-09-2"
+  },
+  {
+    "text": "Because you're up that much, you can sell half and I'd not sell the last bit until we officially sell around $47ish or so.",
+    "isActionable": false,
+    "source": "fail-personal-advice-2026-09-3"
+  },
+  {
+    "text": "Yes, but it depends on where your last /2nd tranche is.",
+    "isActionable": false,
+    "source": "fail-ambiguous-reply-2026-09"
+  },
+  {
+    "text": "Good job. Congrats!",
+    "isActionable": false,
+    "source": "fail-acknowledgment-2026-09"
   }
 ]

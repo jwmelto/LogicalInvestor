@@ -19,20 +19,27 @@ describe('cosineSimilarity', () => {
 
 describe('nearestNeighbor over real bge-large-en-v1.5 embeddings — leave-one-out accuracy', () => {
   test('every calibration example agrees with its nearest neighbor among the rest', () => {
-    const misclassified: { text: string; expected: boolean; got: boolean; nearestText: string }[] = [];
+    const misclassified: { text: string; expected: boolean; got: boolean; nearestText: string; labelConfidence: string }[] = [];
     for (let i = 0; i < CALIBRATION.length; i++) {
       const held = CALIBRATION[i];
       const rest = [...CALIBRATION.slice(0, i), ...CALIBRATION.slice(i + 1)];
       const result = nearestNeighbor(held.vector, rest);
       if (result.isActionable !== held.isActionable) {
-        misclassified.push({ text: held.text, expected: held.isActionable, got: result.isActionable, nearestText: result.nearestText });
+        misclassified.push({ text: held.text, expected: held.isActionable, got: result.isActionable, nearestText: result.nearestText, labelConfidence: held.labelConfidence ?? 'high' });
       }
     }
     // Not asserting zero misclassifications yet — this is the accuracy readout for the
     // prototype, not a pass/fail gate. Tightening to expect(misclassified).toEqual([]) is the
     // next step once the calibration set is large enough that leave-one-out accuracy holds.
+    //
+    // Split by labelConfidence: a disagreement against a 'low'/'medium'-confidence label (one
+    // that was itself a judgment call, not a clear-cut case -- see LabeledVector's comment) isn't
+    // necessarily a real model error, so it's reported separately rather than inflating the
+    // "real" miss count against confidently-labeled examples.
+    const againstConfidentLabel = misclassified.filter((m) => m.labelConfidence === 'high');
+    const againstShakyLabel = misclassified.filter((m) => m.labelConfidence !== 'high');
     if (misclassified.length > 0) {
-      console.log(`leave-one-out misclassifications: ${misclassified.length}/${CALIBRATION.length}`, misclassified);
+      console.log(`leave-one-out misclassifications: ${misclassified.length}/${CALIBRATION.length} (${againstConfidentLabel.length} against high-confidence labels, ${againstShakyLabel.length} against low/medium-confidence labels)`, misclassified);
     }
     expect(CALIBRATION.length).toBeGreaterThan(0);
   });
@@ -40,21 +47,24 @@ describe('nearestNeighbor over real bge-large-en-v1.5 embeddings — leave-one-o
 
 describe('classifyActionableHybrid — keyword gate + nearest-neighbor fallback', () => {
   test('keyword gate resolves closed-class discourse markers that nearest-neighbor alone missed under sparse data', () => {
-    const misclassified: { text: string; expected: boolean; got: boolean; viaKeyword: boolean }[] = [];
+    const misclassified: { text: string; expected: boolean; got: boolean; viaKeyword: boolean; labelConfidence: string }[] = [];
     for (let i = 0; i < CALIBRATION.length; i++) {
       const held = CALIBRATION[i];
       const rest = [...CALIBRATION.slice(0, i), ...CALIBRATION.slice(i + 1)];
       const result = classifyActionableHybrid(held.text, held.vector, rest);
       if (result.isActionable !== held.isActionable) {
-        misclassified.push({ text: held.text, expected: held.isActionable, got: result.isActionable, viaKeyword: result.viaKeyword });
+        misclassified.push({ text: held.text, expected: held.isActionable, got: result.isActionable, viaKeyword: result.viaKeyword, labelConfidence: held.labelConfidence ?? 'high' });
       }
     }
     // Not asserting zero misclassifications — same reasoning as the nearestNeighbor-only test
-    // above. Several current misses are pairs of near-identical phrasing with opposite labels
-    // (e.g. "I'd sell half of what you have left now" (personal-advice) vs. a genuine broadcast
-    // directive using the same words) — the distinguishing signal is who the post is addressed
-    // to, not anything recoverable from the text alone. No keyword gate or embedding similarity
-    // can resolve that; it would need a feature this classifier doesn't have.
+    // above. Most remaining misses are pass-sell-fraction: near-identical phrasing with opposite
+    // labels (e.g. "I'd sell half of what you have left now" (personal-advice) vs. a genuine
+    // broadcast directive using the same words), where the distinguishing signal is who the post
+    // is addressed to, not anything recoverable from the text alone. That gap is why
+    // pass-sell-fraction is routed to classifySellFractionIntent (cloudflare-worker/src/
+    // intentClassifier.ts) in production rather than resolved here -- this test still measures
+    // the regex/embedding layer in isolation, which is what every other pattern still resolves
+    // through.
     if (misclassified.length > 0) {
       console.log(`hybrid leave-one-out misclassifications: ${misclassified.length}/${CALIBRATION.length}`, misclassified);
     }

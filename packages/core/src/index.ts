@@ -8,7 +8,7 @@ export { classifyActionableHybrid, type LabeledVector };
 // The pinned bge-large-en-v1.5 vectors backing the hybrid actionable classifier (see
 // similarity.ts). Bundled statically -- updating the calibration set means a new commit and
 // deploy, same as any other data change, not a runtime fetch.
-export const ACTIONABLE_CALIBRATION_EXAMPLES: LabeledVector[] = actionableCalibrationFixture.examples;
+export const ACTIONABLE_CALIBRATION_EXAMPLES: LabeledVector[] = actionableCalibrationFixture.examples as LabeledVector[];
 
 // Options Insights' own calibration set -- a different discourse than the stock-pick vocabulary
 // above (contract mechanics vs. tranche pricing), so it gets its own vectors rather than being
@@ -150,6 +150,7 @@ export type ActionableResult =
   | 'fail-generic-practice'
   | 'fail-negated-instruction'
   | 'fail-acknowledgment'
+  | 'fail-general-education'
   | 'fail-no-action-verb'
   | 'fail-too-short'
   | 'fail-no-signal';
@@ -405,6 +406,43 @@ export function actionableStrategyFor(feedKey: FeedKey): ActionableStrategy {
 // containsActionableSignal) rather than re-deriving the pattern/action-verb sequence by hand: two
 // independent copies of that sequence can silently drift apart, since nothing but a full
 // regression run would catch a gate added to one copy and not the other.
+// pass-sell-fraction is the one regex pattern with a measured accuracy problem: 12/19 correct on
+// the stock calibration set (every other pattern, positive or negative, across both the stock and
+// options corpora, is 100% correct -- see the leave-one-out accuracy work in similarity.test.ts).
+// "Sell half"/"sell all" language is used identically by a genuine group directive, a reply giving
+// one person advice about their specific holding, and general educational discussion of the
+// strategy itself -- three discourse roles sharing the same vocabulary, which no keyword or
+// embedding-similarity check can separate (they're equally close in vector space to the same
+// words). This is a live LLM judgment call, not a closed-class pattern, so it's resolved by
+// classifySellFractionIntent (cloudflare-worker/src/intentClassifier.ts) rather than another regex.
+export type IntentLabel = 'directive' | 'personal-advice' | 'general-education';
+export type IntentConfidence = 'high' | 'medium' | 'low';
+
+export interface IntentClassification {
+  reasoning: string;
+  evidence: string;
+  label: IntentLabel;
+  confidence: IntentConfidence;
+}
+
+export interface IntentGateResult {
+  actionable: boolean;
+  result: ActionableResult;
+}
+
+// A missed alert costs more than a false alarm (see CLAUDE.md's design philosophy for this
+// classifier) -- so only a *confident* non-directive verdict suppresses the post. Anything less
+// than full confidence, regardless of label, defaults to actionable rather than being trusted
+// either way, mirroring pass-sell-fraction's own prior behavior (trust the regex) for the
+// uncertain case.
+export function resolveIntentGate(intent: IntentClassification): IntentGateResult {
+  const confidentNonDirective = intent.label !== 'directive' && intent.confidence === 'high';
+  const result: ActionableResult = !confidentNonDirective
+    ? 'pass-sell-fraction'
+    : intent.label === 'personal-advice' ? 'fail-personal-advice' : 'fail-general-education';
+  return { actionable: !confidentNonDirective, result };
+}
+
 export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
   if (!isActionableCandidate(item, actionableAuthors)) return false;
   return containsActionableSignal(item.content ?? '', 0, actionableStrategyFor(item.feedKey).posPatterns);

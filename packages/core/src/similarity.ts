@@ -1,9 +1,17 @@
 import { classifySignal, isSignalUndecided, type ActionableResult } from './index';
 
+// labelConfidence defaults to 'high' when absent -- most calibration examples were labeled from
+// a clear real incident (a filed issue, a specific post-deploy false alarm). Mark an entry 'low'
+// or 'medium' only when the label itself was a judgment call, not a clear-cut case -- e.g. an
+// entry relabeled to make a metric pass rather than out of confidence in the new label. Existing
+// leave-one-out "misclassifications" against a low-confidence label may just be a model disagreeing
+// with a shaky human call, not a real model error -- see similarity.test.ts's breakdown by this
+// field.
 export interface LabeledVector {
   text: string;
   isActionable: boolean;
   vector: number[];
+  labelConfidence?: 'high' | 'medium' | 'low';
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {
