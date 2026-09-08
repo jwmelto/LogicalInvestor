@@ -144,6 +144,7 @@ export type ActionableResult =
   | 'pass-averaging-down'
   | 'pass-immediately'
   | 'pass-close-enough'
+  | 'pass-get-now'
   | 'pass-options-contract'
   | 'fail-personal-advice'
   | 'fail-historical'
@@ -255,6 +256,14 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // of this list -- backstopped by NEEDS_INTENT_CONFIRMATION below instead of trusted outright, so
   // precision doesn't have to be earned in the regex itself.
   [/\bclose enough\b[\s\S]{0,40}\bnow\b/i,                                        'pass-close-enough'],
+  // "Get ... now" immediacy framing catches the split phrasal-verb word order pass-get-in-tranche
+  // misses ("let's go ahead and get our 2nd tranche in now" -- verb, object, particle, rather than
+  // pass-get-in-tranche's assumed "get in [object] tranche" adjacency). Checked against the full
+  // 53-example stock corpus: only 2 matches, both already true positives redundantly caught by
+  // pass-get-in-tranche first (array order), zero false positives. "get" and "now" are both common
+  // enough words on their own that this is deliberately generous rather than earning its own
+  // precision -- backstopped by NEEDS_INTENT_CONFIRMATION below, same as pass-close-enough.
+  [/\bget\b[\s\S]{0,40}\bnow\b/i,                                                 'pass-get-now'],
 ];
 
 // Patterns tuned for recall over precision -- deliberately looser than the rest of POS_PATTERNS/
@@ -264,7 +273,7 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
 // evidence of a precision problem (100% leave-one-out accuracy — see similarity.test.ts), so
 // routing them through an extra AI call would only add latency and a new failure surface for no
 // accuracy gain.
-export const NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-options-contract']);
+export const NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-get-now', 'pass-options-contract']);
 
 // Options Insights vocabulary: this feed has tranches too (a 2nd tranche on an existing options
 // position is common), but a real tranche entry still always carries the strike/put-or-call/expiry

@@ -1,4 +1,4 @@
-import { classifySignal, actionableStrategyFor, FeedKeys } from '../index';
+import { classifySignal, actionableStrategyFor, FeedKeys, NEEDS_INTENT_CONFIRMATION, type ActionableResult } from '../index';
 
 const MIN = 200;
 const OPTIONS_PATTERNS = actionableStrategyFor(FeedKeys.optionsInsights).posPatterns;
@@ -220,6 +220,25 @@ describe('classifySignal — positive patterns', () => {
     expect(classifySignal(pad('You need to get into this position IMMEDIATELY and not delay.'), MIN)).toBe('pass-immediately');
   });
 
+  // Deliberately generous, unlike the rest of this pattern list -- see its comment in index.ts.
+  // This text carries no other pattern's trigger (no "sell"/"buy"/"tranche"/"averaging down"), so
+  // it isolates pass-close-enough specifically rather than incidentally passing via a different
+  // pattern that happens to also be present.
+  test('pass-close-enough', () => {
+    expect(classifySignal(pad('The setup looks close enough now that I think we should move on it.'), MIN)).toBe('pass-close-enough');
+  });
+
+  // Real reported miss: pass-get-in-tranche assumes "get in [object] tranche" word order and
+  // doesn't match the equally natural reversed order "get [object] in ... now". Isolated the same
+  // way as pass-close-enough above -- no other pattern's trigger word present.
+  test('pass-get-now: catches the split "get [object] in ... now" word order pass-get-in-tranche misses', () => {
+    expect(classifySignal(pad("Just to make sure we don't miss it, let's go ahead and get our 2nd tranche in now. It's in the high-$121's."), MIN)).toBe('pass-get-now');
+  });
+
+  test('pass-get-now: does not depend on "tranche" -- any "get ... now" immediacy framing', () => {
+    expect(classifySignal(pad("Let's get our shares now while the price is right."), MIN)).toBe('pass-get-now');
+  });
+
   // #73: price mentioned before the buy/enter verb (re-entry phrasing) now matches too
   test('pass-buy-with-price: price-then-enter re-entry phrasing', () => {
     expect(classifySignal(pad("MNP hit $41 for a split second but that was probably on the bid/sell quote and not the ask/buy quote, would be my assumption. If it gets back fairly close to $41ish again, you can enter if you didn't get filled already."), MIN)).toBe('pass-buy-with-price');
@@ -284,12 +303,23 @@ describe('classifySignal — Options Insights pattern set (actionableStrategyFor
     expect(result).not.toBe('fail-no-action-verb');
   });
 
-  test('"buy to open"/"buy-to-open" mechanics explanations are left undecided, not resolved as a false positive', () => {
+  test('"buy to open"/"buy-to-open" mechanics explanations resolve to fail-no-signal, not a false positive', () => {
     // Options Insights has no pass-buy-with-price pattern at all (that's stock-pick vocabulary),
-    // so a $ near "buy" here can't resolve as a definitive positive regardless -- it's left
-    // undecided for the embedding fallback, whose calibration set includes this exact example
-    // labeled not-actionable.
+    // so a $ near "buy" here can't resolve as a definitive positive regardless.
     const result = classifySignal('$9.89 would be 25% up from your buy to open price. If you bought and the contract filled, then the ask quote/price hit your buy-to-open buy limit order.', 0, OPTIONS_PATTERNS);
     expect(result).toBe('fail-no-signal');
+  });
+});
+
+describe('NEEDS_INTENT_CONFIRMATION', () => {
+  const CONFIRMATION_REQUIRED: ActionableResult[] = ['pass-sell-fraction', 'pass-close-enough', 'pass-get-now', 'pass-options-contract'];
+  const TRUSTED_IMMEDIATELY: ActionableResult[] = ['pass-new-pick', 'pass-tranche-price', 'pass-get-in-tranche', 'pass-buy-with-price', 'pass-averaging-down', 'pass-immediately'];
+
+  test.each(CONFIRMATION_REQUIRED)('%s requires intent confirmation', (result) => {
+    expect(NEEDS_INTENT_CONFIRMATION.has(result)).toBe(true);
+  });
+
+  test.each(TRUSTED_IMMEDIATELY)('%s is trusted immediately, no intent confirmation needed', (result) => {
+    expect(NEEDS_INTENT_CONFIRMATION.has(result)).toBe(false);
   });
 });
