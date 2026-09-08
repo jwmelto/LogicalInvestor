@@ -143,6 +143,7 @@ export type ActionableResult =
   | 'pass-sell-fraction'
   | 'pass-averaging-down'
   | 'pass-immediately'
+  | 'pass-close-enough'
   | 'pass-options-contract'
   | 'fail-personal-advice'
   | 'fail-historical'
@@ -247,7 +248,23 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // report uses different directive phrasing, same as the rest of this pattern list.
   [/\bget\s+your\b[\s\S]{0,20}\baveraging?\s+down\b/i,                           'pass-averaging-down'],
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
+  // "Close enough ... now" immediacy framing ("it's close enough now to $28ish, that I'd SELL
+  // HALF here/now") -- measured against the full 53-example stock corpus: both matches are true
+  // positives (one already redundantly caught by pass-sell-fraction, one a genuine new catch that
+  // no other pattern reaches). Deliberately generous rather than narrowly worded, unlike the rest
+  // of this list -- backstopped by NEEDS_INTENT_CONFIRMATION below instead of trusted outright, so
+  // precision doesn't have to be earned in the regex itself.
+  [/\bclose enough\b[\s\S]{0,40}\bnow\b/i,                                        'pass-close-enough'],
 ];
+
+// Patterns tuned for recall over precision -- deliberately looser than the rest of POS_PATTERNS/
+// OPTIONS_POS_PATTERNS, on the theory that regex no longer has to single-handedly avoid false
+// positives once every match it produces gets a live judgment call before being trusted. A match
+// against any other pass-* result stays immediately trusted, unchanged: those have zero measured
+// evidence of a precision problem (100% leave-one-out accuracy — see similarity.test.ts), so
+// routing them through an extra AI call would only add latency and a new failure surface for no
+// accuracy gain.
+export const NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-options-contract']);
 
 // Options Insights vocabulary: this feed has tranches too (a 2nd tranche on an existing options
 // position is common), but a real tranche entry still always carries the strike/put-or-call/expiry
@@ -258,18 +275,21 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
 // into STOCK_POS_PATTERNS because the actual triggering syntax is unrelated, not because the
 // concept of a tranche doesn't apply, selected per feed via ACTIONABLE_STRATEGY_BY_FEED below.
 const OPTIONS_POS_PATTERNS: [RegExp, ActionableResult][] = [
-  // Naming a strike, a put/call side, and an expiry (the literal word, or a month+year like
-  // "March 2026") together is this author's own stated convention for a live contract reference
-  // ("ANY options alert should include 'strike' and 'expiry' keywords with either 'put' or
-  // 'call'"). Three independent token checks, not a proximity window: real posts vary too much in
-  // word order and sentence-splitting (e.g. "...strike put has enough liquidity for our purposes.
-  // 2026 expiry.") for position to be the discriminator. A bare 4-digit year alone doesn't count as
-  // the expiry token -- only "expiry"/"expiries"/"expiration" or an actual month+year pairing does,
-  // so an unrelated year mention elsewhere in the post can't supply it. No verb requirement, unlike
-  // every STOCK_POS_PATTERNS entry: this author sometimes confirms a contract with no verb at all
-  // ("JCI PUT MAR 2026 $95 strike"), and the three tokens together are already a strong enough
-  // signal on their own.
-  [/(?=[\s\S]*\bstrikes?\b)(?=[\s\S]*\b(?:puts?|calls?)\b)(?=[\s\S]*(?:\bexpir(?:y|ies|ation)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+20\d\d\b))/i, 'pass-options-contract'],
+  // Naming a strike and an expiry (the literal word, or a month+year like "March 2026") together
+  // is this author's own stated convention for a live contract reference. Originally required a
+  // third token (put/call) too, but measured against the full 126-example options corpus: 22/24
+  // true positives already carry strike+expiry regardless, and dropping the put/call requirement
+  // adds exactly one new match -- a real positive that lacked "put"/"call" explicitly ("March $95
+  // strike, 2026 expiry, yes you can get into it now") -- with zero new false positives among the
+  // other 124 examples. Safe to loosen on its own measured evidence, and additionally backstopped
+  // by NEEDS_INTENT_CONFIRMATION below rather than trusted outright, the same tradeoff pass-
+  // sell-fraction makes: a regex tuned for recall, with precision recovered by a live judgment
+  // call instead of by narrowing the pattern itself. A bare 4-digit year alone doesn't count as
+  // the expiry token -- only "expiry"/"expiries"/"expiration" or an actual month+year pairing
+  // does, so an unrelated year mention elsewhere in the post can't supply it. No verb requirement,
+  // unlike every STOCK_POS_PATTERNS entry: this author sometimes confirms a contract with no verb
+  // at all ("JCI PUT MAR 2026 $95 strike").
+  [/(?=[\s\S]*\bstrikes?\b)(?=[\s\S]*(?:\bexpir(?:y|ies|ation)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+20\d\d\b))/i, 'pass-options-contract'],
 ];
 
 // Necessary-condition check: a real directive always names a trade action, in some form, even
@@ -367,10 +387,14 @@ export function isActionableCandidate(item: FilterItem, actionableAuthors: strin
 }
 
 // A forum's whole "what counts as actionable" method: which closed-class regex patterns resolve a
-// post definitively, and which labeled examples the embedding fallback compares against when regex
-// has no opinion. One object per vocabulary, not per feed -- Members Forum and Stock Insights share
-// STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick content, differing only
-// in the star-gate isActionableCandidate applies), the same reason they always have.
+// post definitively. One object per vocabulary, not per feed -- Members Forum and Stock Insights
+// share STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick content,
+// differing only in the star-gate isActionableCandidate applies), the same reason they always
+// have. `calibration` is no longer consulted by runChannel (the embedding nearest-neighbor
+// fallback it backed was removed -- see NEEDS_INTENT_CONFIRMATION's comment) but stays on the
+// type: classifyActionableHybrid and its leave-one-out accuracy suite (similarity.test.ts) still
+// exercise it as a standalone diagnostic, and the vectors are still real, live-embedded data
+// worth keeping current rather than deleting and re-deriving later.
 export interface ActionableStrategy {
   posPatterns: [RegExp, ActionableResult][];
   calibration: LabeledVector[];

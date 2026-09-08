@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
 import { CHANNEL_FEEDS } from './config';
-import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost, ACTIONABLE_CALIBRATION_EXAMPLES, OPTIONS_CALIBRATION_EXAMPLES } from '@li/core';
+import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost } from '@li/core';
 import type { FeedKey, FilterItem, ItemClassification } from '@li/core';
 
 const FK = FeedKeys;
@@ -1048,16 +1048,22 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
 // These tests exercise that loop end to end via worker.scheduled(), mocking env.AI.run rather than
 // calling the classifier functions directly, since the "classify once per poll cycle, not once per
 // bucket" property only exists at the runChannel level.
-describe('runChannel — hybrid actionable classification', () => {
+describe('runChannel — actionable classification', () => {
   const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   // Deliberately free of every NEG_PATTERN/POS_PATTERN keyword -- classifySignal returns
-  // fail-no-signal for this text, which is what makes it a hybrid candidate in the first place.
-  // Has a real action verb ("enter") so it clears the necessary-condition gate and genuinely
-  // reaches the AI candidacy path -- neither NEG_PATTERNS nor POS_PATTERNS match it either way.
+  // fail-no-signal for this text. Has a real action verb ("enter") so it clears the
+  // necessary-condition gate on its own, confirming it's the pattern match that's absent, not
+  // just a missing verb.
   const AMBIGUOUS = 'Thinking about whether to enter over the next few weeks.';
+  // Matches pass-sell-fraction -- one of NEEDS_INTENT_CONFIRMATION's patterns, so this becomes an
+  // intent-confirmation candidate rather than being trusted immediately.
+  const SELL_FRACTION_TEXT = 'Because many of you are up 15%, you can sell half of your position now.';
   const itemXml = (guid: string, description: string, title = 't') =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>${title}</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${description}</description></item></channel></rss>`;
+  const intentResponse = (label: string, confidence: string) => ({
+    response: { reasoning: 'test reasoning', evidence: 'test evidence', label, confidence },
+  });
 
   function membersEnv(aiRun: ReturnType<typeof vi.fn>) {
     const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
@@ -1074,27 +1080,8 @@ describe('runChannel — hybrid actionable classification', () => {
     } as any;
   }
 
-  it('a Members Forum post with an ambiguous regex verdict becomes an AI candidate, and a positive hybrid result drives the alert', async () => {
-    const knownExample = ACTIONABLE_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
-    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
-    const env = membersEnv(aiRun);
-    let pushCalls = 0;
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
-      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }); // Members Area: nothing new
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
-
-    expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(aiRun.mock.calls[0][1].text).toEqual([AMBIGUOUS]);
-    expect(pushCalls).toBe(1); // the 'actionable' bucket alerted on the hybrid-positive result
-  });
-
-  it('an AI call failure falls back to not-actionable without throwing', async () => {
-    const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
+  it('regex-undecided content resolves to not-actionable with no AI call at all (no embedding fallback)', async () => {
+    const aiRun = vi.fn();
     const env = membersEnv(aiRun);
     let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
@@ -1104,10 +1091,10 @@ describe('runChannel — hybrid actionable classification', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
-    expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(pushCalls).toBe(0); // fell back to not-actionable, same as pre-wiring regex-only behavior
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(pushCalls).toBe(0);
   });
 
   it('zero candidates means env.AI.run is never called', async () => {
@@ -1124,9 +1111,74 @@ describe('runChannel — hybrid actionable classification', () => {
     expect(aiRun).not.toHaveBeenCalled();
   });
 
-  it('an Options Insights post with an ambiguous regex verdict becomes an AI candidate, resolved against its own calibration set', async () => {
-    const knownExample = OPTIONS_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
-    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
+  it('a pass-sell-fraction match becomes an intent-confirmation candidate, and a confident directive verdict drives the alert', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(pushCalls).toBe(1);
+  });
+
+  it('a confident non-directive verdict suppresses the alert', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(pushCalls).toBe(0);
+  });
+
+  it('a non-directive verdict below high confidence stays actionable (fails open) rather than being trusted either way', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('general-education', 'medium'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(pushCalls).toBe(1);
+  });
+
+  it('an intent-confirmation AI failure falls back to the regex verdict (fail-open, not fail-closed)', async () => {
+    const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(pushCalls).toBe(1); // regex already found pass-sell-fraction; an AI hiccup shouldn't suppress it
+  });
+
+  it('an Options Insights pass-options-contract match is resolved against the options IntentStrategy', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
     const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
@@ -1142,20 +1194,20 @@ describe('runChannel — hybrid actionable classification', () => {
     let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
       if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', AMBIGUOUS, '*Starred Trade')) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', 'March $95 strike, 2026 expiry.', '*Starred Trade')) });
     });
     vi.stubGlobal('fetch', fetchMock);
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(aiRun.mock.calls[0][1].text).toEqual([AMBIGUOUS]);
-    expect(pushCalls).toBe(1); // the 'actionable' bucket alerted on the hybrid-positive result
+    // The options IntentStrategy's system prompt is options-flavored, not the stock one.
+    expect(aiRun.mock.calls[0][1].messages[0].content).toContain('options-trading newsletter');
+    expect(pushCalls).toBe(1);
   });
 
-  it('multiple buckets sharing one ambiguous Members Forum item result in exactly one env.AI.run call', async () => {
-    const knownExample = ACTIONABLE_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
-    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
+  it('multiple buckets sharing one intent-confirmation candidate result in exactly one classifyActionableIntent call', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
     const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
@@ -1173,7 +1225,7 @@ describe('runChannel — hybrid actionable classification', () => {
     } as any;
     const fetchMock = vi.fn((url: string) => {
       if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
     vi.stubGlobal('fetch', fetchMock);

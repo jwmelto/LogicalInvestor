@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, actionableStrategyFor, resolveIntentGate, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, actionableStrategyFor, resolveIntentGate, NEEDS_INTENT_CONFIRMATION, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
-import { classifySellFractionIntent } from './intentClassifier';
+import { classifyActionableIntent, intentStrategyFor } from './intentClassifier';
 import { CHANNEL_FEEDS } from './config';
 
 function toFilterItem(item: RssItem): FilterItem {
@@ -13,7 +13,7 @@ export interface Env {
   STATE: KVNamespace;
   WEBPUSH_QUEUE: Queue<WebPushQueueMessage>;
   VALIDATION_QUEUE: Queue<ValidationQueueMessage>;
-  AI: Ai; // Workers AI binding -- embeddings for the hybrid actionable classifier (Members Forum + Stock Insights only)
+  AI: Ai; // Workers AI binding -- classifyActionableIntent's confirmation calls for NEEDS_INTENT_CONFIRMATION regex matches (see @li/core)
   FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
@@ -23,7 +23,7 @@ export interface Env {
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
-  SELL_FRACTION_INTENT_TEMPERATURE?: string; // classifySellFractionIntent's model temperature (0-5, lower = less call-to-call variance), default "0"
+  ACTIONABLE_INTENT_TEMPERATURE?: string; // classifyActionableIntent's model temperature (0-5, lower = less call-to-call variance), default "0"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
@@ -74,8 +74,8 @@ interface RunStats {
   lastScheduledTime?: number;
 }
 
-// One entry per classifySellFractionIntent call, kept for GET /status review -- every decision,
-// not a sample, since volume through this specific gate (pass-sell-fraction candidates only) is
+// One entry per classifyActionableIntent call, kept for GET /status review -- every decision,
+// not a sample, since volume through this gate (NEEDS_INTENT_CONFIRMATION candidates only) is
 // low enough that logging all of it costs nothing. Deliberately NOT its own KV key/write: this
 // channel's poll cadence is already "close enough to [Workers KV's free-tier 1,000 writes/day
 // cap] for write count per invocation to matter" (issue #32, see ChannelState below), so this
@@ -441,7 +441,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         // Only surface daily as "today's" if a poll has actually run today — an unrolled-over
         // stale date (no poll yet today) must not be mislabeled as today's stats.
         todayStats: state?.daily && state.daily.date === todayET ? state.daily : null,
-        // Every classifySellFractionIntent decision, newest first -- see IntentLogEntry's comment
+        // Every classifyActionableIntent decision, newest first -- see IntentLogEntry's comment
         // for why this rides along in ChannelState instead of its own KV key per entry.
         intentLog: state?.intentLog ? [...state.intentLog].reverse() : [],
       };
@@ -719,7 +719,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // app's job (its own reconciliation on every foreground refresh), not the Worker's. See
   // "Server-side alerting model" in the design doc for why a cap exists at all.
   const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
-  const sellFractionIntentTemperature = parseFloat(env.SELL_FRACTION_INTENT_TEMPERATURE ?? '0');
+  const actionableIntentTemperature = parseFloat(env.ACTIONABLE_INTENT_TEMPERATURE ?? '0');
   // Who can trigger the 'actionable' tier.
   const actionableAuthors = (env.ACTIONABLE_AUTHORS ?? 'Sean Hyman').split(',').map((a) => a.trim().toLowerCase());
   const runKey = `run:${channel}`; // see ChannelState
@@ -892,19 +892,25 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   }
 
   // Classify every fresh item once here, shared by every bucket below — not once per bucket. A
-  // live embedding call from inside the per-bucket loop would re-embed the same post once per
-  // bucket, wasting latency and Workers AI neuron budget. `members` is checked first and
-  // short-circuits `actionable` entirely (regex and embeddings both skipped) since Members Area
-  // bypasses every filter tier regardless of actionable-ness.
+  // live AI call from inside the per-bucket loop would repeat the same call once per bucket,
+  // wasting latency and Workers AI neuron budget. `members` is checked first and short-circuits
+  // `actionable` entirely (regex and the intent gate both skipped) since Members Area bypasses
+  // every filter tier regardless of actionable-ness.
   //
-  // The hybrid classifier covers every non-Members-Area feed. Each feed's own ActionableStrategy
-  // (actionableStrategyFor in @li/core) supplies both which regex patterns count as definitive and
-  // which calibration set the embedding fallback compares against -- Members Forum and Stock
-  // Insights share the stock-pick strategy (both stock-pick content, differing only in the
-  // star-gate Stock Insights requires; Members Forum is bundled under the 'members' channel for
-  // push-registration purposes only, unrelated to this), Options Insights has its own.
+  // The embedding nearest-neighbor fallback (classifyActionableHybrid, @li/core) that used to run
+  // here for regex-undecided (fail-no-signal/fail-too-short) content was removed: measured
+  // leave-one-out against both calibration corpora showed it was a wash on stock (one real catch,
+  // one false alarm, net zero) and a net negative on options (one real catch, six false alarms) --
+  // and in production it produced a real false alarm on genuinely novel content with no close
+  // analog in the ~50-example stock corpus, cosine-similarity-matching on generic financial
+  // vocabulary rather than real semantic content. Regex-undecided content now resolves to
+  // not-actionable outright, same as any other definitive fail-* result. Every feed's own
+  // ActionableStrategy (actionableStrategyFor in @li/core) still supplies which regex patterns
+  // count as definitive -- Members Forum and Stock Insights share the stock-pick strategy (both
+  // stock-pick content, differing only in the star-gate Stock Insights requires; Members Forum is
+  // bundled under the 'members' channel for push-registration purposes only, unrelated to this),
+  // Options Insights has its own.
   const classifications = new Map<string, ItemClassification>();
-  const hybridCandidates: RssItem[] = [];
   const intentCandidates: RssItem[] = [];
   for (const rssItem of freshItems) {
     const fi = toFilterItem(rssItem);
@@ -915,39 +921,16 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     const text = fi.content ?? '';
     const strategy = actionableStrategyFor(fi.feedKey);
     const signal = classifySignal(text, 0, strategy.posPatterns);
-    // isSignalUndecided must be checked here too, not just inside classifyActionableHybrid -- an
-    // item classifySignal already has a definitive opinion on (positive, negative, or missing an
-    // action verb) shouldn't be sent to the AI batch as a "candidate" in the first place.
-    if (isSignalUndecided(signal) && isActionableCandidate(fi, actionableAuthors)) {
-      hybridCandidates.push(rssItem); // resolved after the batch AI call below
-      continue;
-    }
-    // pass-sell-fraction is the one regex pattern with a measured accuracy problem (see
-    // resolveIntentGate's comment in @li/core) -- "sell half"/"sell all" is used identically by a
-    // genuine directive, personal advice, and general strategy education. Every other pass-*/
-    // fail-* result is 100% correct on the full calibration set, so only this one gets routed to
-    // the intent-confirmation step rather than trusted immediately.
-    if (signal === 'pass-sell-fraction' && isActionableCandidate(fi, actionableAuthors)) {
+    // NEEDS_INTENT_CONFIRMATION (@li/core) names the pass-* results deliberately tuned for recall
+    // over precision -- their regex is broad by design, with precision recovered by a live
+    // judgment call instead of by narrowing the pattern. Every other pass-*/fail-* result is 100%
+    // correct on the full calibration set, so only these get routed to the intent-confirmation
+    // step rather than trusted immediately.
+    if (NEEDS_INTENT_CONFIRMATION.has(signal) && isActionableCandidate(fi, actionableAuthors)) {
       intentCandidates.push(rssItem); // resolved after the intent-confirmation batch below
       continue;
     }
     classifications.set(rssItem.guid, { members: false, actionable: isActionablePost(fi, actionableAuthors) });
-  }
-
-  if (hybridCandidates.length > 0) {
-    try {
-      const texts = hybridCandidates.map((rssItem) => rssItem.description);
-      const result = await env.AI.run('@cf/baai/bge-large-en-v1.5', { text: texts }) as { data: number[][] };
-      hybridCandidates.forEach((rssItem, i) => {
-        const strategy = actionableStrategyFor(rssItem.feedKey);
-        const hybrid = classifyActionableHybrid(rssItem.description, result.data[i], strategy.calibration, strategy.posPatterns);
-        classifications.set(rssItem.guid, { members: false, actionable: hybrid.isActionable });
-      });
-    } catch {
-      // AI call failed this cycle -- these candidates already know regex was undecided, so they
-      // fall back to not-actionable, identical to today's pre-wiring behavior for this content.
-      hybridCandidates.forEach((rssItem) => classifications.set(rssItem.guid, { members: false, actionable: false }));
-    }
   }
 
   const newIntentLogEntries: IntentLogEntry[] = [];
@@ -956,7 +939,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     // input shape. allSettled (not one try/catch around the whole group) so one candidate's
     // model/schema failure doesn't discard the others' real verdicts.
     const outcomes = await Promise.allSettled(
-      intentCandidates.map((rssItem) => classifySellFractionIntent(env, rssItem.description, sellFractionIntentTemperature)),
+      intentCandidates.map((rssItem) => classifyActionableIntent(env, rssItem.description, actionableIntentTemperature, intentStrategyFor(rssItem.feedKey))),
     );
     intentCandidates.forEach((rssItem, i) => {
       const outcome = outcomes[i];
@@ -969,7 +952,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
         // Unlike the hybrid-candidates fallback above (which fails closed because regex had no
         // opinion at all), regex already found a real pass-sell-fraction signal here, so an AI
         // hiccup shouldn't suppress it -- a missed alert costs more than a false alarm.
-        console.error('sell-fraction intent check failed, falling back to regex verdict', rssItem.guid, outcome.reason);
+        console.error('intent confirmation failed, falling back to regex verdict', rssItem.guid, outcome.reason);
         newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), error: String(outcome.reason), actionable: true });
         classifications.set(rssItem.guid, { members: false, actionable: true });
       }
