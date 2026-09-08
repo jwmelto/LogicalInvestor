@@ -163,6 +163,13 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bI'?d personally\b/i,                              'fail-personal-advice'],
   [/\bwe may consider\b|\bwe'?d likely\b/i,             'fail-hypothetical'],
   [/\bif it should\b/i,                                 'fail-hypothetical'],
+  // Real false alarm: "For instance, if we enter a stock at $80..." -- an illustrative example
+  // explaining a general rule (tranche spacing), not a live call, but pass-buy-with-price matched
+  // the standalone "enter" + nearby $80 anyway. "for instance"/"for example" checked against both
+  // calibration corpora: zero occurrences in any true positive, one occurrence in a real negative
+  // ("For instance, JCI has more ultimate downside...") -- a reliable illustrative-example marker,
+  // same closed-class category as "if it should"/"we may consider" above.
+  [/\bfor (instance|example)\b/i,                       'fail-hypothetical'],
   [/\bI was (urging|pushing|saying|telling|recommending)\b/i, 'fail-historical'],
   // ponytail: catches "could either tank... or rally..." two-sided hedges; a genuine
   // "buy either at $50 or $52" instruction would false-negative here too — narrow further

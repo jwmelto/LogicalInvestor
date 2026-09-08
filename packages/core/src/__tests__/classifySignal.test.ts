@@ -28,6 +28,16 @@ describe('classifySignal — negative patterns (checked first)', () => {
     expect(classifySignal(pad('If it should get to $80 we may act'), MIN)).toBe('fail-hypothetical');
   });
 
+  // Real false alarm: pass-buy-with-price matched the standalone "enter" + nearby $80 inside an
+  // illustrative example explaining a general rule, not a live call.
+  test('fail-hypothetical: "for instance, if we enter..." illustrative example, not a live call', () => {
+    expect(classifySignal(pad("For instance, if we enter a stock at $80 and someone enters a 1st tranche at $50, they can use the 10% rule."), MIN)).toBe('fail-hypothetical');
+  });
+
+  test('fail-hypothetical: "for example" also suppresses an otherwise-matching buy-with-price', () => {
+    expect(classifySignal(pad("For example, if you enter a position at $80, that changes the math."), MIN)).toBe('fail-hypothetical');
+  });
+
   test('fail-historical: "I was urging"', () => {
     expect(classifySignal(pad("Yeah, I was urging everyone to get it while close to $80/averaging down"), MIN)).toBe('fail-historical');
   });
