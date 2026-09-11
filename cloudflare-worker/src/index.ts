@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, isSignalUndecided, classifyActionableHybrid, ACTIONABLE_CALIBRATION_EXAMPLES, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, actionableStrategyFor, resolveIntentGate, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
+import { classifyActionableIntent, intentStrategyFor } from './intentClassifier';
 import { CHANNEL_FEEDS } from './config';
 
 function toFilterItem(item: RssItem): FilterItem {
@@ -12,7 +13,7 @@ export interface Env {
   STATE: KVNamespace;
   WEBPUSH_QUEUE: Queue<WebPushQueueMessage>;
   VALIDATION_QUEUE: Queue<ValidationQueueMessage>;
-  AI: Ai; // Workers AI binding -- embeddings for the hybrid actionable classifier (Members Forum + Stock Insights only)
+  AI: Ai; // Workers AI binding
   FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
@@ -22,6 +23,7 @@ export interface Env {
   POLL_BOUNDARY_CLOSE?: string;     // hhmm ET when late-day window ends, default "1615"
   MAX_PUSH_AGE_MINUTES?: string;    // content older than this won't be pushed even if newly-seen, default "120"
   MAX_ALERT_ITEMS_PER_FEED?: string; // cap on how many of a feed's most-recent posts are considered per poll, default "25"
+  ACTIONABLE_INTENT_TEMPERATURE?: string; // classifyActionableIntent's model temperature (0-5, lower = less call-to-call variance), default "0"
   ACTIONABLE_AUTHORS?: string;      // comma-separated; who can trigger the 'actionable' tier, default "Sean Hyman"
   VAPID_PUBLIC_KEY: string;         // Web Push VAPID key pair — not secret, sent to browser clients as-is
   VAPID_SUBJECT: string;            // mailto: contact required by the Web Push protocol
@@ -72,6 +74,27 @@ interface RunStats {
   lastScheduledTime?: number;
 }
 
+// One entry per classifyActionableIntent call, kept for GET /status review -- every decision,
+// not a sample, since volume through this gate (each strategy's own needsIntentConfirmation
+// candidates only) is low enough that logging all of it costs nothing. Deliberately NOT its own
+// KV key/write: this channel's poll cadence is already "close enough to [Workers KV's free-tier
+// 1,000 writes/day cap] for write count per invocation to matter" (issue #32, see ChannelState
+// below), so this rides along inside the one write ChannelState already makes per poll instead of
+// adding one write per candidate.
+interface IntentLogEntry {
+  guid: string;
+  text: string;
+  timestamp: string;
+  reasoning?: string;
+  evidence?: string;
+  label?: string;
+  confidence?: string;
+  actionable?: boolean;
+  error?: string;
+}
+
+const INTENT_LOG_MAX_ENTRIES = 50;
+
 interface DailyStats {
   date: string;
   runs: number;
@@ -95,6 +118,7 @@ interface ChannelState {
   // no fetch), so imprecision here is free; the actual feedTokenHasAccess fetches happen later,
   // in bounded queue() consumer batches, never in this invocation.
   lastValidationEnqueueDate?: number;
+  intentLog?: IntentLogEntry[];
 }
 
 function emptyDaily(date: string): DailyStats {
@@ -135,17 +159,22 @@ export function advanceDaily(daily: DailyStats | undefined, todayET: string, run
   };
 }
 
-// Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
-// wrangler.toml MUST list the three crons in this exact order, with each starting one minute later:
-//   members → "0,5,10,15,..."   (offset 0)
-//   stock   → "1,6,11,16,..."   (offset 1)
-//   options → "2,7,12,17,..."   (offset 2)
+// Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute field starts at
+// offset i. wrangler.toml MUST list the three crons in this exact order, each starting one minute
+// later than the last:
+//   members → "0-59/5 ..."   (offset 0)
+//   stock   → "1-59/5 ..."   (offset 1)
+//   options → "2-59/5 ..."   (offset 2)
 // Changing either this array OR the wrangler.toml cron order silently breaks the channel mapping.
 // ponytail: brittle by design — simplest option available; revisit if a 4th channel is added.
 const CHANNELS: Channel[] = [ChannelNames.members, ChannelNames.stock, ChannelNames.options];
 
+// parseInt stops at the first non-digit character, so it reads only the minute field's leading
+// integer regardless of what follows it -- "0-59/5" and the older enumerated "0,5,10,15,..." both
+// parse to 0. That's the actual, load-bearing mechanism this depends on: the minute field's
+// leading digit is the channel offset, in whatever cron syntax wrangler.toml uses.
 export function channelFromCron(cron: string): Channel {
-  const offset = parseInt(cron.split(' ')[0].split(',')[0], 10);
+  const offset = parseInt(cron.split(' ')[0], 10);
   return CHANNELS[offset] ?? ChannelNames.members;
 }
 
@@ -417,6 +446,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         // Only surface daily as "today's" if a poll has actually run today — an unrolled-over
         // stale date (no poll yet today) must not be mislabeled as today's stats.
         todayStats: state?.daily && state.daily.date === todayET ? state.daily : null,
+        // Every classifyActionableIntent decision, newest first -- see IntentLogEntry's comment
+        // for why this rides along in ChannelState instead of its own KV key per entry.
+        intentLog: state?.intentLog ? [...state.intentLog].reverse() : [],
       };
     }
     return new Response(JSON.stringify(result, null, 2), {
@@ -692,6 +724,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   // app's job (its own reconciliation on every foreground refresh), not the Worker's. See
   // "Server-side alerting model" in the design doc for why a cap exists at all.
   const maxAlertItemsPerFeed = parseInt(env.MAX_ALERT_ITEMS_PER_FEED ?? '25', 10);
+  const actionableIntentTemperature = parseFloat(env.ACTIONABLE_INTENT_TEMPERATURE ?? '0');
   // Who can trigger the 'actionable' tier.
   const actionableAuthors = (env.ACTIONABLE_AUTHORS ?? 'Sean Hyman').split(',').map((a) => a.trim().toLowerCase());
   const runKey = `run:${channel}`; // see ChannelState
@@ -721,7 +754,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   const claimedStats: RunStats = { ...(state?.stats ?? emptyRunStats()), lastRun: now.toISOString(), lastScheduledTime: event.scheduledTime };
   await env.STATE.put(runKey, JSON.stringify({
     stats: claimedStats, seen: state?.seen ?? {}, daily: state?.daily ?? emptyDaily(getETDate(now)),
-    lastValidationEnqueueDate: state?.lastValidationEnqueueDate,
+    lastValidationEnqueueDate: state?.lastValidationEnqueueDate, intentLog: state?.intentLog,
   } satisfies ChannelState));
 
   const seenMap: Partial<Record<string, string[]>> = state?.seen ?? {};
@@ -786,7 +819,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     // below is reached — so lastValidationEnqueueDate carries forward unchanged.
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
     await env.STATE.put(runKey, JSON.stringify({
-      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate: state?.lastValidationEnqueueDate,
+      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate: state?.lastValidationEnqueueDate, intentLog: state?.intentLog,
     } satisfies ChannelState));
     return;
   }
@@ -858,24 +891,22 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (buckets.size === 0) {
     const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
     await env.STATE.put(runKey, JSON.stringify({
-      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate,
+      stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate, intentLog: state?.intentLog,
     } satisfies ChannelState));
     return;
   }
 
-  // Classify every fresh item once here, shared by every bucket below — not once per bucket. A
-  // live embedding call from inside the per-bucket loop would re-embed the same post once per
-  // bucket, wasting latency and Workers AI neuron budget. `members` is checked first and
-  // short-circuits `actionable` entirely (regex and embeddings both skipped) since Members Area
-  // bypasses every filter tier regardless of actionable-ness.
+  // Classify every fresh item once here, shared by every bucket below. `members` is checked first
+  // and short-circuits `actionable` entirely since Members Area bypasses every filter tier
+  // regardless of actionable-ness. Regex resolves most of what's left; only a match in the
+  // item's own strategy.needsIntentConfirmation set needs a live AI call.
   //
-  // The hybrid classifier only covers Members Forum and Stock Insights (both stock-pick content
-  // in the vocabulary its calibration set is built from, differing only in the star-gate Stock
-  // Insights requires) -- this is a per-feed condition, not per-channel: Members Forum is bundled
-  // under the 'members' channel for push-registration purposes only. Options Insights has no
-  // calibration data yet and stays on the regex-only path via isActionablePost.
+  // Every feed's own ActionableStrategy (actionableStrategyFor in @li/core) supplies which regex
+  // patterns count as definitive. Members Forum and Stock Insights share the stock-pick strategy.
+  // Options Insights has its own. Regex-undecided content (fail-no-signal) resolves to
+  // not-actionable outright.
   const classifications = new Map<string, ItemClassification>();
-  const hybridCandidates: RssItem[] = [];
+  const intentCandidates: RssItem[] = [];
   for (const rssItem of freshItems) {
     const fi = toFilterItem(rssItem);
     if (fi.feedKey === FeedKeys.membersArea) {
@@ -883,31 +914,43 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
       continue;
     }
     const text = fi.content ?? '';
-    const isStockPickFeed = fi.feedKey === FeedKeys.membersForum || fi.feedKey === FeedKeys.stockInsights;
-    // isSignalUndecided must be checked here too, not just inside classifyActionableHybrid -- an
-    // item classifySignal already has a definitive opinion on (positive, negative, or missing an
-    // action verb) shouldn't be sent to the AI batch as a "candidate" in the first place.
-    const regexUndecided = isSignalUndecided(classifySignal(text, 0));
-    if (isStockPickFeed && regexUndecided && isActionableCandidate(fi, actionableAuthors)) {
-      hybridCandidates.push(rssItem); // resolved after the batch AI call below
+    const strategy = actionableStrategyFor(fi.feedKey);
+    const signal = classifySignal(text, strategy.posPatterns);
+    // strategy.needsIntentConfirmation (@li/core) is that forum's own set of pass-* results whose
+    // regexes are deliberately tuned for recall over precision, broad by design with precision
+    // recovered by a live judgment call instead of a narrower pattern. A signal in this set routes
+    // to the intent-confirmation step below. Every other pass-*/fail-* result is 100% correct on
+    // the full calibration set and gets trusted immediately.
+    if (strategy.needsIntentConfirmation.has(signal) && isActionableCandidate(fi, actionableAuthors)) {
+      intentCandidates.push(rssItem); // resolved after the intent-confirmation batch below
       continue;
     }
     classifications.set(rssItem.guid, { members: false, actionable: isActionablePost(fi, actionableAuthors) });
   }
 
-  if (hybridCandidates.length > 0) {
-    try {
-      const texts = hybridCandidates.map((rssItem) => rssItem.description);
-      const result = await env.AI.run('@cf/baai/bge-large-en-v1.5', { text: texts }) as { data: number[][] };
-      hybridCandidates.forEach((rssItem, i) => {
-        const hybrid = classifyActionableHybrid(rssItem.description, result.data[i], ACTIONABLE_CALIBRATION_EXAMPLES);
-        classifications.set(rssItem.guid, { members: false, actionable: hybrid.isActionable });
-      });
-    } catch {
-      // AI call failed this cycle -- these candidates already know regex was undecided, so they
-      // fall back to not-actionable, identical to today's pre-wiring behavior for this content.
-      hybridCandidates.forEach((rssItem) => classifications.set(rssItem.guid, { members: false, actionable: false }));
-    }
+  const newIntentLogEntries: IntentLogEntry[] = [];
+  if (intentCandidates.length > 0) {
+    // Text generation has no batch input shape, so this is one call per candidate. allSettled
+    // lets one candidate's model/schema failure surface on its own, without discarding the
+    // others' real verdicts.
+    const outcomes = await Promise.allSettled(
+      intentCandidates.map((rssItem) => classifyActionableIntent(env, rssItem.description, actionableIntentTemperature, intentStrategyFor(rssItem.feedKey))),
+    );
+    intentCandidates.forEach((rssItem, i) => {
+      const outcome = outcomes[i];
+      if (outcome.status === 'fulfilled') {
+        const gate = resolveIntentGate(outcome.value);
+        newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), ...outcome.value, actionable: gate.actionable });
+        classifications.set(rssItem.guid, { members: false, actionable: gate.actionable });
+      } else {
+        // The AI call itself errored (network failure, or a response that didn't match the
+        // expected shape). Keep the regex's positive verdict here. A missed alert costs more
+        // than a false alarm.
+        console.error('intent confirmation failed, falling back to regex verdict', rssItem.guid, outcome.reason);
+        newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), error: String(outcome.reason), actionable: true });
+        classifications.set(rssItem.guid, { members: false, actionable: true });
+      }
+    });
   }
 
   // Push-sends are independent per bucket, so they run concurrently rather than one at a time —
@@ -967,8 +1010,9 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
   if (runStats.sent > 0) runStats.lastNotified = now.toISOString();
 
   const daily = advanceDaily(await freshDailyBase(env, runKey, state?.daily), todayET, runStats);
+  const intentLog = [...(state?.intentLog ?? []), ...newIntentLogEntries].slice(-INTENT_LOG_MAX_ENTRIES);
   await env.STATE.put(runKey, JSON.stringify({
-    stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate,
+    stats: runStats, seen: seenMap, daily, lastValidationEnqueueDate, intentLog,
   } satisfies ChannelState));
 }
 

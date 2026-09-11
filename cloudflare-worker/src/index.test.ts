@@ -1,12 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import worker, { matchesFilter, stripReplyPrefix, channelFromCron, findAndStorePollToken, shouldPollNow, getIntervalMinutes, registerDevice, sendTestPush, timingSafeEqualStr, advanceDaily, needsRevalidation } from './index';
 import { CHANNEL_FEEDS } from './config';
-import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost, ACTIONABLE_CALIBRATION_EXAMPLES } from '@li/core';
+import { FeedKeys, containsActionableSignal, FEEDKEY_TO_CHANNEL, isActionablePost } from '@li/core';
 import type { FeedKey, FilterItem, ItemClassification } from '@li/core';
 
 const FK = FeedKeys;
 
 const ACTIONABLE_AUTHORS = ['sean hyman'];
+
+// Mirrors wrangler.toml's [triggers].crons -- kept as one shared copy rather than redeclared in
+// each describe block that needs one, since all of them must stay in sync with the same three
+// real cron strings channelFromCron actually parses.
+const MEMBERS_CRON = '0-59/5 * * * *';
+const STOCK_CRON = '1-59/5 * * * *';
+const OPTIONS_CRON = '2-59/5 * * * *';
 
 function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
@@ -102,9 +109,15 @@ describe('matchesFilter', () => {
       expect(matchesFilter(post, 'actionable', [], MIN, classify(post, ['joe blow']))).toBe(true);
     });
 
-    it.each([FK.stockInsights, FK.optionsInsights])('%s requires a starred title to alert', (feedKey) => {
-      const starred = item(feedKey, { title: '*VUTS Trade', description: longWithSignal });
-      const unstarred = item(feedKey, { title: 'Discussion post', description: longWithSignal });
+    // Each feed's own signal text: stock-pick vocabulary ("new pick") only resolves against
+    // STOCK_POS_PATTERNS, options vocabulary (strike/put/expiry) only against OPTIONS_POS_PATTERNS
+    // -- see actionableStrategyFor (@li/core).
+    it.each([
+      [FK.stockInsights, longWithSignal],
+      [FK.optionsInsights, 'You can get into the January $55 strike put, 2026 expiry now.'],
+    ])('%s requires a starred title to alert', (feedKey, description) => {
+      const starred = item(feedKey, { title: '*VUTS Trade', description });
+      const unstarred = item(feedKey, { title: 'Discussion post', description });
       expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(starred, ACTIONABLE_AUTHORS))).toBe(true);
       expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(unstarred, ACTIONABLE_AUTHORS))).toBe(false);
     });
@@ -194,9 +207,9 @@ describe('CHANNEL_FEEDS consistency with @li/core FEEDKEY_TO_CHANNEL', () => {
 
 describe('channelFromCron', () => {
   it('maps all three cron expressions to the correct channels', () => {
-    expect(channelFromCron('0,5,10,15,20,25,30,35,40,45,50,55 * * * *')).toBe('members');
-    expect(channelFromCron('1,6,11,16,21,26,31,36,41,46,51,56 * * * *')).toBe('stock');
-    expect(channelFromCron('2,7,12,17,22,27,32,37,42,47,52,57 * * * *')).toBe('options');
+    expect(channelFromCron(MEMBERS_CRON)).toBe('members');
+    expect(channelFromCron(STOCK_CRON)).toBe('stock');
+    expect(channelFromCron(OPTIONS_CRON)).toBe('options');
   });
 
   it('falls back to members for unknown cron', () => {
@@ -687,7 +700,6 @@ describe('CORS', () => {
 });
 
 describe('runChannel (via scheduled) — enqueues stale registrations for revalidation (issue #86)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
@@ -862,7 +874,6 @@ describe('queue() — token validation (issue #86)', () => {
 });
 
 describe('runChannel — registrations predating filter/authors/minLength are skipped', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
 
@@ -898,7 +909,6 @@ describe('runChannel — registrations predating filter/authors/minLength are sk
 });
 
 describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   // Realistic shape: a real pubDate on every item, like the actual feed always sends. guids are
   // listed newest-first, each one minute older than the last, matching the feed's real ordering.
   const rssWithItems = (guids: string[], descriptions?: string[]) =>
@@ -985,7 +995,6 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
 // "Bucket" = the runtime grouping in index.ts's runChannel: devices sharing an identical
 // filter|authors|minLength signature share one eligibility check and one push-send call.
 describe('runChannel — push-send failure does not abort remaining buckets (issue #42)', () => {
-  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
@@ -1037,21 +1046,25 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
   });
 });
 
-// The hybrid classifier only applies to Members Forum and Stock Insights content whose regex
-// check is genuinely undecided — see runChannel's classification loop. These tests exercise that
-// loop end to end via worker.scheduled(), mocking env.AI.run rather than calling the classifier
-// functions directly, since the "classify once per poll cycle, not once per bucket" property only
-// exists at the runChannel level.
-describe('runChannel — hybrid actionable classification (Members Forum + Stock Insights)', () => {
-  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
+// The hybrid classifier applies to every non-Members-Area feed's content whose regex check is
+// genuinely undecided — see runChannel's classification loop and actionableStrategyFor (@li/core).
+// These tests exercise that loop end to end via worker.scheduled(), mocking env.AI.run rather than
+// calling the classifier functions directly, since the "classify once per poll cycle, not once per
+// bucket" property only exists at the runChannel level.
+describe('runChannel — actionable classification', () => {
   // Deliberately free of every NEG_PATTERN/POS_PATTERN keyword -- classifySignal returns
-  // fail-no-signal for this text, which is what makes it a hybrid candidate in the first place.
-  // Has a real action verb ("enter") so it clears the necessary-condition gate and genuinely
-  // reaches the AI candidacy path -- neither NEG_PATTERNS nor POS_PATTERNS match it either way.
+  // fail-no-signal for this text. Has a real action verb ("enter") so it clears the
+  // necessary-condition gate on its own, confirming it's the pattern match that's absent, not
+  // just a missing verb.
   const AMBIGUOUS = 'Thinking about whether to enter over the next few weeks.';
+  // Matches pass-sell-fraction, one of the stock strategy's needsIntentConfirmation patterns, so
+  // this becomes an intent-confirmation candidate rather than being trusted immediately.
+  const SELL_FRACTION_TEXT = 'Because many of you are up 15%, you can sell half of your position now.';
   const itemXml = (guid: string, description: string, title = 't') =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>${title}</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${description}</description></item></channel></rss>`;
+  const intentResponse = (label: string, confidence: string) => ({
+    response: { reasoning: 'test reasoning', evidence: 'test evidence', label, confidence },
+  });
 
   function membersEnv(aiRun: ReturnType<typeof vi.fn>) {
     const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
@@ -1068,27 +1081,8 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
     } as any;
   }
 
-  it('a Members Forum post with an ambiguous regex verdict becomes an AI candidate, and a positive hybrid result drives the alert', async () => {
-    const knownExample = ACTIONABLE_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
-    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
-    const env = membersEnv(aiRun);
-    let pushCalls = 0;
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
-      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }); // Members Area: nothing new
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
-
-    expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(aiRun.mock.calls[0][1].text).toEqual([AMBIGUOUS]);
-    expect(pushCalls).toBe(1); // the 'actionable' bucket alerted on the hybrid-positive result
-  });
-
-  it('an AI call failure falls back to not-actionable without throwing', async () => {
-    const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
+  it('regex-undecided content resolves to not-actionable with no AI call at all (no embedding fallback)', async () => {
+    const aiRun = vi.fn();
     const env = membersEnv(aiRun);
     let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
@@ -1098,10 +1092,10 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
-    expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(pushCalls).toBe(0); // fell back to not-actionable, same as pre-wiring regex-only behavior
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(pushCalls).toBe(0);
   });
 
   it('zero candidates means env.AI.run is never called', async () => {
@@ -1118,7 +1112,73 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
     expect(aiRun).not.toHaveBeenCalled();
   });
 
-  it('an Options Insights post never becomes a hybrid candidate, even with ambiguous content', async () => {
+  it('a pass-sell-fraction match becomes an intent-confirmation candidate, and a confident directive verdict drives the alert', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(pushCalls).toBe(1);
+  });
+
+  it('a confident non-directive verdict suppresses the alert', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(pushCalls).toBe(0);
+  });
+
+  it('a non-directive verdict below high confidence stays actionable rather than being trusted either way', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('general-education', 'medium'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(pushCalls).toBe(1);
+  });
+
+  it('an intent-confirmation AI failure falls back to the regex verdict', async () => {
+    const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(pushCalls).toBe(1); // regex already found pass-sell-fraction; an AI hiccup shouldn't suppress it
+  });
+
+  it('an Options Insights pass-options-contract match is trusted immediately -- options has no needsIntentConfirmation entries currently', async () => {
     const aiRun = vi.fn();
     const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
     const env = {
@@ -1132,19 +1192,21 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
       },
       AI: { run: aiRun },
     } as any;
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', AMBIGUOUS, '*Starred Trade')) })
-    );
+    let pushCalls = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', 'March $95 strike, 2026 expiry.', '*Starred Trade')) });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(aiRun).not.toHaveBeenCalled(); // Options Insights has no calibration data yet -- regex-only fallback
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(pushCalls).toBe(1);
   });
 
-  it('multiple buckets sharing one ambiguous Members Forum item result in exactly one env.AI.run call', async () => {
-    const knownExample = ACTIONABLE_CALIBRATION_EXAMPLES.find((e) => e.isActionable)!;
-    const aiRun = vi.fn().mockResolvedValue({ data: [knownExample.vector] });
+  it('multiple buckets sharing one intent-confirmation candidate result in exactly one classifyActionableIntent call', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
     const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
@@ -1162,7 +1224,7 @@ describe('runChannel — hybrid actionable classification (Members Forum + Stock
     } as any;
     const fetchMock = vi.fn((url: string) => {
       if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1195,7 +1257,6 @@ const webpushSubscription = {
 // (tested separately below) does the actual encrypted send, in its own invocation with its own
 // subrequest budget — see wrangler.toml's queues.consumers max_batch_size.
 describe('runChannel — web push queuing', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
@@ -1358,7 +1419,6 @@ describe('queue() — unrecognized queue name', () => {
 });
 
 describe('runChannel — claims lastRun before slow notify work (cron double-dispatch race)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const NEW_ITEM_RSS = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>new-guid</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description></item></channel></rss>';
 
   it('writes an updated stats:<channel> before sending any push', async () => {
@@ -1403,7 +1463,6 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
 });
 
 describe('runChannel — daily counters survive a concurrent duplicate-dispatch write', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const NEW_ITEM_RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>new-guid</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
 
   it('bases the final daily write on a fresh read, not the stale pre-slow-work snapshot (issue #32 follow-up)', async () => {
@@ -1446,7 +1505,6 @@ describe('runChannel — daily counters survive a concurrent duplicate-dispatch 
 });
 
 describe('runChannel — duplicate cron dispatch is skipped (Cloudflare at-least-once delivery)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const DUPLICATE_TICK = 1751000000000;
   // Just past getIntervalMinutes()'s longest bucket (overnight, 60min default) — enough for
   // shouldPollNow() to pass regardless of which interval window the test happens to run in.
@@ -1512,7 +1570,6 @@ describe('runChannel — duplicate cron dispatch is skipped (Cloudflare at-least
 });
 
 describe('runChannel — staleness gate on push (issue #48)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithPubDate = (guid: string, pubDate: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${pubDate}</pubDate></item></channel></rss>`;
 
@@ -1574,10 +1631,6 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
 });
 
 describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
-  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
-  const STOCK_CRON = '1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
-
   function mockEnv(urls: { members?: string; stock?: string; options?: string } = {}) {
     return {
       STATE: { get: vi.fn().mockResolvedValue(null) },

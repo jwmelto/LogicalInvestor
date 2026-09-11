@@ -1,13 +1,4 @@
 import { decode as decodeHtmlEntities } from 'he';
-import { classifyActionableHybrid, type LabeledVector } from './similarity';
-import actionableCalibrationFixture from './data/actionableCalibration.fixture.json';
-
-export { classifyActionableHybrid, type LabeledVector };
-
-// The pinned bge-large-en-v1.5 vectors backing the hybrid actionable classifier (see
-// similarity.ts). Bundled statically -- updating the calibration set means a new commit and
-// deploy, same as any other data change, not a runtime fetch.
-export const ACTIONABLE_CALIBRATION_EXAMPLES: LabeledVector[] = actionableCalibrationFixture.examples;
 
 export const MAX_SEEN_IDS_PER_FEED = 500;
 
@@ -136,14 +127,17 @@ export type ActionableResult =
   | 'pass-sell-fraction'
   | 'pass-averaging-down'
   | 'pass-immediately'
+  | 'pass-close-enough'
+  | 'pass-get-now'
+  | 'pass-options-contract'
   | 'fail-personal-advice'
   | 'fail-historical'
   | 'fail-hypothetical'
   | 'fail-generic-practice'
   | 'fail-negated-instruction'
   | 'fail-acknowledgment'
+  | 'fail-general-education'
   | 'fail-no-action-verb'
-  | 'fail-too-short'
   | 'fail-no-signal';
 
 // Negative patterns checked first — a match suppresses positive pattern evaluation.
@@ -152,6 +146,13 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bI'?d personally\b/i,                              'fail-personal-advice'],
   [/\bwe may consider\b|\bwe'?d likely\b/i,             'fail-hypothetical'],
   [/\bif it should\b/i,                                 'fail-hypothetical'],
+  // Real false alarm: "For instance, if we enter a stock at $80..." -- an illustrative example
+  // explaining a general rule (tranche spacing), not a live call, but pass-buy-with-price matched
+  // the standalone "enter" + nearby $80 anyway. "for instance"/"for example" checked against both
+  // calibration corpora: zero occurrences in any true positive, one occurrence in a real negative
+  // ("For instance, JCI has more ultimate downside...") -- a reliable illustrative-example marker,
+  // same closed-class category as "if it should"/"we may consider" above.
+  [/\bfor (instance|example)\b/i,                       'fail-hypothetical'],
   [/\bI was (urging|pushing|saying|telling|recommending)\b/i, 'fail-historical'],
   // ponytail: catches "could either tank... or rally..." two-sided hedges; a genuine
   // "buy either at $50 or $52" instruction would false-negative here too — narrow further
@@ -193,6 +194,11 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // report of action already taken, not a new call, distinct from #66's "I was urging" (a past
   // reference to a specific prior recommendation vs. this being a statement of current position).
   [/\bwe'?ve already (sold|bought|entered|exited)\b/i,                         'fail-historical'],
+  // Real reported false positive: "No, see my post above: March $75 strike put 2027 expiry"
+  // restates a contract already given in an earlier post, not a fresh directive. Same category as
+  // the other fail-historical entries above -- a backward reference, not a new call. Checked
+  // against both calibration corpora: zero conflicts, no true positive anywhere uses this phrasing.
+  [/\b(see|per)\s+(my|the)\s+(post|reply|answer)\s+above\b/i,                  'fail-historical'],
   // A real post-deploy false alarm: "Good job. Congrats!" reached nearest-neighbor (no other
   // signal) and matched purely on generic congratulatory tone. "Good job" is a reaction to a
   // reported outcome, not a directive — distinct from fail-historical (a past-tense reference to
@@ -206,7 +212,10 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bit depends\b/i,                                                          'fail-personal-advice'],
 ];
 
-const POS_PATTERNS: [RegExp, ActionableResult][] = [
+// Stock-pick vocabulary: tranche pricing, averaging down, sell-fraction language -- the default
+// pattern set, used by every feed with no forum-specific override (see ACTIONABLE_STRATEGY_BY_FEED
+// below).
+const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
   [/\bnew pick\b/i,                                                               'pass-new-pick'],
   [/\b(1st|2nd|3rd|4th|first|second|third|fourth)\s+tranche:\s*\$/i,            'pass-tranche-price'],
   [/\bget\s+in\b[\s\S]{0,30}\btranche\b/i,                                       'pass-get-in-tranche'],
@@ -235,7 +244,62 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
   // report uses different directive phrasing, same as the rest of this pattern list.
   [/\bget\s+your\b[\s\S]{0,20}\baveraging?\s+down\b/i,                           'pass-averaging-down'],
   [/\bIMMEDIATELY\b/,                                                             'pass-immediately'],
+  // "Close enough ... now" immediacy framing ("it's close enough now to $28ish, that I'd SELL
+  // HALF here/now") -- measured against the full 53-example stock corpus: both matches are true
+  // positives (one already redundantly caught by pass-sell-fraction, one a genuine new catch that
+  // no other pattern reaches). Deliberately generous rather than narrowly worded, unlike the rest
+  // of this list -- backstopped by STOCK_NEEDS_INTENT_CONFIRMATION below instead of trusted
+  // outright, so precision doesn't have to be earned in the regex itself.
+  [/\bclose enough\b[\s\S]{0,40}\bnow\b/i,                                        'pass-close-enough'],
+  // "Get ... now" immediacy framing catches the split phrasal-verb word order pass-get-in-tranche
+  // misses ("let's go ahead and get our 2nd tranche in now" -- verb, object, particle, rather than
+  // pass-get-in-tranche's assumed "get in [object] tranche" adjacency). Checked against the full
+  // 53-example stock corpus: only 2 matches, both already true positives redundantly caught by
+  // pass-get-in-tranche first (array order), zero false positives. "get" and "now" are both common
+  // enough words on their own that this is deliberately generous rather than earning its own
+  // precision -- backstopped by STOCK_NEEDS_INTENT_CONFIRMATION below, same as pass-close-enough.
+  [/\bget\b[\s\S]{0,40}\bnow\b/i,                                                 'pass-get-now'],
 ];
+
+// Stock patterns tuned for recall over precision -- deliberately looser than the rest of
+// STOCK_POS_PATTERNS, on the theory that regex no longer has to single-handedly avoid false
+// positives once every match it produces gets a live judgment call before being trusted. A match
+// against any other pass-* result stays immediately trusted, unchanged: those have zero measured
+// precision problem, so routing them through an extra AI call would only add latency and a new
+// failure surface for no accuracy gain. Lives on STOCK_PICK_STRATEGY below, not as one shared set
+// across vocabularies -- same reasoning as posPatterns being per strategy: which patterns need a
+// live judgment call is itself part of a vocabulary's own definition.
+const STOCK_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-get-now']);
+
+// Options Insights vocabulary: this feed has tranches too (a 2nd tranche on an existing options
+// position is common), but a real tranche entry still always carries the strike/put-or-call/expiry
+// syntax below -- it's never the stock forum's bare "1st tranche: $121" shorthand, since an options
+// tranche is itself a specific contract, not just a price level. The stock-pick STOCK_POS_PATTERNS
+// tranche patterns (pass-tranche-price, pass-get-in-tranche) require that bare colon-price/"get in"
+// shorthand and so don't fire here regardless; kept as its own pattern set below rather than folded
+// into STOCK_POS_PATTERNS because the actual triggering syntax is unrelated, not because the
+// concept of a tranche doesn't apply, selected per feed via ACTIONABLE_STRATEGY_BY_FEED below.
+const OPTIONS_POS_PATTERNS: [RegExp, ActionableResult][] = [
+  // Naming a strike and an expiry (the literal word, or a month+year like "March 2026") together
+  // is this author's own stated convention for a live contract reference. Originally required a
+  // third token (put/call) too, but measured against the full 127-example options corpus: true
+  // positives already carry strike+expiry regardless, and dropping the put/call requirement adds
+  // real matches with zero new false positives. Trusted immediately, unlike pass-sell-fraction:
+  // measured leave-one-out is 22/22 (100%) once the one real false positive found (restating a
+  // contract already given in an earlier post) is caught by its own NEG_PATTERN above, so there's
+  // no measured precision problem here to justify routing this through a live judgment call.
+  // A bare 4-digit year alone doesn't count as the expiry token -- only "expiry"/"expiries"/
+  // "expiration" or an actual month+year pairing does, so an unrelated year mention elsewhere in
+  // the post can't supply it. No verb requirement, unlike every STOCK_POS_PATTERNS entry: this
+  // author sometimes confirms a contract with no verb at all ("JCI PUT MAR 2026 $95 strike").
+  [/(?=[\s\S]*\bstrikes?\b)(?=[\s\S]*(?:\bexpir(?:y|ies|ation)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+20\d\d\b))/i, 'pass-options-contract'],
+];
+
+// Currently empty. Kept as its own set, matching STOCK_NEEDS_INTENT_CONFIRMATION's shape, so any
+// future entry stays scoped to options specifically. pass-options-contract has no measured
+// precision problem to justify one today (see its own comment above: 22/22, including the one
+// real false positive found, now caught by its own NEG_PATTERN).
+const OPTIONS_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>([]);
 
 // Necessary-condition check: a real directive always names a trade action, in some form, even
 // when phrased as a modal ("you can sell half now"), infinitive ("close enough to get your
@@ -253,58 +317,42 @@ const POS_PATTERNS: [RegExp, ActionableResult][] = [
 // original historical call ("the buy recommendation from the newsletter"), not a live verb.
 // Found via a real false match on a genuine negative example that otherwise relied on
 // nearest-neighbor and got it wrong.
-const ACTION_VERB = /\b(buy|buys|buying|bought)\b(?!\s+(recommendation|rating|call|alert))|\b(sell|sells|selling|sold|enter|enters|entering|entered|get\s+in(?:to)?|gets\s+in(?:to)?|getting\s+in(?:to)?|got\s+in(?:to)?|exit|exits|exiting|exited|hold|holds|holding|held|close|closes|closing|closed|roll|rolls|rolling|rolled|average[ds]?\s+down|averaging\s+down|add|adds|adding|added|trim|trims|trimming|trimmed)\b/i;
+//
+// Includes "capture"/"captures"/"capturing"/"captured": Options Insights profit-taking language
+// ("up a quick 20% in such a short time can capture profits as well") has no other verb in this
+// list, so without it the necessary-condition check fails outright (fail-no-action-verb) and never
+// reaches the embedding fallback, rather than landing in the ambiguous bucket where nearest-
+// neighbor can weigh it against the calibration set. Same trade-action vocabulary as the rest of
+// this list, not an options-only special case.
+const ACTION_VERB = /\b(buy|buys|buying|bought)\b(?!\s+(recommendation|rating|call|alert))|\b(sell|sells|selling|sold|enter|enters|entering|entered|get\s+in(?:to)?|gets\s+in(?:to)?|getting\s+in(?:to)?|got\s+in(?:to)?|exit|exits|exiting|exited|hold|holds|holding|held|close|closes|closing|closed|roll|rolls|rolling|rolled|average[ds]?\s+down|averaging\s+down|add|adds|adding|added|trim|trims|trimming|trimmed|capture[ds]?|capturing)\b/i;
 
-// Exported for the embeddings-similarity prototype (see similarity.ts): closed-class discourse
-// markers (hedge modals, personal-address phrases, negation) are reliably keyword-detectable —
-// the whack-a-mole history on this file is about open-ended phrasing (directive vs. retrospective
-// framing), not these markers, so there's no reason for a hybrid classifier to re-derive them.
-export function matchNegativePattern(text: string): ActionableResult | null {
+function matchNegativePattern(text: string): ActionableResult | null {
   for (const [re, clause] of NEG_PATTERNS) {
     if (re.test(text)) return clause;
   }
   return null;
 }
 
-// Exported for the embeddings-similarity prototype (see similarity.ts) — classifyActionableHybrid
-// applies this itself, in the same order as classifySignal (after both pattern arrays, never
-// before), since it calls matchNegativePattern/matchPositivePattern directly rather than going
-// through classifySignal.
-export function containsActionVerb(text: string): boolean {
-  return ACTION_VERB.test(text);
-}
-
-// Exported for the embeddings-similarity prototype (see similarity.ts) — see matchNegativePattern's
-// comment above for why this file's reliable literal markers are reused rather than re-derived.
-export function matchPositivePattern(text: string): ActionableResult | null {
-  for (const [re, clause] of POS_PATTERNS) {
+// posPatterns defaults to the stock-pick set; a forum with its own vocabulary passes its own (see
+// ACTIONABLE_STRATEGY_BY_FEED below) rather than this function special-casing feed identity itself.
+function matchPositivePattern(text: string, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): ActionableResult | null {
+  for (const [re, clause] of posPatterns) {
     if (re.test(text)) return clause;
   }
   return null;
 }
 
-export function classifySignal(text: string, minLength: number): ActionableResult {
+export function classifySignal(text: string, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): ActionableResult {
   const neg = matchNegativePattern(text);
   if (neg) return neg;
-  const pos = matchPositivePattern(text);
+  const pos = matchPositivePattern(text, posPatterns);
   if (pos) return pos;
   if (!ACTION_VERB.test(text)) return 'fail-no-action-verb';
-  return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
+  return 'fail-no-signal';
 }
 
-export function containsActionableSignal(text: string, minLength = 200): boolean {
-  return classifySignal(text, minLength).startsWith('pass');
-}
-
-// True only for the two outcomes that mean "the regex/action-verb gate has no opinion either
-// way" -- every other ActionableResult (every pass-*, and every fail-* that isn't one of these
-// two) is a definitive verdict from classifySignal, not something that should fall through to a
-// live embedding call. The single place this distinction is expressed, so classifyActionableHybrid
-// and the Worker's hybrid-candidacy check can't drift from each other or from classifySignal
-// itself -- see classifyActionableHybrid's comment for why that drift is a real, not
-// hypothetical, risk.
-export function isSignalUndecided(result: ActionableResult): boolean {
-  return result === 'fail-no-signal' || result === 'fail-too-short';
+export function containsActionableSignal(text: string, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): boolean {
+  return classifySignal(text, posPatterns).startsWith('pass');
 }
 
 export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
@@ -322,16 +370,85 @@ export function isActionableCandidate(item: FilterItem, actionableAuthors: strin
   return isActionableAuthor && topicPass;
 }
 
-// Regex-only actionable check. Exported: the Worker calls this directly for content the hybrid
-// classifier doesn't cover (Options Insights, which has no calibration data yet) and as the
-// fallback when a live embedding call fails. actionableAuthors is asserted to be lowercase.
-// Goes through classifySignal (via containsActionableSignal) rather than re-deriving the
-// pattern/action-verb sequence by hand -- that duplication is exactly what let the action-verb
-// gate silently miss classifyActionableHybrid and the Worker's candidacy check the first time it
-// was added.
+// A forum's whole "what counts as actionable" method: which closed-class regex patterns resolve a
+// post definitively, and which of those patterns are recall-tuned enough to need a live judgment
+// call before being trusted. One object per vocabulary, not per feed -- Members Forum and Stock
+// Insights share STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick
+// content, differing only in the star-gate isActionableCandidate applies), the same reason they
+// always have.
+export interface ActionableStrategy {
+  posPatterns: [RegExp, ActionableResult][];
+  needsIntentConfirmation: Set<ActionableResult>;
+}
+
+const STOCK_PICK_STRATEGY: ActionableStrategy = { posPatterns: STOCK_POS_PATTERNS, needsIntentConfirmation: STOCK_NEEDS_INTENT_CONFIRMATION };
+const OPTIONS_STRATEGY: ActionableStrategy = { posPatterns: OPTIONS_POS_PATTERNS, needsIntentConfirmation: OPTIONS_NEEDS_INTENT_CONFIRMATION };
+
+// Members Area bypasses every filter tier unconditionally (see matchesFilter), so its
+// actionable-ness is never computed at all -- this is unused data, not behavior. An empty
+// posPatterns array can never produce a pass-* result, so isActionablePost already resolves false
+// for it with no separate branch.
+const NULL_STRATEGY: ActionableStrategy = { posPatterns: [], needsIntentConfirmation: new Set() };
+
+// One entry per feed, every consumer resolves it through actionableStrategyFor rather than
+// checking feed identity itself.
+const ACTIONABLE_STRATEGY_BY_FEED: Record<FeedKey, ActionableStrategy> = {
+  [FeedKeys.membersArea]:     NULL_STRATEGY,
+  [FeedKeys.membersForum]:    STOCK_PICK_STRATEGY,
+  [FeedKeys.stockInsights]:   STOCK_PICK_STRATEGY,
+  [FeedKeys.optionsInsights]: OPTIONS_STRATEGY,
+};
+
+export function actionableStrategyFor(feedKey: FeedKey): ActionableStrategy {
+  return ACTIONABLE_STRATEGY_BY_FEED[feedKey];
+}
+
+// Regex-only actionable check. Exported: the Worker calls this directly for content that's already
+// regex-definitive or isn't a valid candidate at all, and as the fallback when a live AI
+// intent-confirmation call fails. actionableAuthors is asserted to be lowercase. Uses the item's
+// own forum's posPatterns (via actionableStrategyFor) rather than assuming stock-pick vocabulary,
+// so this resolves correctly against each forum's own discourse. Goes through classifySignal (via
+// containsActionableSignal) rather than re-deriving the pattern/action-verb sequence by hand: two
+// independent copies of that sequence can silently drift apart, since nothing but a full
+// regression run would catch a gate added to one copy and not the other.
+// Each strategy's own needsIntentConfirmation patterns (pass-sell-fraction, pass-close-enough,
+// pass-get-now for stock) are deliberately loose: "sell half"/"sell all" language is used
+// identically by a genuine group directive, a reply giving one person advice about their specific
+// holding, and general educational discussion of the strategy itself -- three discourse roles
+// sharing the same vocabulary, which no keyword check can separate. This is a live LLM judgment
+// call, not a closed-class pattern, so it's resolved by classifyActionableIntent
+// (cloudflare-worker/src/intentClassifier.ts) rather than another regex.
+export type IntentLabel = 'directive' | 'personal-advice' | 'general-education';
+export type IntentConfidence = 'high' | 'medium' | 'low';
+
+export interface IntentClassification {
+  reasoning: string;
+  evidence: string;
+  label: IntentLabel;
+  confidence: IntentConfidence;
+}
+
+export interface IntentGateResult {
+  actionable: boolean;
+  result: ActionableResult;
+}
+
+// A missed alert costs more than a false alarm (see CLAUDE.md's design philosophy for this
+// classifier) -- so only a *confident* non-directive verdict suppresses the post. Anything less
+// than full confidence, regardless of label, defaults to actionable rather than being trusted
+// either way, mirroring pass-sell-fraction's own prior behavior (trust the regex) for the
+// uncertain case.
+export function resolveIntentGate(intent: IntentClassification): IntentGateResult {
+  const confidentNonDirective = intent.label !== 'directive' && intent.confidence === 'high';
+  const result: ActionableResult = !confidentNonDirective
+    ? 'pass-sell-fraction'
+    : intent.label === 'personal-advice' ? 'fail-personal-advice' : 'fail-general-education';
+  return { actionable: !confidentNonDirective, result };
+}
+
 export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
   if (!isActionableCandidate(item, actionableAuthors)) return false;
-  return containsActionableSignal(item.content ?? '', 0);
+  return containsActionableSignal(item.content ?? '', actionableStrategyFor(item.feedKey).posPatterns);
 }
 
 // Empty authors list = no author restriction. `authors` is asserted to be lowercase.

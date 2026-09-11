@@ -13,16 +13,20 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = "../web-push"
 
-# Embeddings for the hybrid actionable classifier (Members Forum + Stock Insights only) -- see
-# packages/core/src/similarity.ts. Free tier: 10,000 neurons/day, no paid plan required.
+# Chat completions for the intent-confirmation gate -- see cloudflare-worker/src/intentClassifier.ts.
+# Free tier: 10,000 neurons/day, no paid plan required.
 [ai]
 binding = "AI"
 
+# Order matters -- see channelFromCron's comment in src/index.ts. Each entry's minute-field leading
+# digit (0/1/2) is the channel offset; step-range syntax verified against Cloudflare's actual
+# parser source (saffron): a start-end/step range steps from the range's start, so "1-59/5" fires
+# at :01, :06, :11, ... :56, not snapped to absolute multiples of 5.
 [triggers]
 crons = [
-  "0,5,10,15,20,25,30,35,40,45,50,55 * * * *",
-  "1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
-  "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+  "0-59/5 * * * *",
+  "1-59/5 * * * *",
+  "2-59/5 * * * *"
 ]
 
 [observability.logs]
@@ -45,6 +49,7 @@ POLL_BOUNDARY_CLOSE   = "1615"  # hhmm ET: end of late-day window / start of ove
 MAX_PUSH_AGE_MINUTES  = "120"   # content older than this won't be pushed even if newly-seen
 MAX_ALERT_ITEMS_PER_FEED = "25" # cap on how many of a feed's most-recent posts are considered per poll
 ACTIONABLE_AUTHORS = "Sean Hyman" # comma-separated; who can trigger the 'actionable' tier
+ACTIONABLE_INTENT_TEMPERATURE = "0" # classifyActionableIntent's model temperature (0-5); low reduces call-to-call variance
 VAPID_PUBLIC_KEY = "BGept7obnwDwF1lwsbiMLGMn4JlvNqbXlWWWGCAryLTNEc4mZBBFyEBxedhGgfAXvzWQDX1fRj6IlyshUw18u6c" # Web Push VAPID key pair; safe to commit, not secret
 VAPID_SUBJECT = "mailto:jwmelto@users.sourceforge.net" # required by the Web Push protocol as a contact for push services
 CORS_ALLOWED_ORIGIN = "https://logicalinvestor.net" # Origin allowed to call this API cross-origin. Currently unused: the page is Cloudflare-hosted, same-origin. See index.ts.
