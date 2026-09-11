@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, actionableStrategyFor, resolveIntentGate, NEEDS_INTENT_CONFIRMATION, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
+import { ChannelNames, formatTitle, matchesFilter, FILTER_TIERS, extractRssItems, isFresh, MAX_SEEN_IDS_PER_FEED, FeedKeys, isActionablePost, isActionableCandidate, classifySignal, actionableStrategyFor, resolveIntentGate, type ContentFilter, type FilterItem, type Channel, type FeedKey, type RssItem, type ItemClassification } from '@li/core';
 import { sendWebPush, type PushSubscription, type VapidKeys } from './webpush';
 import { classifyActionableIntent, intentStrategyFor } from './intentClassifier';
 import { CHANNEL_FEEDS } from './config';
@@ -75,12 +75,12 @@ interface RunStats {
 }
 
 // One entry per classifyActionableIntent call, kept for GET /status review -- every decision,
-// not a sample, since volume through this gate (NEEDS_INTENT_CONFIRMATION candidates only) is
-// low enough that logging all of it costs nothing. Deliberately NOT its own KV key/write: this
-// channel's poll cadence is already "close enough to [Workers KV's free-tier 1,000 writes/day
-// cap] for write count per invocation to matter" (issue #32, see ChannelState below), so this
-// rides along inside the one write ChannelState already makes per poll instead of adding one
-// write per candidate.
+// not a sample, since volume through this gate (each strategy's own needsIntentConfirmation
+// candidates only) is low enough that logging all of it costs nothing. Deliberately NOT its own
+// KV key/write: this channel's poll cadence is already "close enough to [Workers KV's free-tier
+// 1,000 writes/day cap] for write count per invocation to matter" (issue #32, see ChannelState
+// below), so this rides along inside the one write ChannelState already makes per poll instead of
+// adding one write per candidate.
 interface IntentLogEntry {
   guid: string;
   text: string;
@@ -898,15 +898,13 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
 
   // Classify every fresh item once here, shared by every bucket below. `members` is checked first
   // and short-circuits `actionable` entirely since Members Area bypasses every filter tier
-  // regardless of actionable-ness. Regex resolves most of what's left; only a
-  // NEEDS_INTENT_CONFIRMATION match needs a live AI call.
+  // regardless of actionable-ness. Regex resolves most of what's left; only a match in the
+  // item's own strategy.needsIntentConfirmation set needs a live AI call.
   //
   // Every feed's own ActionableStrategy (actionableStrategyFor in @li/core) supplies which regex
   // patterns count as definitive. Members Forum and Stock Insights share the stock-pick strategy.
   // Options Insights has its own. Regex-undecided content (fail-no-signal) resolves to
-  // not-actionable outright. No semantic/embedding fallback exists for it (see
-  // classifyActionableHybrid's leave-one-out suite in similarity.test.ts for why one was tried and
-  // measured out).
+  // not-actionable outright.
   const classifications = new Map<string, ItemClassification>();
   const intentCandidates: RssItem[] = [];
   for (const rssItem of freshItems) {
@@ -918,12 +916,12 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     const text = fi.content ?? '';
     const strategy = actionableStrategyFor(fi.feedKey);
     const signal = classifySignal(text, strategy.posPatterns);
-    // NEEDS_INTENT_CONFIRMATION (@li/core) names the pass-* results deliberately tuned for recall
-    // over precision -- their regex is broad by design, with precision recovered by a live
-    // judgment call instead of by narrowing the pattern. Every other pass-*/fail-* result is 100%
-    // correct on the full calibration set, so only these get routed to the intent-confirmation
-    // step rather than trusted immediately.
-    if (NEEDS_INTENT_CONFIRMATION.has(signal) && isActionableCandidate(fi, actionableAuthors)) {
+    // strategy.needsIntentConfirmation (@li/core) is that forum's own set of pass-* results whose
+    // regexes are deliberately tuned for recall over precision, broad by design with precision
+    // recovered by a live judgment call instead of a narrower pattern. A signal in this set routes
+    // to the intent-confirmation step below. Every other pass-*/fail-* result is 100% correct on
+    // the full calibration set and gets trusted immediately.
+    if (strategy.needsIntentConfirmation.has(signal) && isActionableCandidate(fi, actionableAuthors)) {
       intentCandidates.push(rssItem); // resolved after the intent-confirmation batch below
       continue;
     }
@@ -932,9 +930,9 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
 
   const newIntentLogEntries: IntentLogEntry[] = [];
   if (intentCandidates.length > 0) {
-    // One call per candidate, not batched -- unlike embeddings, text generation has no batch
-    // input shape. allSettled (not one try/catch around the whole group) so one candidate's
-    // model/schema failure doesn't discard the others' real verdicts.
+    // Text generation has no batch input shape, so this is one call per candidate. allSettled
+    // lets one candidate's model/schema failure surface on its own, without discarding the
+    // others' real verdicts.
     const outcomes = await Promise.allSettled(
       intentCandidates.map((rssItem) => classifyActionableIntent(env, rssItem.description, actionableIntentTemperature, intentStrategyFor(rssItem.feedKey))),
     );
@@ -945,10 +943,9 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
         newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), ...outcome.value, actionable: gate.actionable });
         classifications.set(rssItem.guid, { members: false, actionable: gate.actionable });
       } else {
-        // Model/schema failure this cycle -- fail open to the regex's own positive verdict.
-        // Unlike the hybrid-candidates fallback above (which fails closed because regex had no
-        // opinion at all), regex already found a real pass-sell-fraction signal here, so an AI
-        // hiccup shouldn't suppress it -- a missed alert costs more than a false alarm.
+        // The AI call itself errored (network failure, or a response that didn't match the
+        // expected shape). Keep the regex's positive verdict here. A missed alert costs more
+        // than a false alarm.
         console.error('intent confirmation failed, falling back to regex verdict', rssItem.guid, outcome.reason);
         newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), error: String(outcome.reason), actionable: true });
         classifications.set(rssItem.guid, { members: false, actionable: true });

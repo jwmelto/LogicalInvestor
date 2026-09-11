@@ -31965,8 +31965,9 @@
     },
     {
       "text": "While it should have more upside still to go, overall, it could certainly justify a huge % pullback before further advancement. So, being up that much in a mere 6-months of us being in it...I'd sell half of that half.\n\nMassive returns that we don't want to let get away, no matter where FQ goes from here.",
-      "isActionable": true,
-      "source": "full-post-pos-14-2026-09",
+      "isActionable": false,
+      "labelConfidence": "low",
+      "source": "full-post-neg-16-2026-09",
       "vector": [
         0.0280303955078125,
         0.0114288330078125,

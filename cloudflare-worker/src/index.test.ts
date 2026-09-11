@@ -1057,8 +1057,8 @@ describe('runChannel — actionable classification', () => {
   // necessary-condition gate on its own, confirming it's the pattern match that's absent, not
   // just a missing verb.
   const AMBIGUOUS = 'Thinking about whether to enter over the next few weeks.';
-  // Matches pass-sell-fraction -- one of NEEDS_INTENT_CONFIRMATION's patterns, so this becomes an
-  // intent-confirmation candidate rather than being trusted immediately.
+  // Matches pass-sell-fraction, one of the stock strategy's needsIntentConfirmation patterns, so
+  // this becomes an intent-confirmation candidate rather than being trusted immediately.
   const SELL_FRACTION_TEXT = 'Because many of you are up 15%, you can sell half of your position now.';
   const itemXml = (guid: string, description: string, title = 't') =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>${title}</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>${description}</description></item></channel></rss>`;
@@ -1145,7 +1145,7 @@ describe('runChannel — actionable classification', () => {
     expect(pushCalls).toBe(0);
   });
 
-  it('a non-directive verdict below high confidence stays actionable (fails open) rather than being trusted either way', async () => {
+  it('a non-directive verdict below high confidence stays actionable rather than being trusted either way', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('general-education', 'medium'));
     const env = membersEnv(aiRun);
     let pushCalls = 0;
@@ -1161,7 +1161,7 @@ describe('runChannel — actionable classification', () => {
     expect(pushCalls).toBe(1);
   });
 
-  it('an intent-confirmation AI failure falls back to the regex verdict (fail-open, not fail-closed)', async () => {
+  it('an intent-confirmation AI failure falls back to the regex verdict', async () => {
     const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
     const env = membersEnv(aiRun);
     let pushCalls = 0;
@@ -1178,8 +1178,8 @@ describe('runChannel — actionable classification', () => {
     expect(pushCalls).toBe(1); // regex already found pass-sell-fraction; an AI hiccup shouldn't suppress it
   });
 
-  it('an Options Insights pass-options-contract match is resolved against the options IntentStrategy', async () => {
-    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
+  it('an Options Insights pass-options-contract match is trusted immediately -- options has no needsIntentConfirmation entries currently', async () => {
+    const aiRun = vi.fn();
     const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
@@ -1201,9 +1201,7 @@ describe('runChannel — actionable classification', () => {
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(aiRun).toHaveBeenCalledTimes(1);
-    // The options IntentStrategy's system prompt is options-flavored, not the stock one.
-    expect(aiRun.mock.calls[0][1].messages[0].content).toContain('options-trading newsletter');
+    expect(aiRun).not.toHaveBeenCalled();
     expect(pushCalls).toBe(1);
   });
 

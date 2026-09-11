@@ -52,7 +52,7 @@ describe('isActionablePost (regex-only)', () => {
 
 describe('actionableStrategyFor', () => {
   it('has an empty pattern set and calibration for Members Area, which bypasses the actionable tier entirely', () => {
-    expect(actionableStrategyFor(FeedKeys.membersArea)).toEqual({ posPatterns: [], calibration: [] });
+    expect(actionableStrategyFor(FeedKeys.membersArea)).toEqual({ posPatterns: [], calibration: [], needsIntentConfirmation: new Set() });
   });
 
   it.each([FeedKeys.membersForum, FeedKeys.stockInsights])('%s shares the same stock-pick strategy object', (feedKey) => {

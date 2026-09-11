@@ -210,6 +210,11 @@ const NEG_PATTERNS: [RegExp, ActionableResult][] = [
   // report of action already taken, not a new call, distinct from #66's "I was urging" (a past
   // reference to a specific prior recommendation vs. this being a statement of current position).
   [/\bwe'?ve already (sold|bought|entered|exited)\b/i,                         'fail-historical'],
+  // Real reported false positive: "No, see my post above: March $75 strike put 2027 expiry"
+  // restates a contract already given in an earlier post, not a fresh directive. Same category as
+  // the other fail-historical entries above -- a backward reference, not a new call. Checked
+  // against both calibration corpora: zero conflicts, no true positive anywhere uses this phrasing.
+  [/\b(see|per)\s+(my|the)\s+(post|reply|answer)\s+above\b/i,                  'fail-historical'],
   // A real post-deploy false alarm: "Good job. Congrats!" reached nearest-neighbor (no other
   // signal) and matched purely on generic congratulatory tone. "Good job" is a reaction to a
   // reported outcome, not a directive — distinct from fail-historical (a past-tense reference to
@@ -259,8 +264,8 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // HALF here/now") -- measured against the full 53-example stock corpus: both matches are true
   // positives (one already redundantly caught by pass-sell-fraction, one a genuine new catch that
   // no other pattern reaches). Deliberately generous rather than narrowly worded, unlike the rest
-  // of this list -- backstopped by NEEDS_INTENT_CONFIRMATION below instead of trusted outright, so
-  // precision doesn't have to be earned in the regex itself.
+  // of this list -- backstopped by STOCK_NEEDS_INTENT_CONFIRMATION below instead of trusted
+  // outright, so precision doesn't have to be earned in the regex itself.
   [/\bclose enough\b[\s\S]{0,40}\bnow\b/i,                                        'pass-close-enough'],
   // "Get ... now" immediacy framing catches the split phrasal-verb word order pass-get-in-tranche
   // misses ("let's go ahead and get our 2nd tranche in now" -- verb, object, particle, rather than
@@ -268,18 +273,20 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // 53-example stock corpus: only 2 matches, both already true positives redundantly caught by
   // pass-get-in-tranche first (array order), zero false positives. "get" and "now" are both common
   // enough words on their own that this is deliberately generous rather than earning its own
-  // precision -- backstopped by NEEDS_INTENT_CONFIRMATION below, same as pass-close-enough.
+  // precision -- backstopped by STOCK_NEEDS_INTENT_CONFIRMATION below, same as pass-close-enough.
   [/\bget\b[\s\S]{0,40}\bnow\b/i,                                                 'pass-get-now'],
 ];
 
-// Patterns tuned for recall over precision -- deliberately looser than the rest of POS_PATTERNS/
-// OPTIONS_POS_PATTERNS, on the theory that regex no longer has to single-handedly avoid false
+// Stock patterns tuned for recall over precision -- deliberately looser than the rest of
+// STOCK_POS_PATTERNS, on the theory that regex no longer has to single-handedly avoid false
 // positives once every match it produces gets a live judgment call before being trusted. A match
 // against any other pass-* result stays immediately trusted, unchanged: those have zero measured
 // evidence of a precision problem (100% leave-one-out accuracy — see similarity.test.ts), so
 // routing them through an extra AI call would only add latency and a new failure surface for no
-// accuracy gain.
-export const NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-get-now', 'pass-options-contract']);
+// accuracy gain. Lives on STOCK_PICK_STRATEGY below, not as one shared set across vocabularies --
+// same reasoning as posPatterns/calibration being per strategy: which patterns need a live
+// judgment call is itself part of a vocabulary's own definition.
+const STOCK_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-get-now']);
 
 // Options Insights vocabulary: this feed has tranches too (a 2nd tranche on an existing options
 // position is common), but a real tranche entry still always carries the strike/put-or-call/expiry
@@ -292,20 +299,24 @@ export const NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-f
 const OPTIONS_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // Naming a strike and an expiry (the literal word, or a month+year like "March 2026") together
   // is this author's own stated convention for a live contract reference. Originally required a
-  // third token (put/call) too, but measured against the full 126-example options corpus: 22/24
-  // true positives already carry strike+expiry regardless, and dropping the put/call requirement
-  // adds exactly one new match -- a real positive that lacked "put"/"call" explicitly ("March $95
-  // strike, 2026 expiry, yes you can get into it now") -- with zero new false positives among the
-  // other 124 examples. Safe to loosen on its own measured evidence, and additionally backstopped
-  // by NEEDS_INTENT_CONFIRMATION below rather than trusted outright, the same tradeoff pass-
-  // sell-fraction makes: a regex tuned for recall, with precision recovered by a live judgment
-  // call instead of by narrowing the pattern itself. A bare 4-digit year alone doesn't count as
-  // the expiry token -- only "expiry"/"expiries"/"expiration" or an actual month+year pairing
-  // does, so an unrelated year mention elsewhere in the post can't supply it. No verb requirement,
-  // unlike every STOCK_POS_PATTERNS entry: this author sometimes confirms a contract with no verb
-  // at all ("JCI PUT MAR 2026 $95 strike").
+  // third token (put/call) too, but measured against the full 127-example options corpus: true
+  // positives already carry strike+expiry regardless, and dropping the put/call requirement adds
+  // real matches with zero new false positives. Trusted immediately, unlike pass-sell-fraction:
+  // measured leave-one-out is 22/22 (100%) once the one real false positive found (restating a
+  // contract already given in an earlier post) is caught by its own NEG_PATTERN above, so there's
+  // no measured precision problem here to justify routing this through a live judgment call.
+  // A bare 4-digit year alone doesn't count as the expiry token -- only "expiry"/"expiries"/
+  // "expiration" or an actual month+year pairing does, so an unrelated year mention elsewhere in
+  // the post can't supply it. No verb requirement, unlike every STOCK_POS_PATTERNS entry: this
+  // author sometimes confirms a contract with no verb at all ("JCI PUT MAR 2026 $95 strike").
   [/(?=[\s\S]*\bstrikes?\b)(?=[\s\S]*(?:\bexpir(?:y|ies|ation)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+20\d\d\b))/i, 'pass-options-contract'],
 ];
+
+// Currently empty. Kept as its own set, matching STOCK_NEEDS_INTENT_CONFIRMATION's shape, so any
+// future entry stays scoped to options specifically. pass-options-contract has no measured
+// precision problem to justify one today (see its own comment above: 22/22, including the one
+// real false positive found, now caught by its own NEG_PATTERN).
+const OPTIONS_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>([]);
 
 // Necessary-condition check: a real directive always names a trade action, in some form, even
 // when phrased as a modal ("you can sell half now"), infinitive ("close enough to get your
@@ -401,27 +412,29 @@ export function isActionableCandidate(item: FilterItem, actionableAuthors: strin
 }
 
 // A forum's whole "what counts as actionable" method: which closed-class regex patterns resolve a
-// post definitively. One object per vocabulary, not per feed -- Members Forum and Stock Insights
-// share STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick content,
-// differing only in the star-gate isActionableCandidate applies), the same reason they always
-// have. `calibration` is no longer consulted by runChannel (the embedding nearest-neighbor
-// fallback it backed was removed -- see NEEDS_INTENT_CONFIRMATION's comment) but stays on the
-// type: classifyActionableHybrid and its leave-one-out accuracy suite (similarity.test.ts) still
-// exercise it as a standalone diagnostic, and the vectors are still real, live-embedded data
-// worth keeping current rather than deleting and re-deriving later.
+// post definitively, and which of those patterns are recall-tuned enough to need a live judgment
+// call before being trusted. One object per vocabulary, not per feed -- Members Forum and Stock
+// Insights share STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick
+// content, differing only in the star-gate isActionableCandidate applies), the same reason they
+// always have. `calibration` is no longer consulted by runChannel (the embedding nearest-neighbor
+// fallback it backed was removed) but stays on the type: classifyActionableHybrid and its
+// leave-one-out accuracy suite (similarity.test.ts) still exercise it as a standalone diagnostic,
+// and the vectors are still real, live-embedded data worth keeping current rather than deleting
+// and re-deriving later.
 export interface ActionableStrategy {
   posPatterns: [RegExp, ActionableResult][];
   calibration: LabeledVector[];
+  needsIntentConfirmation: Set<ActionableResult>;
 }
 
-const STOCK_PICK_STRATEGY: ActionableStrategy = { posPatterns: STOCK_POS_PATTERNS, calibration: ACTIONABLE_CALIBRATION_EXAMPLES };
-const OPTIONS_STRATEGY: ActionableStrategy = { posPatterns: OPTIONS_POS_PATTERNS, calibration: OPTIONS_CALIBRATION_EXAMPLES };
+const STOCK_PICK_STRATEGY: ActionableStrategy = { posPatterns: STOCK_POS_PATTERNS, calibration: ACTIONABLE_CALIBRATION_EXAMPLES, needsIntentConfirmation: STOCK_NEEDS_INTENT_CONFIRMATION };
+const OPTIONS_STRATEGY: ActionableStrategy = { posPatterns: OPTIONS_POS_PATTERNS, calibration: OPTIONS_CALIBRATION_EXAMPLES, needsIntentConfirmation: OPTIONS_NEEDS_INTENT_CONFIRMATION };
 
 // Members Area bypasses every filter tier unconditionally (see matchesFilter), so its
 // actionable-ness is never computed at all -- this is unused data, not behavior. An empty
 // posPatterns array can never produce a pass-* result, so isActionablePost already resolves false
 // for it with no separate branch.
-const NULL_STRATEGY: ActionableStrategy = { posPatterns: [], calibration: [] };
+const NULL_STRATEGY: ActionableStrategy = { posPatterns: [], calibration: [], needsIntentConfirmation: new Set() };
 
 // One entry per feed, every consumer resolves it through actionableStrategyFor rather than
 // checking feed identity itself.

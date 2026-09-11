@@ -1,45 +1,61 @@
 import { FeedKeys, type FeedKey, type IntentClassification } from '@li/core';
 
-// The regexes that route a post here (NEEDS_INTENT_CONFIRMATION in @li/core: pass-sell-fraction,
-// pass-close-enough, pass-options-contract) are all deliberately tuned for recall over precision
-// -- each is worded broadly enough that the same trigger phrase ("sell half", "close enough...
-// now", a strike+expiry mention) is used identically by a genuine group directive, a reply giving
-// one person advice about their own situation, and general strategy/mechanics education. No
-// keyword or embedding-similarity check can separate those (see resolveIntentGate's comment in
-// @li/core for the measured leave-one-out evidence), so precision is recovered here instead of by
-// narrowing the regex.
+// The regexes that route a post here (each forum's own ActionableStrategy.needsIntentConfirmation,
+// @li/core) are tuned for recall over precision -- worded broadly enough that the same trigger
+// phrase can be used identically by a genuine group directive, a reply giving one person advice
+// about their own situation, and general strategy/mechanics education. No keyword or
+// embedding-similarity check can separate those (see resolveIntentGate's comment in @li/core for
+// the measured leave-one-out evidence), so precision is recovered here instead of by narrowing
+// the regex.
 //
-// One IntentStrategy per vocabulary, not one shared prompt -- same reasoning as
-// ActionableStrategy in @li/core keeping posPatterns/calibration per forum rather than pooled:
-// stock-pick and options discourse are different enough that a fix tuned for one shouldn't risk
-// changing the other's behavior. Members Forum and Stock Insights share STOCK_INTENT_STRATEGY for
-// the same reason they share STOCK_PICK_STRATEGY.
+// One IntentStrategy per vocabulary, same reasoning as ActionableStrategy in @li/core keeping
+// posPatterns/calibration per forum: stock-pick and options discourse are different enough that a
+// fix tuned for one shouldn't risk changing the other's behavior. Members Forum and Stock
+// Insights share STOCK_INTENT_STRATEGY for the same reason they share STOCK_PICK_STRATEGY.
 export interface IntentStrategy {
   systemPrompt: string;
   fewShot: { post: string; response: IntentClassification }[];
 }
 
-const CATEGORY_DEFINITIONS = `- directive: a live instruction for readers to act now on a specific holding or contract. Look for a specific trigger (a price, a % gain, a tranche number, an options strike/expiry) tied to a plural or unaddressed/broadcast audience ("many of you", "y'all", "everyone", "those of you in X", or no addressee at all -- stated flatly as newsletter guidance).
-- personal-advice: a reply giving one specific person advice about their own individual situation -- addressed to a singular "you"/"your" responding to THAT PERSON'S OWN reported gain or holding ("you're up that much", "what you have left"), not a plural or generic audience.
-- general-education: explaining how the trading strategy or market mechanics work in general. The telltale sign is the post names no specific holding, no specific price, and no specific trigger to act on right now -- it's explaining WHY or HOW the approach works (a numbered list of reasons, "the reason we...", "so that...", describing the method itself), not reporting on a live position.
+// Shared across vocabularies deliberately -- unlike the category definitions below, uniform
+// confidence rules are what make "high" mean the same thing whether the strategy is stock or
+// options.
+const CONFIDENCE_CALIBRATION = `Do not default to low or medium confidence out of caution. Apply these rules directly:
+- Use high when the post clearly and completely matches one category's own definition above, with no real signal pointing to a different category.
+- Use medium when the post has real signals pointing to more than one category. For example, it names a specific trigger but has no addressee at all.
+- Use low when the post is too short or too stripped of context to judge at all. For example, a bare sentence fragment with no stated trigger, no stated addressee, and no explanatory content.
 
-Confidence calibration -- do not default to a low or medium confidence out of general caution:
-- Use "high" whenever the post clearly fits the telltale signs above, even if it also contains action words like "sell" or "buy". A numbered explanation of strategy mechanics is high-confidence general-education regardless of which action verbs appear inside it. A reply naming one person's own specific gain is high-confidence personal-advice regardless of brevity.
-- Use "medium" only when the post has real signals pointing to more than one category (e.g. it names a specific price AND lacks any addressee at all).
-- Use "low" only when the post is too short or too stripped of context to judge at all (e.g. a bare sentence fragment with no stated trigger, no stated addressee, and no explanatory content).
+Read the post. Quote the exact evidence. Reason about which of the three categories it belongs to. Then give your verdict. Respond only with the requested JSON.`;
 
-Read the post, quote the exact evidence, reason about which of the three categories it belongs to, then give your verdict. Respond only with the requested JSON.`;
+const STOCK_CATEGORY_DEFINITIONS = `- directive: a live instruction to act now on a specific holding. It names a specific trigger: a price, a percent gain, or a tranche number. It is addressed to a plural or broadcast audience, such as "many of you", "y'all", "everyone", or "those of you in X". Or it has no addressee at all and reads as flat newsletter guidance. Or it addresses a singular "you" with a general condition anyone could meet, such as "if you're up 20%+, go ahead and sell half" -- the condition is stated fresh in this post as a rule, not a fact already known about one person. An action word like "sell" or "buy", stated directly or clearly implied, is core evidence for this category.
+- personal-advice: a reply giving one specific person advice about a fact of their situation already established before this post, such as "you're up that much" or "what you have left" -- referencing an amount or holding the post treats as already known, not a fresh conditional rule stated in the same post. It is not addressed to a plural or generic audience, and it is not a general "if you meet this condition" rule. This category can apply even to a very short post, such as one line naming the person's own already-known gain or holding.
+- general-education: an explanation of how the trading strategy or market mechanics work in general. It names no specific holding, no specific price, and no specific trigger to act on right now. It explains why or how the approach works, often with a numbered list of reasons or phrases like "the reason we..." or "so that...". It describes the method itself. It does not report on a live position. It may still contain action words like "sell" or "buy"; there, they describe the method, not a live call.`;
+
+const OPTIONS_CATEGORY_DEFINITIONS = `- directive: a live instruction to act now on a specific options contract. It names a strike price and an expiry month and year, such as "March $95 strike, 2026 expiry". It is addressed to a plural or broadcast audience. Or it has no addressee at all and reads as flat newsletter guidance. Or it addresses a singular "you" with a general condition anyone could meet, stated fresh in this post as a rule, not a fact already known about one person. An action word like "sell" or "buy", stated directly or clearly implied, is core evidence for this category.
+- personal-advice: a reply giving one specific person advice about a fact of their situation already established before this post, such as their own reported gain or holding treated as already known, not a fresh conditional rule stated in the same post. It is not addressed to a plural or generic audience, and it is not a general "if you meet this condition" rule. This category can apply even to a very short post, such as one line naming the person's own already-known gain or holding.
+- general-education: an explanation of how the options strategy or market mechanics work in general. It names no specific contract, no specific strike or expiry, and no specific trigger to act on right now. It explains why or how the approach works. It describes the method itself. It does not report on a live position. It may still contain action words like "sell" or "buy"; there, they describe the method, not a live call.`;
 
 const STOCK_INTENT_STRATEGY: IntentStrategy = {
-  systemPrompt: `You are classifying a single forum post from a stock-trading newsletter. The post already matched a broad, recall-tuned pattern for trade-related language (a "sell half"/"sell all" style call, or a "close enough...now" immediacy trigger), but that match alone doesn't tell you what the post actually means -- it could be one of three different things:
+  systemPrompt: `You are classifying a single forum post from a stock-trading newsletter. The post already matched a broad, recall-tuned pattern for trade-related language: a "sell half"/"sell all" style call, or a "close enough...now" immediacy trigger. That match alone doesn't tell you what the post actually means. It is one of three things:
 
-${CATEGORY_DEFINITIONS}`,
+${STOCK_CATEGORY_DEFINITIONS}
+
+${CONFIDENCE_CALIBRATION}`,
   fewShot: [
     {
       post: 'Because many of you are up 15%+ in ONE day, you can sell half of your 1st tranche and if it pulls back to your breakeven, you can put that half back on.',
       response: {
         reasoning: 'Addressed to "many of you" -- a plural, broadcast audience, not one individual. It states a specific action (sell half of the 1st tranche) tied to a stated trigger (up 15%+ today), which is live guidance for every reader holding this position, not a description of the strategy in the abstract.',
         evidence: 'Because many of you are up 15%+ in ONE day, you can sell half of your 1st tranche',
+        label: 'directive',
+        confidence: 'high',
+      },
+    },
+    {
+      post: "If you've not done a \"sell half\" on VNP yet and you're up 20%+, I'd go ahead and do that now.",
+      response: {
+        reasoning: 'The "you" here is a stand-in for anyone who meets the stated condition (up 20%+ and hasn\'t sold half yet), not a reply to one person\'s already-known situation. The condition itself is stated fresh in this post as a rule, the same as if it read "if anyone is up 20%+...". That makes it broadcast guidance despite the singular pronoun.',
+        evidence: "If you've not done a \"sell half\" on VNP yet and you're up 20%+, I'd go ahead and do that now",
         label: 'directive',
         confidence: 'high',
       },
@@ -66,9 +82,11 @@ ${CATEGORY_DEFINITIONS}`,
 };
 
 const OPTIONS_INTENT_STRATEGY: IntentStrategy = {
-  systemPrompt: `You are classifying a single forum post from an options-trading newsletter. The post already matched a broad, recall-tuned pattern naming an options strike and expiry, but that match alone doesn't tell you what the post actually means -- it could be one of three different things:
+  systemPrompt: `You are classifying a single forum post from an options-trading newsletter. The post already matched a broad, recall-tuned pattern naming an options strike and expiry. That match alone doesn't tell you what the post actually means. It is one of three things:
 
-${CATEGORY_DEFINITIONS}`,
+${OPTIONS_CATEGORY_DEFINITIONS}
+
+${CONFIDENCE_CALIBRATION}`,
   fewShot: [
     {
       post: 'March $95 strike, 2026 expiry, yes you can get into it now.',
@@ -130,12 +148,13 @@ function isIntentClassification(value: unknown): value is IntentClassification {
 // response_format/json_schema).
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
-// Confirms whether a NEEDS_INTENT_CONFIRMATION regex match (@li/core) is a genuine directive,
+// Confirms whether a needsIntentConfirmation regex match (@li/core) is a genuine directive,
 // personal advice, or general education, using the calling forum's own IntentStrategy (see
-// intentStrategyFor above). Throws on any failure (model error, schema violation); the caller
-// owns the fail-open behavior (see runChannel in index.ts). temperature is caller-supplied
-// (SELL_FRACTION_INTENT_TEMPERATURE) since it's a genuine tuning knob -- any value in its valid
-// range is safe, it only adjusts randomness, not which reasoning engine is doing the judging.
+// intentStrategyFor above). Throws on any failure (model error, schema violation); on error, the
+// caller (runChannel in index.ts) keeps the regex's own verdict rather than suppressing the
+// alert. temperature is caller-supplied (ACTIONABLE_INTENT_TEMPERATURE) since it's a genuine
+// tuning knob -- any value in its valid range is safe, it only adjusts randomness, not which
+// reasoning engine is doing the judging.
 export async function classifyActionableIntent(env: { AI: Ai }, text: string, temperature: number, strategy: IntentStrategy): Promise<IntentClassification> {
   const messages = [
     { role: 'system' as const, content: strategy.systemPrompt },

@@ -1,4 +1,4 @@
-import { classifySignal, actionableStrategyFor, FeedKeys, NEEDS_INTENT_CONFIRMATION, type ActionableResult } from '../index';
+import { classifySignal, actionableStrategyFor, FeedKeys } from '../index';
 
 const OPTIONS_PATTERNS = actionableStrategyFor(FeedKeys.optionsInsights).posPatterns;
 
@@ -35,6 +35,13 @@ describe('classifySignal — negative patterns (checked first)', () => {
 
   test('fail-historical: "I was urging"', () => {
     expect(classifySignal("Yeah, I was urging everyone to get it while close to $80/averaging down")).toBe('fail-historical');
+  });
+
+  // Real reported false positive: restates a contract already given in an earlier post. Would
+  // otherwise match pass-options-contract (strike + expiry both present) -- checked against the
+  // options pattern set specifically, since that's where this incident occurred.
+  test('fail-historical: "see my post above" restates a prior post rather than issuing a new call', () => {
+    expect(classifySignal('No, see my post above: March $75 strike put 2027 expiry', OPTIONS_PATTERNS)).toBe('fail-historical');
   });
 
   test('fail-hypothetical: "could either...or" two-sided hedge', () => {
@@ -306,18 +313,5 @@ describe('classifySignal — Options Insights pattern set (actionableStrategyFor
     // so a $ near "buy" here can't resolve as a definitive positive regardless.
     const result = classifySignal('$9.89 would be 25% up from your buy to open price. If you bought and the contract filled, then the ask quote/price hit your buy-to-open buy limit order.', OPTIONS_PATTERNS);
     expect(result).toBe('fail-no-signal');
-  });
-});
-
-describe('NEEDS_INTENT_CONFIRMATION', () => {
-  const CONFIRMATION_REQUIRED: ActionableResult[] = ['pass-sell-fraction', 'pass-close-enough', 'pass-get-now', 'pass-options-contract'];
-  const TRUSTED_IMMEDIATELY: ActionableResult[] = ['pass-new-pick', 'pass-tranche-price', 'pass-get-in-tranche', 'pass-buy-with-price', 'pass-averaging-down', 'pass-immediately'];
-
-  test.each(CONFIRMATION_REQUIRED)('%s requires intent confirmation', (result) => {
-    expect(NEEDS_INTENT_CONFIRMATION.has(result)).toBe(true);
-  });
-
-  test.each(TRUSTED_IMMEDIATELY)('%s is trusted immediately, no intent confirmation needed', (result) => {
-    expect(NEEDS_INTENT_CONFIRMATION.has(result)).toBe(false);
   });
 });

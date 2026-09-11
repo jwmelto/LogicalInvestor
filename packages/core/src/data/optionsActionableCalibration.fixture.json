@@ -1,6 +1,6 @@
 {
   "model": "@cf/baai/bge-large-en-v1.5",
-  "generatedAt": "2026-09-02",
+  "generatedAt": "2026-09-10",
   "examples": [
     {
       "text": "Yeah, you can get into the: January $55 strike put, 2026 expiry now.",
@@ -4127,7 +4127,7 @@
       ]
     },
     {
-      "text": "We’re done with all Jan/2026 strikes for any stock including this one, but you can get into the March $55 strike put, 2026 expiry now.",
+      "text": "We\u2019re done with all Jan/2026 strikes for any stock including this one, but you can get into the March $55 strike put, 2026 expiry now.",
       "isActionable": true,
       "source": "options-pos-4",
       "vector": [
@@ -5158,7 +5158,7 @@
       ]
     },
     {
-      "text": "FusionDude, it is barely/fractionally down on the day now. You can actually get into it now.\n\nGet into the March $75 strike put, 2027 expiry, now. I’d go for a buy price of $6.20 and if they don’t take that, move it up in dime increments until they do.\n\nOne that buy order executes, put your sell-to-close GTC order at 25% above your buy price.",
+      "text": "FusionDude, it is barely/fractionally down on the day now. You can actually get into it now.\n\nGet into the March $75 strike put, 2027 expiry, now. I\u2019d go for a buy price of $6.20 and if they don\u2019t take that, move it up in dime increments until they do.\n\nOne that buy order executes, put your sell-to-close GTC order at 25% above your buy price.",
       "isActionable": true,
       "source": "options-pos-5",
       "vector": [
@@ -7220,7 +7220,7 @@
       ]
     },
     {
-      "text": "Great job! Anyone else, that’s up a quick 20% in such a short time can capture profits as well.\n\nYou might report your gains on the Testimonial page of the LI forum.\n\nCongrats!",
+      "text": "Great job! Anyone else, that\u2019s up a quick 20% in such a short time can capture profits as well.\n\nYou might report your gains on the Testimonial page of the LI forum.\n\nCongrats!",
       "isActionable": true,
       "source": "options-pos-7",
       "vector": [
@@ -8251,7 +8251,7 @@
       ]
     },
     {
-      "text": "I’m assuming everyone is out of this one with their profit, since it dropped so fast after we got into it.\n\nBut if you’re still in it, let me know. It’s down almost 1.9% today.\n\nIf you get a profit of 20% on it, take it, since its come so quickly.",
+      "text": "I\u2019m assuming everyone is out of this one with their profit, since it dropped so fast after we got into it.\n\nBut if you\u2019re still in it, let me know. It\u2019s down almost 1.9% today.\n\nIf you get a profit of 20% on it, take it, since its come so quickly.",
       "isActionable": true,
       "source": "options-pos-8",
       "vector": [
@@ -9282,7 +9282,7 @@
       ]
     },
     {
-      "text": "You can get back into JCI puts now. Here are two potential paths, along with what it’s done in the past when it’s gotten stretched away from its 200-week moving average. Forward P/E is still high too: 27. Not holding as much cash on their books as they should either.\n\nYou can get into the MARCH $95 strike put, 2026 expiry.",
+      "text": "You can get back into JCI puts now. Here are two potential paths, along with what it\u2019s done in the past when it\u2019s gotten stretched away from its 200-week moving average. Forward P/E is still high too: 27. Not holding as much cash on their books as they should either.\n\nYou can get into the MARCH $95 strike put, 2026 expiry.",
       "isActionable": true,
       "source": "options-pos-9",
       "vector": [
@@ -14437,7 +14437,7 @@
       ]
     },
     {
-      "text": "Yes, you can get into the June $100 strike put, 2026 expiry now.\n\nIf the last major down-move starting from the $112’s is 5-waves down, then the yellow path likely happens. If it’s only 3-waves, then a “higher high” could still happen before heading notably lower (white path).",
+      "text": "Yes, you can get into the June $100 strike put, 2026 expiry now.\n\nIf the last major down-move starting from the $112\u2019s is 5-waves down, then the yellow path likely happens. If it\u2019s only 3-waves, then a \u201chigher high\u201d could still happen before heading notably lower (white path).",
       "isActionable": true,
       "source": "options-pos-14",
       "vector": [
@@ -15468,7 +15468,7 @@
       ]
     },
     {
-      "text": "Yes, if you’re down 60% or more on the 1st tranche, correct.\n\nJune $100 strike put, 2026 expiry",
+      "text": "Yes, if you\u2019re down 60% or more on the 1st tranche, correct.\n\nJune $100 strike put, 2026 expiry",
       "isActionable": true,
       "source": "options-pos-15",
       "vector": [
@@ -17530,7 +17530,7 @@
       ]
     },
     {
-      "text": "Yes. Just know, it could take either of these paths.\n\nYou can get into the JUNE $105 strike put, 2026 expiry, now.\n\nThis one also has a little bit wider bid/ask spread, so it may take a bit of a more move lower to push into profitability, but it’s got plenty of opportunity to do so over time.",
+      "text": "Yes. Just know, it could take either of these paths.\n\nYou can get into the JUNE $105 strike put, 2026 expiry, now.\n\nThis one also has a little bit wider bid/ask spread, so it may take a bit of a more move lower to push into profitability, but it\u2019s got plenty of opportunity to do so over time.",
       "isActionable": true,
       "source": "options-pos-17",
       "vector": [
@@ -18561,7 +18561,7 @@
       ]
     },
     {
-      "text": "Yes, you can get into the September $115 strike put, 2026 expiry, now. Better liquidity on this one there and more time to be right.\n\nIts forward P/E is 25.\n\nLow earnings of just under $4 billion relative to the size of company it is: $71 billion market cap.\n\nCash low: $731 million\n\nOutside of top Bollinger Bands on daily/weekly charts and far above its major moving averages.\n\nEarnings coming out on 11/5 before the bell. The stock is priced to perfection. Overvalued for no good reason. We’ll see if it gets sold off on its earnings announcement. It doesn’t have to, but it has a great opportunity to, unless they pull some rabbit out of the hat.",
+      "text": "Yes, you can get into the September $115 strike put, 2026 expiry, now. Better liquidity on this one there and more time to be right.\n\nIts forward P/E is 25.\n\nLow earnings of just under $4 billion relative to the size of company it is: $71 billion market cap.\n\nCash low: $731 million\n\nOutside of top Bollinger Bands on daily/weekly charts and far above its major moving averages.\n\nEarnings coming out on 11/5 before the bell. The stock is priced to perfection. Overvalued for no good reason. We\u2019ll see if it gets sold off on its earnings announcement. It doesn\u2019t have to, but it has a great opportunity to, unless they pull some rabbit out of the hat.",
       "isActionable": true,
       "source": "options-pos-18",
       "vector": [
@@ -19592,7 +19592,7 @@
       ]
     },
     {
-      "text": "If for a 1st tranche OR a 2nd tranche that’s down 60% or more, yes.\n\nYou can get into the SEPTEMBER $115 strike, 2026 expiry, now.\n\nWith the bid/ask spread being so wide, I’d try some buy price that’s half way between the bid/ask spread and if they don’t bite on that, slowly move it higher, but with the spread being so wide on this one, I don’t think I’d just put in an order at the asking quote.",
+      "text": "If for a 1st tranche OR a 2nd tranche that\u2019s down 60% or more, yes.\n\nYou can get into the SEPTEMBER $115 strike, 2026 expiry, now.\n\nWith the bid/ask spread being so wide, I\u2019d try some buy price that\u2019s half way between the bid/ask spread and if they don\u2019t bite on that, slowly move it higher, but with the spread being so wide on this one, I don\u2019t think I\u2019d just put in an order at the asking quote.",
       "isActionable": true,
       "source": "options-pos-19",
       "vector": [
@@ -21654,7 +21654,7 @@
       ]
     },
     {
-      "text": "Yes, you can get into the March  $87.50 strike put 2027 expiry, now. I’d go for a buy price of $3.95 and if they don’t take that after a bit, move it up in dime increments.\n\nOutside of a top Bollinger Band on the weekly chart, stretched far above 200-week moving average, slumping RSI, slumping MACD.",
+      "text": "Yes, you can get into the March  $87.50 strike put 2027 expiry, now. I\u2019d go for a buy price of $3.95 and if they don\u2019t take that after a bit, move it up in dime increments.\n\nOutside of a top Bollinger Band on the weekly chart, stretched far above 200-week moving average, slumping RSI, slumping MACD.",
       "isActionable": true,
       "source": "options-pos-21",
       "vector": [
@@ -22685,7 +22685,7 @@
       ]
     },
     {
-      "text": "Yes, you can get into the January $160 strike put, 2027 expiry, now. I’d go for a buy price of $8 and if they don’t take that, increase it by dime increments until they do.\n\nIt’s way above its top Bollinger Band on its weekly chart, stretched WAY above its 200-week moving average. Overbought and slumping RSI. Slumping Histogram.\n\nForward P/E over 32, expensive.",
+      "text": "Yes, you can get into the January $160 strike put, 2027 expiry, now. I\u2019d go for a buy price of $8 and if they don\u2019t take that, increase it by dime increments until they do.\n\nIt\u2019s way above its top Bollinger Band on its weekly chart, stretched WAY above its 200-week moving average. Overbought and slumping RSI. Slumping Histogram.\n\nForward P/E over 32, expensive.",
       "isActionable": true,
       "source": "options-pos-22",
       "vector": [
@@ -23716,7 +23716,7 @@
       ]
     },
     {
-      "text": "Those that aren’t in IWM could be in it now. I’d go for the March $300 strike put, 2027 expiry, now. I’d go for a buy price of $17 and if they don’t take that, move it up in nickel increments until they do.\n\n25% profit target.\n\n---",
+      "text": "Those that aren\u2019t in IWM could be in it now. I\u2019d go for the March $300 strike put, 2027 expiry, now. I\u2019d go for a buy price of $17 and if they don\u2019t take that, move it up in nickel increments until they do.\n\n25% profit target.\n\n---",
       "isActionable": true,
       "source": "options-pos-23",
       "vector": [
@@ -24747,7 +24747,7 @@
       ]
     },
     {
-      "text": "We can see what it looks like on Monday. Remind me.\n\nIt’s P/E is high and its cash is low: https://finance.yahoo.com/quote/WMB/key-statistics/\n\nTwo likely paths for it, from here.\n\nWhen it does take hits (due to economic woes/stock market crashes or oil crashes), it can fall HARD and for a while. See these emphasized in red in the past.",
+      "text": "We can see what it looks like on Monday. Remind me.\n\nIt\u2019s P/E is high and its cash is low: https://finance.yahoo.com/quote/WMB/key-statistics/\n\nTwo likely paths for it, from here.\n\nWhen it does take hits (due to economic woes/stock market crashes or oil crashes), it can fall HARD and for a while. See these emphasized in red in the past.",
       "isActionable": false,
       "source": "options-neg-0",
       "vector": [
@@ -25778,7 +25778,7 @@
       ]
     },
     {
-      "text": "Just know, it “can” go to a “higher high” and if so, would likely require a 2nd tranche. Yet, has a long way it can fall and is up in a big historical resistance zone now.",
+      "text": "Just know, it \u201ccan\u201d go to a \u201chigher high\u201d and if so, would likely require a 2nd tranche. Yet, has a long way it can fall and is up in a big historical resistance zone now.",
       "isActionable": false,
       "source": "options-neg-1",
       "vector": [
@@ -26809,7 +26809,7 @@
       ]
     },
     {
-      "text": "The put’s strike price and the buy/sell price are two different things.\n\nA buy price is lower and a sell price is higher. When a stock goes down, the put price goes up. We sell once its 25% higher than the put’s buy price.",
+      "text": "The put\u2019s strike price and the buy/sell price are two different things.\n\nA buy price is lower and a sell price is higher. When a stock goes down, the put price goes up. We sell once its 25% higher than the put\u2019s buy price.",
       "isActionable": false,
       "source": "options-neg-2",
       "vector": [
@@ -29902,7 +29902,7 @@
       ]
     },
     {
-      "text": "5.62/5.63ish would be 25%. I’d not exceed that.,",
+      "text": "5.62/5.63ish would be 25%. I\u2019d not exceed that.,",
       "isActionable": false,
       "source": "options-neg-5",
       "vector": [
@@ -31964,7 +31964,7 @@
       ]
     },
     {
-      "text": "Vince, there’s not really. Their bid/ask spread widths are somewhat proportional. Their liquidity is comparable. With the one that’s slightly in the money, you pay just a bit more for but it may move just a hair better, in line with the stock’s moves. So, it’s pretty hair-splitting in these instances.\n\nBauka, not sure what you mean by “cashing in”. Are you in a put on it at all? Keep in mind, the expiries we’re looking at are January 2026 expiries.",
+      "text": "Vince, there\u2019s not really. Their bid/ask spread widths are somewhat proportional. Their liquidity is comparable. With the one that\u2019s slightly in the money, you pay just a bit more for but it may move just a hair better, in line with the stock\u2019s moves. So, it\u2019s pretty hair-splitting in these instances.\n\nBauka, not sure what you mean by \u201ccashing in\u201d. Are you in a put on it at all? Keep in mind, the expiries we\u2019re looking at are January 2026 expiries.",
       "isActionable": false,
       "source": "options-neg-7",
       "vector": [
@@ -32995,7 +32995,7 @@
       ]
     },
     {
-      "text": "You’re welcome. We’re always trying to go near or at the money with high Open Interest. Nearest the money is the most important as long as there’s great liqidity (Open Interest) in it.",
+      "text": "You\u2019re welcome. We\u2019re always trying to go near or at the money with high Open Interest. Nearest the money is the most important as long as there\u2019s great liqidity (Open Interest) in it.",
       "isActionable": false,
       "source": "options-neg-8",
       "vector": [
@@ -34026,7 +34026,7 @@
       ]
     },
     {
-      "text": "You’re not giving me enough specifics to go off of.\n\nAre you in that contract? Are you not in it but just watching it?\n\nAnd are you confusing us talking about the $55 strike and it’s pricing vs the $60 strike and it’s pricing?",
+      "text": "You\u2019re not giving me enough specifics to go off of.\n\nAre you in that contract? Are you not in it but just watching it?\n\nAnd are you confusing us talking about the $55 strike and it\u2019s pricing vs the $60 strike and it\u2019s pricing?",
       "isActionable": false,
       "source": "options-neg-9",
       "vector": [
@@ -35057,7 +35057,7 @@
       ]
     },
     {
-      "text": "Bauka, That’s because they were in the $55 strike.\n\nThe price moves constantly, which means…depending on when you ask to get in, will depend upon what YOUR strike will be.\n\nSo, I think you’re confusing us talking about the $55 strike pricing which some are in, with the $60 strike we’ve talked about today because the price has moved up since some originally got in at their strike.\n\nThe buy signals have already been given. We’re in it already. It may go to “higher highs” or it may not.",
+      "text": "Bauka, That\u2019s because they were in the $55 strike.\n\nThe price moves constantly, which means\u2026depending on when you ask to get in, will depend upon what YOUR strike will be.\n\nSo, I think you\u2019re confusing us talking about the $55 strike pricing which some are in, with the $60 strike we\u2019ve talked about today because the price has moved up since some originally got in at their strike.\n\nThe buy signals have already been given. We\u2019re in it already. It may go to \u201chigher highs\u201d or it may not.",
       "isActionable": false,
       "source": "options-neg-10",
       "vector": [
@@ -37119,7 +37119,7 @@
       ]
     },
     {
-      "text": "No, it’s only down fractionally. It’s still fine to purchase that strike/contract.\n\nOpen Interest doesn’t affect the price. It affects the liquidity of the contract. OI is the open contracts that haven’t been closed out yet.\n\nIt’s higher today because WMB is lower than when some purchased.",
+      "text": "No, it\u2019s only down fractionally. It\u2019s still fine to purchase that strike/contract.\n\nOpen Interest doesn\u2019t affect the price. It affects the liquidity of the contract. OI is the open contracts that haven\u2019t been closed out yet.\n\nIt\u2019s higher today because WMB is lower than when some purchased.",
       "isActionable": false,
       "source": "options-neg-12",
       "vector": [
@@ -38150,7 +38150,7 @@
       ]
     },
     {
-      "text": "I’d not call a 1% move a spike up. However, see the original chart below and you’ll see that a move to a “higher high” was always in the cards. We knew that from the very beginning.\n\nThe way it’s shaping up lately looks like it could be in the process of forming an “ending diagonal”/aka rising wedge.",
+      "text": "I\u2019d not call a 1% move a spike up. However, see the original chart below and you\u2019ll see that a move to a \u201chigher high\u201d was always in the cards. We knew that from the very beginning.\n\nThe way it\u2019s shaping up lately looks like it could be in the process of forming an \u201cending diagonal\u201d/aka rising wedge.",
       "isActionable": false,
       "source": "options-neg-13",
       "vector": [
@@ -39181,7 +39181,7 @@
       ]
     },
     {
-      "text": "ha-ha, that’s incredible! You might share that on the LI Testimonial thread.\n\nMost people aren’t making ANYTHING on a day like today in their portfolios. You did on your put and we’ve got several LI positions actually up on a massively down day like today.",
+      "text": "ha-ha, that\u2019s incredible! You might share that on the LI Testimonial thread.\n\nMost people aren\u2019t making ANYTHING on a day like today in their portfolios. You did on your put and we\u2019ve got several LI positions actually up on a massively down day like today.",
       "isActionable": false,
       "source": "options-neg-14",
       "vector": [
@@ -40212,7 +40212,7 @@
       ]
     },
     {
-      "text": "You’re welcome.\n\nNormally, people have NOTHING to look forward to on a down day in the market. Yet, it’s possible for a put owner and it’s possible for some of our defensives in LI.",
+      "text": "You\u2019re welcome.\n\nNormally, people have NOTHING to look forward to on a down day in the market. Yet, it\u2019s possible for a put owner and it\u2019s possible for some of our defensives in LI.",
       "isActionable": false,
       "source": "options-neg-15",
       "vector": [
@@ -41243,7 +41243,7 @@
       ]
     },
     {
-      "text": "Agree. Most people don’t even know that “bad days/down days” can be used to their advantage, if they prepared for it ahead of time. Most aren’t prepared.",
+      "text": "Agree. Most people don\u2019t even know that \u201cbad days/down days\u201d can be used to their advantage, if they prepared for it ahead of time. Most aren\u2019t prepared.",
       "isActionable": false,
       "source": "options-neg-16",
       "vector": [
@@ -43305,7 +43305,7 @@
       ]
     },
     {
-      "text": "It looks like WMB has been trapped in a series of a-b-c’s (three wave patterns back and forth, somewhat in a range). And with oil/gas sector not doing that well right now and with its high forward P/E and low cash, it’s red resistance zone might just hold and we could see WMB come materially lower over time, toward the blue support zone.",
+      "text": "It looks like WMB has been trapped in a series of a-b-c\u2019s (three wave patterns back and forth, somewhat in a range). And with oil/gas sector not doing that well right now and with its high forward P/E and low cash, it\u2019s red resistance zone might just hold and we could see WMB come materially lower over time, toward the blue support zone.",
       "isActionable": false,
       "source": "options-neg-18",
       "vector": [
@@ -45367,7 +45367,7 @@
       ]
     },
     {
-      "text": "I’d not get into it unless it got further stretched away/above its 200-day moving average and toward the higher end of that recent slightly rising range, in the $61’s to 62’s.",
+      "text": "I\u2019d not get into it unless it got further stretched away/above its 200-day moving average and toward the higher end of that recent slightly rising range, in the $61\u2019s to 62\u2019s.",
       "isActionable": false,
       "source": "options-neg-20",
       "vector": [
@@ -48460,7 +48460,7 @@
       ]
     },
     {
-      "text": "WMB reported earnings and did beat expectations but the stock (so far anyway) has failed to respond positively. MACD slumping too.\n\nAt some point, all of the good news is priced into the stock and more good news doesn’t move the needle to the upside anymore. We may be there. We’ll know more soon.\n\nSo far, it’s high has been back in January, even with beating earnings the last two quarters.\n\nThe price is a mile away from its 200-week moving average and battling a strong, long-term resistance zone.",
+      "text": "WMB reported earnings and did beat expectations but the stock (so far anyway) has failed to respond positively. MACD slumping too.\n\nAt some point, all of the good news is priced into the stock and more good news doesn\u2019t move the needle to the upside anymore. We may be there. We\u2019ll know more soon.\n\nSo far, it\u2019s high has been back in January, even with beating earnings the last two quarters.\n\nThe price is a mile away from its 200-week moving average and battling a strong, long-term resistance zone.",
       "isActionable": false,
       "source": "options-neg-23",
       "vector": [
@@ -51553,7 +51553,7 @@
       ]
     },
     {
-      "text": "Paul Tudor Jones is thinking what I’m thinking.\n\nChina cutting rates. They know their economy needs the help.",
+      "text": "Paul Tudor Jones is thinking what I\u2019m thinking.\n\nChina cutting rates. They know their economy needs the help.",
       "isActionable": false,
       "source": "options-neg-26",
       "vector": [
@@ -52584,7 +52584,7 @@
       ]
     },
     {
-      "text": "The market is closed for the day and weekend. So, we only know about entries when the market is open because it could gap lower on the opening (and we’d avoid an entry) or it could open flat or higher, where an entry would be ok to enter. Check back with me on Monday when the market is open and we can reassess then.",
+      "text": "The market is closed for the day and weekend. So, we only know about entries when the market is open because it could gap lower on the opening (and we\u2019d avoid an entry) or it could open flat or higher, where an entry would be ok to enter. Check back with me on Monday when the market is open and we can reassess then.",
       "isActionable": false,
       "source": "options-neg-27",
       "vector": [
@@ -53615,7 +53615,7 @@
       ]
     },
     {
-      "text": "People buy and sell for all sorts of reasons under the sun: fundamental, technical, “gut”, guessing, etc.\n\nAlso, don’t think linearly, buy and close/sell. There are all sorts of complex option strategies out there such as straddles, strangles, condors, spread trades, etc. that require a buy and a sell at the same time, etc. So, I’d not overthink it.\n\nI’d just focus on where you need to buy and where you need to sell/close. Otherwise you can make it harder, in your mind, than it needs to be and it can feel more complex than it has to. I’d say to keep it simple.",
+      "text": "People buy and sell for all sorts of reasons under the sun: fundamental, technical, \u201cgut\u201d, guessing, etc.\n\nAlso, don\u2019t think linearly, buy and close/sell. There are all sorts of complex option strategies out there such as straddles, strangles, condors, spread trades, etc. that require a buy and a sell at the same time, etc. So, I\u2019d not overthink it.\n\nI\u2019d just focus on where you need to buy and where you need to sell/close. Otherwise you can make it harder, in your mind, than it needs to be and it can feel more complex than it has to. I\u2019d say to keep it simple.",
       "isActionable": false,
       "source": "options-neg-28",
       "vector": [
@@ -54646,7 +54646,7 @@
       ]
     },
     {
-      "text": "Yep, a myriad of reasons for both buys/sells that don’t even have to be for a belief on a directional bet. Some strategies are somewhat neutral (as far as price direction). Others, like straddles know at best they’ll lose on one leg of the trade and win on the other side, etc.\n\nSo, lots of reasons for both buys/sells that don’t even have to have directional conviction or a win on that side of the trade.",
+      "text": "Yep, a myriad of reasons for both buys/sells that don\u2019t even have to be for a belief on a directional bet. Some strategies are somewhat neutral (as far as price direction). Others, like straddles know at best they\u2019ll lose on one leg of the trade and win on the other side, etc.\n\nSo, lots of reasons for both buys/sells that don\u2019t even have to have directional conviction or a win on that side of the trade.",
       "isActionable": false,
       "source": "options-neg-29",
       "vector": [
@@ -55677,7 +55677,7 @@
       ]
     },
     {
-      "text": "With the look of the MACD on this timeframe and other timeframes, there’s a good chance of a move like this, over time. If so, you might hold out for a move similar to that before an entry.\n\nAlso, the last pullback was only 3 waves. Depending on what pattern we’re in, this could be 3-waves overall up (if an Ending Diagonal) or 5-waves up overall if just a traditional move up after a 3-wave pullback.\n\nSo, can it fall from where it is right now? Yes, but with the MACD alluding to more upside on several timeframes, this path below may be the more likely case right now (and for those presently in it might require a 2nd tranche, at some point).",
+      "text": "With the look of the MACD on this timeframe and other timeframes, there\u2019s a good chance of a move like this, over time. If so, you might hold out for a move similar to that before an entry.\n\nAlso, the last pullback was only 3 waves. Depending on what pattern we\u2019re in, this could be 3-waves overall up (if an Ending Diagonal) or 5-waves up overall if just a traditional move up after a 3-wave pullback.\n\nSo, can it fall from where it is right now? Yes, but with the MACD alluding to more upside on several timeframes, this path below may be the more likely case right now (and for those presently in it might require a 2nd tranche, at some point).",
       "isActionable": false,
       "source": "options-neg-30",
       "vector": [
@@ -56708,7 +56708,7 @@
       ]
     },
     {
-      "text": "WMB is likely in wave 5, which “could” have some more to go. However, since waves 1 and 3 were long, wave 5 will likely be shorter, relative to those other waves.\n\nPrice is a mile away/above its 200-week moving average.",
+      "text": "WMB is likely in wave 5, which \u201ccould\u201d have some more to go. However, since waves 1 and 3 were long, wave 5 will likely be shorter, relative to those other waves.\n\nPrice is a mile away/above its 200-week moving average.",
       "isActionable": false,
       "source": "options-neg-31",
       "vector": [
@@ -57739,7 +57739,7 @@
       ]
     },
     {
-      "text": "FusionDude: Be sure to read your confirmation carefully before hitting the button. Take those few seconds to do it. If your price isn’t taken fairly quickly (in the coming seconds to minute or so), I’d move it up by a dime  and repeat that until they do take it. We’re going under the ask quote but greater than the bid quote, trying to split the bid/ask spread somewhat and make the price to overcome on the sell-to-close less of a gap to fill.",
+      "text": "FusionDude: Be sure to read your confirmation carefully before hitting the button. Take those few seconds to do it. If your price isn\u2019t taken fairly quickly (in the coming seconds to minute or so), I\u2019d move it up by a dime  and repeat that until they do take it. We\u2019re going under the ask quote but greater than the bid quote, trying to split the bid/ask spread somewhat and make the price to overcome on the sell-to-close less of a gap to fill.",
       "isActionable": false,
       "source": "options-neg-32",
       "vector": [
@@ -58770,7 +58770,7 @@
       ]
     },
     {
-      "text": "Jody/Michael: We look for strikes that 1) are near-the-money (could be at the money (same stock price as the strike price)…the stock price could be under the strike price or over the strike price (yet both would  still be near-the-money), and 2) we look for contracts with great liquidity/high Open Interest.\n\nThe ones in the yellow boxed area are either at or near the money. So, which one has the better liquidity/open interest (by far)…the one we got into, in the blue boxed area.",
+      "text": "Jody/Michael: We look for strikes that 1) are near-the-money (could be at the money (same stock price as the strike price)\u2026the stock price could be under the strike price or over the strike price (yet both would  still be near-the-money), and 2) we look for contracts with great liquidity/high Open Interest.\n\nThe ones in the yellow boxed area are either at or near the money. So, which one has the better liquidity/open interest (by far)\u2026the one we got into, in the blue boxed area.",
       "isActionable": false,
       "source": "options-neg-33",
       "vector": [
@@ -59801,7 +59801,7 @@
       ]
     },
     {
-      "text": "WMB’s bubble (blue line) will pop and likely minimally go as far as the yellow line and maybe lower. Price stretched a mile above the 200-week moving average. MACD slumping/Histogram slumping. Negative divergence on the MACD.",
+      "text": "WMB\u2019s bubble (blue line) will pop and likely minimally go as far as the yellow line and maybe lower. Price stretched a mile above the 200-week moving average. MACD slumping/Histogram slumping. Negative divergence on the MACD.",
       "isActionable": false,
       "source": "options-neg-34",
       "vector": [
@@ -60832,7 +60832,7 @@
       ]
     },
     {
-      "text": "WMB toward the bottom of a 6-month support/range bottom. If that breaks, it’ll also make a 5th wave, overall lower. MACD continues to slump.",
+      "text": "WMB toward the bottom of a 6-month support/range bottom. If that breaks, it\u2019ll also make a 5th wave, overall lower. MACD continues to slump.",
       "isActionable": false,
       "source": "options-neg-35",
       "vector": [
@@ -61863,7 +61863,7 @@
       ]
     },
     {
-      "text": "No, it’s only gone 3-waves overall lower. So, if that remains the case, then the yellow path likely happens and goes to “higher highs”.\n\nHowever, if it does the white path, then we’d get 5-waves lower and one would only want to enter after the next bear market bounce higher after those 5-waves have completed.\n\nEither outcome, it’s not time for an entry.",
+      "text": "No, it\u2019s only gone 3-waves overall lower. So, if that remains the case, then the yellow path likely happens and goes to \u201chigher highs\u201d.\n\nHowever, if it does the white path, then we\u2019d get 5-waves lower and one would only want to enter after the next bear market bounce higher after those 5-waves have completed.\n\nEither outcome, it\u2019s not time for an entry.",
       "isActionable": false,
       "source": "options-neg-36",
       "vector": [
@@ -62894,7 +62894,7 @@
       ]
     },
     {
-      "text": "Over time, I have no doubt it plummets hard, due to what I see on the weekly chart.\n\nOn the daily, it could do any of these moves or potentially the one in yellow I showed last week.\n\nWith it being down a decent amount on the day, we’d not enter a put after a drop. We enter those after rallies higher. If it goes back flat or positive, we can take another look at it then.",
+      "text": "Over time, I have no doubt it plummets hard, due to what I see on the weekly chart.\n\nOn the daily, it could do any of these moves or potentially the one in yellow I showed last week.\n\nWith it being down a decent amount on the day, we\u2019d not enter a put after a drop. We enter those after rallies higher. If it goes back flat or positive, we can take another look at it then.",
       "isActionable": false,
       "source": "options-neg-37",
       "vector": [
@@ -63925,7 +63925,7 @@
       ]
     },
     {
-      "text": "Good job, and good find!\n\nWe’ve probably got plenty of options positions now.",
+      "text": "Good job, and good find!\n\nWe\u2019ve probably got plenty of options positions now.",
       "isActionable": false,
       "source": "options-neg-38",
       "vector": [
@@ -64956,7 +64956,7 @@
       ]
     },
     {
-      "text": "Good to have you with us.\n\nOur profit targets for the system are always at least 20% minimum: https://logicalinvestor.net/forums/topic/disclaimer-2/\n\nBut with valuations being so stretched and prices being so stretched from major moving averages, etc., we’ve moved that to 25%.\n\nMeaning, your sell-to-close price is 25% higher than your filled buy-to-open price.\n\nThe option strategy link above will tell even more about our overall strategy. It’s pinned toward the top of the option forum.\n\nGreat to have you with us.",
+      "text": "Good to have you with us.\n\nOur profit targets for the system are always at least 20% minimum: https://logicalinvestor.net/forums/topic/disclaimer-2/\n\nBut with valuations being so stretched and prices being so stretched from major moving averages, etc., we\u2019ve moved that to 25%.\n\nMeaning, your sell-to-close price is 25% higher than your filled buy-to-open price.\n\nThe option strategy link above will tell even more about our overall strategy. It\u2019s pinned toward the top of the option forum.\n\nGreat to have you with us.",
       "isActionable": false,
       "source": "options-neg-39",
       "vector": [
@@ -65987,7 +65987,7 @@
       ]
     },
     {
-      "text": "I just check out stocks that have been high-fliers, talked about for a good while in the news, etc., where traders have potentially been bullish for far too long. I don’t have a screener for it. And I manually check each one I know that has been in the news and rallying hard to see if its fundamentally weak or/and also expensive, P/E wise.",
+      "text": "I just check out stocks that have been high-fliers, talked about for a good while in the news, etc., where traders have potentially been bullish for far too long. I don\u2019t have a screener for it. And I manually check each one I know that has been in the news and rallying hard to see if its fundamentally weak or/and also expensive, P/E wise.",
       "isActionable": false,
       "source": "options-neg-40",
       "vector": [
@@ -68049,7 +68049,7 @@
       ]
     },
     {
-      "text": "Keith, yeah, they don’t teach much about anything financial in seminaries, unfortunately…yet they should because they’re running God’s business, the church. There’s a spiritual side to the church but also a financial side (which is also spiritual even though many don’t think of it as such). So, the church needs both to function properly, agree. Good job!\n\nYeah, Daren is right. Depending on whether you’re using Schwab.com or their Think or Swim app  or Desktop may vary on where you find things…but he’s correct. You buy-to-open the put first. Le that fill/execute. Then, once you know its in your positions, you can put in the sell-to-close limit order, up 25% from your filled buy-to-open price.\n\nAnd thanks for getting/reading the book, and for being such a long-time subscriber.",
+      "text": "Keith, yeah, they don\u2019t teach much about anything financial in seminaries, unfortunately\u2026yet they should because they\u2019re running God\u2019s business, the church. There\u2019s a spiritual side to the church but also a financial side (which is also spiritual even though many don\u2019t think of it as such). So, the church needs both to function properly, agree. Good job!\n\nYeah, Daren is right. Depending on whether you\u2019re using Schwab.com or their Think or Swim app  or Desktop may vary on where you find things\u2026but he\u2019s correct. You buy-to-open the put first. Le that fill/execute. Then, once you know its in your positions, you can put in the sell-to-close limit order, up 25% from your filled buy-to-open price.\n\nAnd thanks for getting/reading the book, and for being such a long-time subscriber.",
       "isActionable": false,
       "source": "options-neg-42",
       "vector": [
@@ -69080,7 +69080,7 @@
       ]
     },
     {
-      "text": "You’re welcome. I’m with Schwab (formerly with Ameritrade which merged with Schwab). I still use the TOS desktop and TOS smartphone app for my orders. It’s far  better than Schwab.com (which is slower and more clunky).\n\nAnd if TOS desktop is used, I suggest scheduling a platform walkthrough of it. It’s not as simple, but it’s more robust and quicker. TOS smartphone app is more streamlined and more user friendly.",
+      "text": "You\u2019re welcome. I\u2019m with Schwab (formerly with Ameritrade which merged with Schwab). I still use the TOS desktop and TOS smartphone app for my orders. It\u2019s far  better than Schwab.com (which is slower and more clunky).\n\nAnd if TOS desktop is used, I suggest scheduling a platform walkthrough of it. It\u2019s not as simple, but it\u2019s more robust and quicker. TOS smartphone app is more streamlined and more user friendly.",
       "isActionable": false,
       "source": "options-neg-43",
       "vector": [
@@ -71142,7 +71142,7 @@
       ]
     },
     {
-      "text": "Daren is correct. You’re confusing what the stock does and what the option does.\n\nWhen you buy a put, yes, you want the stock to go down …so that the put goes UP in value.\n\nYou want to sell something HIGHER than you bought it. So, your 25% profit target is 25% higher than your buy-to-open limit price filled at.\n\nSo, your focus wants to be on what you want the put to do (go up) and a profit being 25% higher than your buy price.",
+      "text": "Daren is correct. You\u2019re confusing what the stock does and what the option does.\n\nWhen you buy a put, yes, you want the stock to go down \u2026so that the put goes UP in value.\n\nYou want to sell something HIGHER than you bought it. So, your 25% profit target is 25% higher than your buy-to-open limit price filled at.\n\nSo, your focus wants to be on what you want the put to do (go up) and a profit being 25% higher than your buy price.",
       "isActionable": false,
       "source": "options-neg-45",
       "vector": [
@@ -72173,7 +72173,7 @@
       ]
     },
     {
-      "text": "Yeah, this “gap up” in the yellow boxed area should have no problem in closing over time, and it should have no problem going to the 200-day moving average and shaded zone over time. At some point during that drop, our 25% profit target likely triggers.",
+      "text": "Yeah, this \u201cgap up\u201d in the yellow boxed area should have no problem in closing over time, and it should have no problem going to the 200-day moving average and shaded zone over time. At some point during that drop, our 25% profit target likely triggers.",
       "isActionable": false,
       "source": "options-neg-46",
       "vector": [
@@ -73204,7 +73204,7 @@
       ]
     },
     {
-      "text": "Correct. We never want to buy a put when its falling significantly. We buy on moves/retracements higher.\n\nIf the stock rallied back up into the $89’s, you could put on the put option contract.\n\nFor those of us that do own it, it is nice to see it down 2.5% today.",
+      "text": "Correct. We never want to buy a put when its falling significantly. We buy on moves/retracements higher.\n\nIf the stock rallied back up into the $89\u2019s, you could put on the put option contract.\n\nFor those of us that do own it, it is nice to see it down 2.5% today.",
       "isActionable": false,
       "source": "options-neg-47",
       "vector": [
@@ -75266,7 +75266,7 @@
       ]
     },
     {
-      "text": "And what causes the price of the put to potentially rise to your sell-to-close limit?\n\n2 main things cause that:\n\n1) the price of the stock dropping (the stock heading lower in price/on the chart)\n\n2) volatility – which is the speed of the drop. The quicker the drop, the more the option price expands/grows in value.",
+      "text": "And what causes the price of the put to potentially rise to your sell-to-close limit?\n\n2 main things cause that:\n\n1) the price of the stock dropping (the stock heading lower in price/on the chart)\n\n2) volatility \u2013 which is the speed of the drop. The quicker the drop, the more the option price expands/grows in value.",
       "isActionable": false,
       "source": "options-neg-49",
       "vector": [
@@ -76297,7 +76297,7 @@
       ]
     },
     {
-      "text": "You’re welcome.\n\nHere’s a visual, on its 5-minute chart.\n\nHere is the overall price drop (red arrow emphasizing it).\n\nAnd the red boxed areas are examples of the speed of the drop/volatility, which causes the option price to expand/increase even more in our favor.\n\nBottom line: A drop in the stock price is good…a quick/swift drop is even better because it involves both price and volatility.",
+      "text": "You\u2019re welcome.\n\nHere\u2019s a visual, on its 5-minute chart.\n\nHere is the overall price drop (red arrow emphasizing it).\n\nAnd the red boxed areas are examples of the speed of the drop/volatility, which causes the option price to expand/increase even more in our favor.\n\nBottom line: A drop in the stock price is good\u2026a quick/swift drop is even better because it involves both price and volatility.",
       "isActionable": false,
       "source": "options-neg-50",
       "vector": [
@@ -78359,7 +78359,7 @@
       ]
     },
     {
-      "text": "Bekka, the more the asset/stock goes down from the point at which we entered the option, the more the price of the option goes up. Great for the one who’s been holding it because it appreciates for us. But not good for someone trying to buy when it’s expensive AFTER a big drop.\n\nIt’s why we buy puts when/where we do (after rallies higher or when they’re very extended to the upside, vs after large drops).\n\nGratefulJon, yeah a 30% gain in under 22 hours is HUGE!\n\nCongrats, y’all. Yeah, any who haven’t reported their gains on the Testimonial page of LI, it would be greatly appreciated, to inspire other non-subscribers as to what’s possible.",
+      "text": "Bekka, the more the asset/stock goes down from the point at which we entered the option, the more the price of the option goes up. Great for the one who\u2019s been holding it because it appreciates for us. But not good for someone trying to buy when it\u2019s expensive AFTER a big drop.\n\nIt\u2019s why we buy puts when/where we do (after rallies higher or when they\u2019re very extended to the upside, vs after large drops).\n\nGratefulJon, yeah a 30% gain in under 22 hours is HUGE!\n\nCongrats, y\u2019all. Yeah, any who haven\u2019t reported their gains on the Testimonial page of LI, it would be greatly appreciated, to inspire other non-subscribers as to what\u2019s possible.",
       "isActionable": false,
       "source": "options-neg-52",
       "vector": [
@@ -80421,7 +80421,7 @@
       ]
     },
     {
-      "text": "JCI may bounce higher a bit off the bottom of this “ending diagonal/rising wedge” pattern, but after that likely comes its big moves down as its bubble bust gets in full swing.",
+      "text": "JCI may bounce higher a bit off the bottom of this \u201cending diagonal/rising wedge\u201d pattern, but after that likely comes its big moves down as its bubble bust gets in full swing.",
       "isActionable": false,
       "source": "options-neg-54",
       "vector": [
@@ -81452,7 +81452,7 @@
       ]
     },
     {
-      "text": "Yeah, it’s always best to check the site, just in case an email alert misses it. At times it can literally mean money in the bank.\n\nJCI still hasn’t bounced enough for a re-entry.",
+      "text": "Yeah, it\u2019s always best to check the site, just in case an email alert misses it. At times it can literally mean money in the bank.\n\nJCI still hasn\u2019t bounced enough for a re-entry.",
       "isActionable": false,
       "source": "options-neg-55",
       "vector": [
@@ -82483,7 +82483,7 @@
       ]
     },
     {
-      "text": "Glad you happened to do well on it, but in letting it run too long, it changes the strategy completely from what we do. And when you do it, you risk turning the gain into a loss.\n\nOur strategy is a high win-ratio strategy (high number of winning trades vs losing trades). As you elongate the gain more, you’ll end up diluting the win-rate per trade, which changes the strategy.\n\nGlad you did well, though. You might report your gains on the Testimonial thread on the LI forum.",
+      "text": "Glad you happened to do well on it, but in letting it run too long, it changes the strategy completely from what we do. And when you do it, you risk turning the gain into a loss.\n\nOur strategy is a high win-ratio strategy (high number of winning trades vs losing trades). As you elongate the gain more, you\u2019ll end up diluting the win-rate per trade, which changes the strategy.\n\nGlad you did well, though. You might report your gains on the Testimonial thread on the LI forum.",
       "isActionable": false,
       "source": "options-neg-56",
       "vector": [
@@ -83514,7 +83514,7 @@
       ]
     },
     {
-      "text": "Depends on if it gets to a shaded zone or not and what the wave counts look like at that time. That’s where we have a long-term edge. Anything before that…we have no edge.",
+      "text": "Depends on if it gets to a shaded zone or not and what the wave counts look like at that time. That\u2019s where we have a long-term edge. Anything before that\u2026we have no edge.",
       "isActionable": false,
       "source": "options-neg-57",
       "vector": [
@@ -84545,7 +84545,7 @@
       ]
     },
     {
-      "text": "It only had 3-waves down, which more times than not, means 5-waves up to notable “higher highs”. So, that’s the only situation that would interest us.\n\nThere are flats that are 3-3-5, but they’re less common, and in that case may not go to a new high or a bit of a higher high (still within 3-waves overall higher), but we’d only be interested if we saw 5-waves overall higher (and so far, we’ve only seen 3…in yellow…and we’d want to see 5 and notable “higher highs”).",
+      "text": "It only had 3-waves down, which more times than not, means 5-waves up to notable \u201chigher highs\u201d. So, that\u2019s the only situation that would interest us.\n\nThere are flats that are 3-3-5, but they\u2019re less common, and in that case may not go to a new high or a bit of a higher high (still within 3-waves overall higher), but we\u2019d only be interested if we saw 5-waves overall higher (and so far, we\u2019ve only seen 3\u2026in yellow\u2026and we\u2019d want to see 5 and notable \u201chigher highs\u201d).",
       "isActionable": false,
       "source": "options-neg-58",
       "vector": [
@@ -85576,7 +85576,7 @@
       ]
     },
     {
-      "text": "If you see JCI do this (have  a wave 4 pullback and a wave 5 advance to a new “higher high”), let me know, because it’s at that point we’d be interested in the next put on it.",
+      "text": "If you see JCI do this (have  a wave 4 pullback and a wave 5 advance to a new \u201chigher high\u201d), let me know, because it\u2019s at that point we\u2019d be interested in the next put on it.",
       "isActionable": false,
       "source": "options-neg-59",
       "vector": [
@@ -86607,7 +86607,7 @@
       ]
     },
     {
-      "text": "IF JCI gets to the $100ish zone, we can take another look at a put. It may or may not get there. We’ll see in time. But, we’d want it to be in the shaded zone first before doing anything.",
+      "text": "IF JCI gets to the $100ish zone, we can take another look at a put. It may or may not get there. We\u2019ll see in time. But, we\u2019d want it to be in the shaded zone first before doing anything.",
       "isActionable": false,
       "source": "options-neg-60",
       "vector": [
@@ -87638,7 +87638,7 @@
       ]
     },
     {
-      "text": "Not necessarily. Option pricing depends not on time of day but on the combo of: the price/direction, volatility of that price and time decay. The first two making the most difference for most of our holding time.\n\nUpon the open, stocks can gap up or gap down from yesterday’s close though.",
+      "text": "Not necessarily. Option pricing depends not on time of day but on the combo of: the price/direction, volatility of that price and time decay. The first two making the most difference for most of our holding time.\n\nUpon the open, stocks can gap up or gap down from yesterday\u2019s close though.",
       "isActionable": false,
       "source": "options-neg-61",
       "vector": [
@@ -88669,7 +88669,7 @@
       ]
     },
     {
-      "text": "That’s what I’m here for. For your questions. Not a problem at all.\n\nYes, that put can still be entered now, correct.",
+      "text": "That\u2019s what I\u2019m here for. For your questions. Not a problem at all.\n\nYes, that put can still be entered now, correct.",
       "isActionable": false,
       "source": "options-neg-62",
       "vector": [
@@ -89700,7 +89700,7 @@
       ]
     },
     {
-      "text": "Good job. We’re set-up for an eventual fall in JCI, like we’ve seen before when it got unusually stretched away from its 200-week moving average.",
+      "text": "Good job. We\u2019re set-up for an eventual fall in JCI, like we\u2019ve seen before when it got unusually stretched away from its 200-week moving average.",
       "isActionable": false,
       "source": "options-neg-63",
       "vector": [
@@ -90731,7 +90731,7 @@
       ]
     },
     {
-      "text": "It’s on TOS and Schwab. You just want to have your broker give you a walkthrough of the platform. See below for TOS.\n\nYou can also have them show you how to get rid of the non-traditional expires (weeklies, etc.) and only have the ones that expire on the 3rd Friday of the month.\n\nAnd that put can still be entered now/upon the open.",
+      "text": "It\u2019s on TOS and Schwab. You just want to have your broker give you a walkthrough of the platform. See below for TOS.\n\nYou can also have them show you how to get rid of the non-traditional expires (weeklies, etc.) and only have the ones that expire on the 3rd Friday of the month.\n\nAnd that put can still be entered now/upon the open.",
       "isActionable": false,
       "source": "options-neg-64",
       "vector": [
@@ -91762,7 +91762,7 @@
       ]
     },
     {
-      "text": "No, that’s tweaking the system. When I said you could get in it, you could have gotten into it. Don’t change the system. You’re likely never going to time/see the tip top. In doing so, you can totally miss a trade. Gains aren’t made by calling the tip top. It’s by being on the train when the train leaves the station.\n\nIt is still down only half of 1%. So, you could still enter, but yes, earlier would have been better.\n\nDon’t delay when you get the greenlight.\n\nI know it’s a learning curve. Just helping the learning process.",
+      "text": "No, that\u2019s tweaking the system. When I said you could get in it, you could have gotten into it. Don\u2019t change the system. You\u2019re likely never going to time/see the tip top. In doing so, you can totally miss a trade. Gains aren\u2019t made by calling the tip top. It\u2019s by being on the train when the train leaves the station.\n\nIt is still down only half of 1%. So, you could still enter, but yes, earlier would have been better.\n\nDon\u2019t delay when you get the greenlight.\n\nI know it\u2019s a learning curve. Just helping the learning process.",
       "isActionable": false,
       "source": "options-neg-65",
       "vector": [
@@ -92793,7 +92793,7 @@
       ]
     },
     {
-      "text": "I look at all sorts of timeframes to get a picture of what’s going on. It’s like looking at a map of a nation, then of the state, then a map of the city, etc.\n\nThey all tell you something (big picture, details, etc.).\n\nIt’s about entering after I give a greenlight on a position and  putting in your 25% sell-to-close profit target immediately after your buy-to-open fills. And watching for 2nd tranche opportunities which comes after two conditions are met: 1) when/if the 1st tranche gets down by 60% or more and 2) if the stock price is at a place on the chart, ideal for an entry (which I help to determine). You just alert me if you get 60% down and need to know about a 2nd tranche opportunity.",
+      "text": "I look at all sorts of timeframes to get a picture of what\u2019s going on. It\u2019s like looking at a map of a nation, then of the state, then a map of the city, etc.\n\nThey all tell you something (big picture, details, etc.).\n\nIt\u2019s about entering after I give a greenlight on a position and  putting in your 25% sell-to-close profit target immediately after your buy-to-open fills. And watching for 2nd tranche opportunities which comes after two conditions are met: 1) when/if the 1st tranche gets down by 60% or more and 2) if the stock price is at a place on the chart, ideal for an entry (which I help to determine). You just alert me if you get 60% down and need to know about a 2nd tranche opportunity.",
       "isActionable": false,
       "source": "options-neg-66",
       "vector": [
@@ -93824,7 +93824,7 @@
       ]
     },
     {
-      "text": "You’re welcome. Yeah, it’s easy to create another system by adding to or changing/deviating from what I’ve instructed. Always resist the urge.\n\nThe advice will always be clear. Then it’s just in deciding to follow the advice robotically.",
+      "text": "You\u2019re welcome. Yeah, it\u2019s easy to create another system by adding to or changing/deviating from what I\u2019ve instructed. Always resist the urge.\n\nThe advice will always be clear. Then it\u2019s just in deciding to follow the advice robotically.",
       "isActionable": false,
       "source": "options-neg-67",
       "vector": [
@@ -94855,7 +94855,7 @@
       ]
     },
     {
-      "text": "JCI is well into wave 5. We just don’t know if its very near completion or has a bit more to go before its big sell-off. Either way is fine for our holding period/expiry.\n\nThe price is well into a upper shaded zone target and stretched very far above its 200-week moving average.",
+      "text": "JCI is well into wave 5. We just don\u2019t know if its very near completion or has a bit more to go before its big sell-off. Either way is fine for our holding period/expiry.\n\nThe price is well into a upper shaded zone target and stretched very far above its 200-week moving average.",
       "isActionable": false,
       "source": "options-neg-68",
       "vector": [
@@ -95886,7 +95886,7 @@
       ]
     },
     {
-      "text": "JCI is 5-waves up and is likely toward the end of the latest 5-waves higher and stretched FAR above its 200-week moving average. Anytime now, it could have a huge tumble lower. It’s primed for it.\n\nHistogram lower.",
+      "text": "JCI is 5-waves up and is likely toward the end of the latest 5-waves higher and stretched FAR above its 200-week moving average. Anytime now, it could have a huge tumble lower. It\u2019s primed for it.\n\nHistogram lower.",
       "isActionable": false,
       "source": "options-neg-69",
       "vector": [
@@ -96917,7 +96917,7 @@
       ]
     },
     {
-      "text": "Good job. It’s upside momentum seems to be slowing down. You can tell by the angle of the move (emphasized by the blue lines) and by the diverging/slumping MACD.",
+      "text": "Good job. It\u2019s upside momentum seems to be slowing down. You can tell by the angle of the move (emphasized by the blue lines) and by the diverging/slumping MACD.",
       "isActionable": false,
       "source": "options-neg-70",
       "vector": [
@@ -97948,7 +97948,7 @@
       ]
     },
     {
-      "text": "Buying at the Asking price pretty much guarantees you get filled but if you’re willing to risk missing the trade, you can split the bid/ask spread with your buy limit and sometimes get filled.  Deeper than that becomes much more hit-or-miss.",
+      "text": "Buying at the Asking price pretty much guarantees you get filled but if you\u2019re willing to risk missing the trade, you can split the bid/ask spread with your buy limit and sometimes get filled.  Deeper than that becomes much more hit-or-miss.",
       "isActionable": false,
       "source": "options-neg-71",
       "vector": [
@@ -98979,7 +98979,7 @@
       ]
     },
     {
-      "text": "JCI has been in a lull/range for a number of trading sessions lately. That’ll eventually breakout (could be either way, near-term) but should fall nicely, over time…as we can see from the weekly chart. Earnings on 7/29 before the bell.",
+      "text": "JCI has been in a lull/range for a number of trading sessions lately. That\u2019ll eventually breakout (could be either way, near-term) but should fall nicely, over time\u2026as we can see from the weekly chart. Earnings on 7/29 before the bell.",
       "isActionable": false,
       "source": "options-neg-72",
       "vector": [
@@ -100010,7 +100010,7 @@
       ]
     },
     {
-      "text": "JCI did break out of that hourly chart range, like I thought it would. We’re likely in the latter stages of wave 5 of a major “leading diagonal” where waves 4 and 1 overlap. And the target for the decline is “somewhere in previous wave 2” and a reasonable target for that would be the lower blue shaded zone.\n\nHistogram tapering off, a negative. Price is super-stretched away from its 50-week and 200-week moving averages. A HUGE decline should come, in time.",
+      "text": "JCI did break out of that hourly chart range, like I thought it would. We\u2019re likely in the latter stages of wave 5 of a major \u201cleading diagonal\u201d where waves 4 and 1 overlap. And the target for the decline is \u201csomewhere in previous wave 2\u201d and a reasonable target for that would be the lower blue shaded zone.\n\nHistogram tapering off, a negative. Price is super-stretched away from its 50-week and 200-week moving averages. A HUGE decline should come, in time.",
       "isActionable": false,
       "source": "options-neg-73",
       "vector": [
@@ -101041,7 +101041,7 @@
       ]
     },
     {
-      "text": "JCI did break out of that hourly chart range, like I thought it would. We’re likely in the latter stages of wave 5 of a major “leading diagonal” where waves 4 and 1 overlap. And the target for the decline is “somewhere in previous wave 2” and a reasonable target for that would be the lower blue shaded zone.\n\nHistogram tapering off, a negative. Price is super-stretched away from its 50-week and 200-week moving averages. A HUGE decline should come, in time.",
+      "text": "JCI did break out of that hourly chart range, like I thought it would. We\u2019re likely in the latter stages of wave 5 of a major \u201cleading diagonal\u201d where waves 4 and 1 overlap. And the target for the decline is \u201csomewhere in previous wave 2\u201d and a reasonable target for that would be the lower blue shaded zone.\n\nHistogram tapering off, a negative. Price is super-stretched away from its 50-week and 200-week moving averages. A HUGE decline should come, in time.",
       "isActionable": false,
       "source": "options-neg-74",
       "vector": [
@@ -102072,7 +102072,7 @@
       ]
     },
     {
-      "text": "It’s also not just about spread costs. It’s more about it’s ability to cover those and then some. Well, with its massive opportunity, that you can see on the chart, it’s appreciation potential vs its spread costs are great.",
+      "text": "It\u2019s also not just about spread costs. It\u2019s more about it\u2019s ability to cover those and then some. Well, with its massive opportunity, that you can see on the chart, it\u2019s appreciation potential vs its spread costs are great.",
       "isActionable": false,
       "source": "options-neg-75",
       "vector": [
@@ -103103,7 +103103,7 @@
       ]
     },
     {
-      "text": "JCI down 6.4% today, in line with my thoughts yesterday. Selling off after earnings. They beat estimates and raised guidance…but like I’d said, all of the good news is likely accounted for as it had that overshoot and then was primed to tank.\n\nPeople that think a stock always goes up on a “good” earnings release and that it always goes down on a “bad” earnings release will forever be confused, without realizing that stocks can sometimes price in the best case scenario in an uptrend or the worst case scenario in a downtrend, which is why that can happen.",
+      "text": "JCI down 6.4% today, in line with my thoughts yesterday. Selling off after earnings. They beat estimates and raised guidance\u2026but like I\u2019d said, all of the good news is likely accounted for as it had that overshoot and then was primed to tank.\n\nPeople that think a stock always goes up on a \u201cgood\u201d earnings release and that it always goes down on a \u201cbad\u201d earnings release will forever be confused, without realizing that stocks can sometimes price in the best case scenario in an uptrend or the worst case scenario in a downtrend, which is why that can happen.",
       "isActionable": false,
       "source": "options-neg-76",
       "vector": [
@@ -104134,7 +104134,7 @@
       ]
     },
     {
-      "text": "JCI down 7.09% now, nice!\n\nWhat did we see that most didn’t? Most say what they thought was an unstoppable/strong uptrend. What I saw was a stock nearing the end of 5-waves, stretched very far above 50- and 200-week moving averages, with a potential MACD sell signal forming and slumping Histogram.\n\nIt had also had a “throw over” above its recent trading channel and that is typically representative of an overly bullish move that exhausts as “everyone who was dying to buy, has now bought”.\n\nContrary to what many retail investors think, a “strong uptrend” is not always a good sign, when it starts to show things like I pointed out on this weekly chart (and most investors will never even eye a weekly chart).",
+      "text": "JCI down 7.09% now, nice!\n\nWhat did we see that most didn\u2019t? Most say what they thought was an unstoppable/strong uptrend. What I saw was a stock nearing the end of 5-waves, stretched very far above 50- and 200-week moving averages, with a potential MACD sell signal forming and slumping Histogram.\n\nIt had also had a \u201cthrow over\u201d above its recent trading channel and that is typically representative of an overly bullish move that exhausts as \u201ceveryone who was dying to buy, has now bought\u201d.\n\nContrary to what many retail investors think, a \u201cstrong uptrend\u201d is not always a good sign, when it starts to show things like I pointed out on this weekly chart (and most investors will never even eye a weekly chart).",
       "isActionable": false,
       "source": "options-neg-77",
       "vector": [
@@ -105165,7 +105165,7 @@
       ]
     },
     {
-      "text": "Some slams are quick. Some take a while. (Examples in the red boxes).\n\nIn the last good slam, the white line measures how stretched it was from the moving average before it collapsed.\n\nYou’ll see that same measurement projected onto today’s activity and you can tell that the current JCI move is further stretched from its moving average than the last slam.\n\nSo, there is a big potential to see another quick slam downward, but we can’t rule out one that takes some time to get back to the moving averages, because historically those have happened too.",
+      "text": "Some slams are quick. Some take a while. (Examples in the red boxes).\n\nIn the last good slam, the white line measures how stretched it was from the moving average before it collapsed.\n\nYou\u2019ll see that same measurement projected onto today\u2019s activity and you can tell that the current JCI move is further stretched from its moving average than the last slam.\n\nSo, there is a big potential to see another quick slam downward, but we can\u2019t rule out one that takes some time to get back to the moving averages, because historically those have happened too.",
       "isActionable": false,
       "source": "options-neg-78",
       "vector": [
@@ -106196,7 +106196,7 @@
       ]
     },
     {
-      "text": "JCI is a prime example of the volatility factor in an option and not just watching what may happen, in time, on the chart.\n\nFor instance, JCI has more ultimate downside. However, who would think that the stock takes an almost 3-month pause (or potentially longer) before its next volatile drop?\n\nSo, the huge drop lower (first blue line to the left) has both price and volatility benefitting the put.\n\nHowever, several months of sideways to slightly up action on lesser volatility can shrink back the floating gains made in the blue surge lower and may not re-emerge until the next blue drop downward.\n\nSo, it’s why we don’t want to say, “the stock has more downside on its chart, so I’ll stick with the option”. We don’t know how quickly it’ll get to target and the volatility piece is a big factor in factoring the option’s price.\n\nTherefore, when you have huge, favorable surges that put you to your 25% profits, take them or else you may see those floating gains erode away (certainly in instances like this, which will happen sometimes).\n\nOf course, when there’s a huge surge lower and you’re not at a 25% profit, then you do have to ride through the range into the next volatile surge lower.\n\n(Long, boring low-volatile ranges, tend to breakout into highly-volatile directional moves).",
+      "text": "JCI is a prime example of the volatility factor in an option and not just watching what may happen, in time, on the chart.\n\nFor instance, JCI has more ultimate downside. However, who would think that the stock takes an almost 3-month pause (or potentially longer) before its next volatile drop?\n\nSo, the huge drop lower (first blue line to the left) has both price and volatility benefitting the put.\n\nHowever, several months of sideways to slightly up action on lesser volatility can shrink back the floating gains made in the blue surge lower and may not re-emerge until the next blue drop downward.\n\nSo, it\u2019s why we don\u2019t want to say, \u201cthe stock has more downside on its chart, so I\u2019ll stick with the option\u201d. We don\u2019t know how quickly it\u2019ll get to target and the volatility piece is a big factor in factoring the option\u2019s price.\n\nTherefore, when you have huge, favorable surges that put you to your 25% profits, take them or else you may see those floating gains erode away (certainly in instances like this, which will happen sometimes).\n\nOf course, when there\u2019s a huge surge lower and you\u2019re not at a 25% profit, then you do have to ride through the range into the next volatile surge lower.\n\n(Long, boring low-volatile ranges, tend to breakout into highly-volatile directional moves).",
       "isActionable": false,
       "source": "options-neg-79",
       "vector": [
@@ -107227,7 +107227,7 @@
       ]
     },
     {
-      "text": "While we don’t know if its completed wave 5 yet, there’s a chance of it, with the distance from its moving averages and with the negative divergence of the MACD.\n\nCould inch out another slight higher high, before its next larger decline lower.",
+      "text": "While we don\u2019t know if its completed wave 5 yet, there\u2019s a chance of it, with the distance from its moving averages and with the negative divergence of the MACD.\n\nCould inch out another slight higher high, before its next larger decline lower.",
       "isActionable": false,
       "source": "options-neg-80",
       "vector": [
@@ -108258,7 +108258,7 @@
       ]
     },
     {
-      "text": "Forward P/E of 25 (expensive). https://finance.yahoo.com/quote/JCI/key-statistics/\n\nA mere $731 million in cash. Horribly low for a $71 billion company.\n\nOnly $3.99 billion earned last year, which isn’t much for a $71 billion company.\n\nWell into a major wave 5, stretched far above its 200-week moving average.\n\nWhen are most people super-bullish on a stock? Latter wave 5, latter wave B.",
+      "text": "Forward P/E of 25 (expensive). https://finance.yahoo.com/quote/JCI/key-statistics/\n\nA mere $731 million in cash. Horribly low for a $71 billion company.\n\nOnly $3.99 billion earned last year, which isn\u2019t much for a $71 billion company.\n\nWell into a major wave 5, stretched far above its 200-week moving average.\n\nWhen are most people super-bullish on a stock? Latter wave 5, latter wave B.",
       "isActionable": false,
       "source": "options-neg-81",
       "vector": [
@@ -109289,7 +109289,7 @@
       ]
     },
     {
-      "text": "Yep, nothing wrong with additionally doing that. Yep, for me I’ve got to see a fundamental justification for the stock to go down (horrible fundamentals or fundamentally expensive) AND a good technical set-up, at a shaded zone or stretched far above major moving averages, etc. with favorable wave counts that are set-up for a stock decline (in the case of our puts).",
+      "text": "Yep, nothing wrong with additionally doing that. Yep, for me I\u2019ve got to see a fundamental justification for the stock to go down (horrible fundamentals or fundamentally expensive) AND a good technical set-up, at a shaded zone or stretched far above major moving averages, etc. with favorable wave counts that are set-up for a stock decline (in the case of our puts).",
       "isActionable": false,
       "source": "options-neg-82",
       "vector": [
@@ -110320,7 +110320,7 @@
       ]
     },
     {
-      "text": "Think or Swim (especially the desktop version) is far superior to any of Schwab’s typical/regular platforms. It’s one of several reasons why they bought TD Ameritrade.",
+      "text": "Think or Swim (especially the desktop version) is far superior to any of Schwab\u2019s typical/regular platforms. It\u2019s one of several reasons why they bought TD Ameritrade.",
       "isActionable": false,
       "source": "options-neg-83",
       "vector": [
@@ -111351,7 +111351,7 @@
       ]
     },
     {
-      "text": "Yes, that’s still fine.",
+      "text": "Yes, that\u2019s still fine.",
       "isActionable": false,
       "source": "options-neg-84",
       "vector": [
@@ -112382,7 +112382,7 @@
       ]
     },
     {
-      "text": "JCI could be entered for a 1st tranche but I’m on vacation away from my laptop, so Christiaan would likely have to tell you a near-term strike with good open interest, preferably in September.",
+      "text": "JCI could be entered for a 1st tranche but I\u2019m on vacation away from my laptop, so Christiaan would likely have to tell you a near-term strike with good open interest, preferably in September.",
       "isActionable": false,
       "source": "options-neg-85",
       "vector": [
@@ -113413,7 +113413,7 @@
       ]
     },
     {
-      "text": "We have to answer option entry/exit questions during when the market is open because we don’t know if the market gaps lower, gaps higher or opens similar to its close today, etc. All of that makes a big difference.\n\nBut with that said, this stock has dropped 2% today and quite a bit lately (white arrow). We never buy puts after large drops when puts would be expensive.\n\nWe buy them after large rallies higher, when puts are cheaper.",
+      "text": "We have to answer option entry/exit questions during when the market is open because we don\u2019t know if the market gaps lower, gaps higher or opens similar to its close today, etc. All of that makes a big difference.\n\nBut with that said, this stock has dropped 2% today and quite a bit lately (white arrow). We never buy puts after large drops when puts would be expensive.\n\nWe buy them after large rallies higher, when puts are cheaper.",
       "isActionable": false,
       "source": "options-neg-86",
       "vector": [
@@ -114444,7 +114444,7 @@
       ]
     },
     {
-      "text": "Awesome. You’re welcome.",
+      "text": "Awesome. You\u2019re welcome.",
       "isActionable": false,
       "source": "options-neg-87",
       "vector": [
@@ -115475,7 +115475,7 @@
       ]
     },
     {
-      "text": "It’s nice to be able to MAKE money in down-times/down-days/weeks.",
+      "text": "It\u2019s nice to be able to MAKE money in down-times/down-days/weeks.",
       "isActionable": false,
       "source": "options-neg-88",
       "vector": [
@@ -117537,7 +117537,7 @@
       ]
     },
     {
-      "text": "Congrats on profiting on the one.\n\nNo. This could be argued that it’s 5-waves down (white), of which it should hit one of the two shaded zones on the upside OR, it could be argued that it’s only 3-waves down (yellow), and in that case would go to a “higher high” on the chart.\n\nSo, since either of those could happen, I’d not want to see you enter again unless the price got at least between the two shaded zones.",
+      "text": "Congrats on profiting on the one.\n\nNo. This could be argued that it\u2019s 5-waves down (white), of which it should hit one of the two shaded zones on the upside OR, it could be argued that it\u2019s only 3-waves down (yellow), and in that case would go to a \u201chigher high\u201d on the chart.\n\nSo, since either of those could happen, I\u2019d not want to see you enter again unless the price got at least between the two shaded zones.",
       "isActionable": false,
       "source": "options-neg-90",
       "vector": [
@@ -118568,7 +118568,7 @@
       ]
     },
     {
-      "text": "I’m on the road but looking at the chart on my phone, it doesn’t look like it’s at the place on the chart for an entry.\n\nOn the road for 5 more hours.",
+      "text": "I\u2019m on the road but looking at the chart on my phone, it doesn\u2019t look like it\u2019s at the place on the chart for an entry.\n\nOn the road for 5 more hours.",
       "isActionable": false,
       "source": "options-neg-91",
       "vector": [
@@ -119599,7 +119599,7 @@
       ]
     },
     {
-      "text": "1st tranche? 2nd tranche? If 2nd tranche, how much are you down on your 1st tranche?\n\nYou may have told me in the past, but I’d need more info to go off of because it’s hard for me to remember everyone’s individual situation.",
+      "text": "1st tranche? 2nd tranche? If 2nd tranche, how much are you down on your 1st tranche?\n\nYou may have told me in the past, but I\u2019d need more info to go off of because it\u2019s hard for me to remember everyone\u2019s individual situation.",
       "isActionable": false,
       "source": "options-neg-92",
       "vector": [
@@ -120630,7 +120630,7 @@
       ]
     },
     {
-      "text": "At the risk of missing the trade, because the daily/weekly technicals don’t look ready for a turn lower (even though the price is stretched far above the 200-week moving average), I’d probably sit on my hands and check it again if it hits the $123ish zone.",
+      "text": "At the risk of missing the trade, because the daily/weekly technicals don\u2019t look ready for a turn lower (even though the price is stretched far above the 200-week moving average), I\u2019d probably sit on my hands and check it again if it hits the $123ish zone.",
       "isActionable": false,
       "source": "options-neg-93",
       "vector": [
@@ -122692,7 +122692,7 @@
       ]
     },
     {
-      "text": "The expirations we’re going out to affords us more time but it’s not an indication that it’ll need more time or drop slower, etc.\n\nBut yes, you can go to 20% profit target on that and if you get to around the 60 day til expiry window, you can move the sell to close to breakeven.",
+      "text": "The expirations we\u2019re going out to affords us more time but it\u2019s not an indication that it\u2019ll need more time or drop slower, etc.\n\nBut yes, you can go to 20% profit target on that and if you get to around the 60 day til expiry window, you can move the sell to close to breakeven.",
       "isActionable": false,
       "source": "options-neg-95",
       "vector": [
@@ -123723,7 +123723,7 @@
       ]
     },
     {
-      "text": "You’re welcome. Yes, the sentiment is overly positive. Agree.\n\nIts above a top Bollinger Band on both weekly/daily timeframes too.",
+      "text": "You\u2019re welcome. Yes, the sentiment is overly positive. Agree.\n\nIts above a top Bollinger Band on both weekly/daily timeframes too.",
       "isActionable": false,
       "source": "options-neg-96",
       "vector": [
@@ -124754,7 +124754,7 @@
       ]
     },
     {
-      "text": "It’s already backing off some.\n\nHad gone above the weekly chart’s upper Bollinger Band while being stretched far above the 200-week moving average with slumping RSI/MACD/Histogram.\n\nSame thing on the daily chart. Above top Bollinger Band. Stretched far above the 200-day moving average. Slumping RSI/MACD/Histogram.\n\nMany downside dangers on both major timeframes but if one gets fixated on one earnings report, they’ll lose sight of that. Many danger/warning signs for KO. Forward P/E of almost 26, expensive.",
+      "text": "It\u2019s already backing off some.\n\nHad gone above the weekly chart\u2019s upper Bollinger Band while being stretched far above the 200-week moving average with slumping RSI/MACD/Histogram.\n\nSame thing on the daily chart. Above top Bollinger Band. Stretched far above the 200-day moving average. Slumping RSI/MACD/Histogram.\n\nMany downside dangers on both major timeframes but if one gets fixated on one earnings report, they\u2019ll lose sight of that. Many danger/warning signs for KO. Forward P/E of almost 26, expensive.",
       "isActionable": false,
       "source": "options-neg-97",
       "vector": [
@@ -125785,7 +125785,7 @@
       ]
     },
     {
-      "text": "The market determines when something breaks lower. We don’t know what the market does between now and then, for sure.\n\nWhat do we know? We know its grossly overvalued, fundamentally, with a Forward P/E of 32.\n\nWe know its technically stretched on its weekly chart with a slumping Histogram. \n\nOn the daily chart, we know it’s likely near a major sell signal from its MACD/Histogram.\n\nAnd we know it went outside of the top Bollinger Band by the red boxed amount, while stretched a mile above its 200-week moving average. At the same time, we know that it’s RSI is slumping and overbought.\n\nSo, the conditions for a huge sell-off are there. But only the market determines when that happens…what day that happens. No man can know.\n\nIt’s why we can know our statistical edges/probabilities, but we cannot predict (no one can). Anyone can learn/do the former. No one can do the latter.",
+      "text": "The market determines when something breaks lower. We don\u2019t know what the market does between now and then, for sure.\n\nWhat do we know? We know its grossly overvalued, fundamentally, with a Forward P/E of 32.\n\nWe know its technically stretched on its weekly chart with a slumping Histogram. \n\nOn the daily chart, we know it\u2019s likely near a major sell signal from its MACD/Histogram.\n\nAnd we know it went outside of the top Bollinger Band by the red boxed amount, while stretched a mile above its 200-week moving average. At the same time, we know that it\u2019s RSI is slumping and overbought.\n\nSo, the conditions for a huge sell-off are there. But only the market determines when that happens\u2026what day that happens. No man can know.\n\nIt\u2019s why we can know our statistical edges/probabilities, but we cannot predict (no one can). Anyone can learn/do the former. No one can do the latter.",
       "isActionable": false,
       "source": "options-neg-98",
       "vector": [
@@ -126816,7 +126816,7 @@
       ]
     },
     {
-      "text": "Forward P/E of 25, expensive. Stretched a mile above its 200-week moving average and is likely ultimately unsustainable.\n\nAnd recently, at a top Bollinger Band on the weekly chart, while stretched a mile above the 200-week moving average.\n\nTechnical damage on the daily chart…slumping indicators, showing likely coming weakness in the stock.",
+      "text": "Forward P/E of 25, expensive. Stretched a mile above its 200-week moving average and is likely ultimately unsustainable.\n\nAnd recently, at a top Bollinger Band on the weekly chart, while stretched a mile above the 200-week moving average.\n\nTechnical damage on the daily chart\u2026slumping indicators, showing likely coming weakness in the stock.",
       "isActionable": false,
       "source": "options-neg-99",
       "vector": [
@@ -127847,7 +127847,7 @@
       ]
     },
     {
-      "text": "With such little time til expiry, it becomes a coin toss as to if it will increase in value for you more from here or not.\n\nWhile on one hand, it’s breaking down and heading lower, if it doesn’t drop quick enough, then the swift time decay (at this point) would continue to erode the price of the contract. One can’t know if it drops quick or not between now and its near-term expiry.\n\nTherefore, you know what you have today. If you want to ensure you preserve that, yes, you could sell it to close.",
+      "text": "With such little time til expiry, it becomes a coin toss as to if it will increase in value for you more from here or not.\n\nWhile on one hand, it\u2019s breaking down and heading lower, if it doesn\u2019t drop quick enough, then the swift time decay (at this point) would continue to erode the price of the contract. One can\u2019t know if it drops quick or not between now and its near-term expiry.\n\nTherefore, you know what you have today. If you want to ensure you preserve that, yes, you could sell it to close.",
       "isActionable": false,
       "source": "options-neg-100",
       "vector": [
@@ -128878,7 +128878,7 @@
       ]
     },
     {
-      "text": "We buy puts after rallies higher. It’s been dropping lately. 2-3 days ago would have been a much better time to be buying/entering. Now, you’d want to wait for a notable rally higher first before any entry.\n\n---",
+      "text": "We buy puts after rallies higher. It\u2019s been dropping lately. 2-3 days ago would have been a much better time to be buying/entering. Now, you\u2019d want to wait for a notable rally higher first before any entry.\n\n---",
       "isActionable": false,
       "source": "options-neg-101",
       "vector": [
@@ -129906,6 +129906,1037 @@
         -0.0023365020751953125,
         -0.0229034423828125,
         -0.041259765625
+      ]
+    },
+    {
+      "text": "No, see my post above: March $75 strike put 2027 expiry",
+      "isActionable": false,
+      "source": "options-neg-102",
+      "vector": [
+        -0.00464630126953125,
+        0.01268768310546875,
+        -0.034942626953125,
+        0.045928955078125,
+        -0.01457977294921875,
+        -0.01849365234375,
+        0.033172607421875,
+        0.01203155517578125,
+        0.0440673828125,
+        0.05865478515625,
+        0.046112060546875,
+        0.049835205078125,
+        0.0013036727905273438,
+        -0.0095062255859375,
+        -0.0002028942108154297,
+        0.008544921875,
+        -0.0016622543334960938,
+        -0.0130462646484375,
+        -0.01430511474609375,
+        0.0230255126953125,
+        -0.024932861328125,
+        0.0120849609375,
+        -0.02923583984375,
+        -0.01763916015625,
+        -0.031280517578125,
+        0.030670166015625,
+        -0.0027523040771484375,
+        -0.0299835205078125,
+        0.0513916015625,
+        0.0576171875,
+        -0.01171112060546875,
+        -0.025177001953125,
+        0.00826263427734375,
+        -0.0171356201171875,
+        -0.034027099609375,
+        -0.0274200439453125,
+        0.0301666259765625,
+        -0.00714874267578125,
+        -0.048736572265625,
+        -0.048614501953125,
+        -0.0174713134765625,
+        -0.0018739700317382812,
+        0.0416259765625,
+        -0.0064544677734375,
+        -0.017120361328125,
+        -0.058380126953125,
+        -0.05035400390625,
+        -0.0238189697265625,
+        0.025054931640625,
+        -0.032196044921875,
+        0.0024509429931640625,
+        0.0242156982421875,
+        0.004329681396484375,
+        -0.0234527587890625,
+        0.0009622573852539062,
+        0.045013427734375,
+        -0.0269317626953125,
+        -0.04010009765625,
+        -0.0222930908203125,
+        0.034912109375,
+        -0.0108642578125,
+        -0.034881591796875,
+        0.01157379150390625,
+        -0.0245208740234375,
+        -0.0038127899169921875,
+        -0.0204010009765625,
+        0.01334381103515625,
+        0.016021728515625,
+        0.0217132568359375,
+        -0.04498291015625,
+        0.022247314453125,
+        0.0240936279296875,
+        0.0012464523315429688,
+        0.0014238357543945312,
+        0.00910186767578125,
+        -0.03515625,
+        0.01107025146484375,
+        0.0157470703125,
+        -0.0227508544921875,
+        -0.01922607421875,
+        0.006069183349609375,
+        0.014129638671875,
+        -0.0198822021484375,
+        -0.01654052734375,
+        -0.012054443359375,
+        0.01413726806640625,
+        0.000537872314453125,
+        -0.003398895263671875,
+        0.01904296875,
+        0.01482391357421875,
+        0.01812744140625,
+        0.0283355712890625,
+        0.0270843505859375,
+        0.0029468536376953125,
+        0.026214599609375,
+        0.044952392578125,
+        0.00505828857421875,
+        0.043853759765625,
+        -0.0112152099609375,
+        -0.00848388671875,
+        0.04010009765625,
+        -0.02288818359375,
+        -0.051910400390625,
+        0.03167724609375,
+        -0.0232391357421875,
+        -0.005672454833984375,
+        0.0159454345703125,
+        -0.035064697265625,
+        -0.03399658203125,
+        -0.0227203369140625,
+        0.008087158203125,
+        0.0158843994140625,
+        0.0479736328125,
+        0.03082275390625,
+        -0.028961181640625,
+        0.046905517578125,
+        -0.0289306640625,
+        0.0184783935546875,
+        -0.03717041015625,
+        -0.0191497802734375,
+        0.0278167724609375,
+        0.03192138671875,
+        0.004261016845703125,
+        0.024078369140625,
+        0.0295562744140625,
+        -0.04681396484375,
+        -0.006908416748046875,
+        0.0259246826171875,
+        -0.0268096923828125,
+        0.0025634765625,
+        0.004062652587890625,
+        -0.043853759765625,
+        -0.00011491775512695312,
+        0.036285400390625,
+        0.036407470703125,
+        0.040802001953125,
+        -0.0018453598022460938,
+        -0.0030727386474609375,
+        0.0204010009765625,
+        -0.036163330078125,
+        0.00960540771484375,
+        0.0098114013671875,
+        0.0110321044921875,
+        0.0579833984375,
+        -0.00965118408203125,
+        0.025177001953125,
+        0.0400390625,
+        -0.015380859375,
+        -0.0140380859375,
+        0.002605438232421875,
+        -0.045989990234375,
+        0.0210113525390625,
+        -0.01177215576171875,
+        0.0275421142578125,
+        -0.033294677734375,
+        -0.01026153564453125,
+        0.041534423828125,
+        -0.0005702972412109375,
+        -0.0037384033203125,
+        0.03607177734375,
+        0.00787353515625,
+        -0.00931549072265625,
+        -0.0149383544921875,
+        0.017425537109375,
+        -0.012420654296875,
+        0.03399658203125,
+        0.01107025146484375,
+        -0.0016622543334960938,
+        -0.0305633544921875,
+        -0.027008056640625,
+        0.025726318359375,
+        -0.00679779052734375,
+        -0.050140380859375,
+        -0.0205841064453125,
+        0.0262451171875,
+        0.0606689453125,
+        0.05548095703125,
+        -0.019317626953125,
+        0.06256103515625,
+        0.0616455078125,
+        -0.071044921875,
+        0.01568603515625,
+        -0.007419586181640625,
+        0.0234527587890625,
+        0.0310516357421875,
+        0.0098114013671875,
+        0.002685546875,
+        0.035797119140625,
+        -0.00433349609375,
+        0.002044677734375,
+        -0.002193450927734375,
+        -0.0032482147216796875,
+        0.006938934326171875,
+        0.040771484375,
+        0.0151824951171875,
+        -0.01361083984375,
+        -0.029052734375,
+        0.0179443359375,
+        0.029754638671875,
+        0.004871368408203125,
+        -0.028564453125,
+        0.0110626220703125,
+        -0.027069091796875,
+        0.0836181640625,
+        -0.02423095703125,
+        -0.005947113037109375,
+        0.042388916015625,
+        0.04632568359375,
+        -0.0272369384765625,
+        0.0233306884765625,
+        -0.0028057098388671875,
+        -0.01202392578125,
+        -0.0118408203125,
+        -0.056365966796875,
+        0.004154205322265625,
+        0.0281219482421875,
+        -0.01531219482421875,
+        0.05303955078125,
+        -0.00766754150390625,
+        0.004787445068359375,
+        0.0265655517578125,
+        0.00838470458984375,
+        0.00374603271484375,
+        0.036285400390625,
+        0.02008056640625,
+        -0.026641845703125,
+        0.05279541015625,
+        0.015838623046875,
+        0.0045928955078125,
+        -0.02679443359375,
+        -0.032440185546875,
+        0.0102996826171875,
+        0.011566162109375,
+        0.0360107421875,
+        0.026641845703125,
+        0.0014905929565429688,
+        0.029388427734375,
+        0.05316162109375,
+        0.01129913330078125,
+        0.041748046875,
+        0.028656005859375,
+        -0.019195556640625,
+        0.02227783203125,
+        0.0220184326171875,
+        0.0004220008850097656,
+        0.0037555694580078125,
+        0.00667572021484375,
+        -0.0299072265625,
+        0.026458740234375,
+        0.041717529296875,
+        -0.04046630859375,
+        0.0246124267578125,
+        0.03240966796875,
+        0.04644775390625,
+        -0.00484466552734375,
+        -0.012176513671875,
+        0.0241546630859375,
+        0.043212890625,
+        -0.09136962890625,
+        0.00403594970703125,
+        0.0027065277099609375,
+        0.0305023193359375,
+        -0.038726806640625,
+        -0.027374267578125,
+        0.039398193359375,
+        0.020751953125,
+        0.0221099853515625,
+        -0.006313323974609375,
+        -0.0248870849609375,
+        -0.0300140380859375,
+        0.00806427001953125,
+        -0.0292205810546875,
+        -0.03692626953125,
+        0.027618408203125,
+        -0.0413818359375,
+        -0.00405120849609375,
+        0.0286102294921875,
+        -0.06427001953125,
+        0.0171966552734375,
+        -0.046844482421875,
+        -0.01190948486328125,
+        -0.01502227783203125,
+        -0.0178985595703125,
+        0.045318603515625,
+        0.0009870529174804688,
+        0.055145263671875,
+        -0.013702392578125,
+        0.005382537841796875,
+        -0.0017900466918945312,
+        0.01221466064453125,
+        -0.01227569580078125,
+        -0.02374267578125,
+        0.0255279541015625,
+        0.016265869140625,
+        -0.006290435791015625,
+        -0.02825927734375,
+        -0.06256103515625,
+        0.0357666015625,
+        -0.02874755859375,
+        -0.0266876220703125,
+        -0.044921875,
+        0.00604248046875,
+        0.01025390625,
+        -0.03302001953125,
+        -0.0118560791015625,
+        0.01546478271484375,
+        -0.0164947509765625,
+        -0.034027099609375,
+        0.03912353515625,
+        0.0148773193359375,
+        -0.06561279296875,
+        0.0174560546875,
+        0.017364501953125,
+        0.016357421875,
+        -0.04437255859375,
+        0.02056884765625,
+        0.028411865234375,
+        0.004512786865234375,
+        0.0028743743896484375,
+        -0.051055908203125,
+        -0.03662109375,
+        0.010955810546875,
+        0.036163330078125,
+        -0.027191162109375,
+        0.00145721435546875,
+        0.01203155517578125,
+        0.0189208984375,
+        -0.046905517578125,
+        -0.006031036376953125,
+        -0.05963134765625,
+        0.0110321044921875,
+        -0.0225982666015625,
+        -0.044097900390625,
+        0.041595458984375,
+        -0.0003578662872314453,
+        0.0184173583984375,
+        -0.01288604736328125,
+        -0.034759521484375,
+        -0.0054473876953125,
+        0.01311492919921875,
+        0.062225341796875,
+        -0.0094146728515625,
+        0.026031494140625,
+        0.0245513916015625,
+        0.02142333984375,
+        0.0136566162109375,
+        0.03704833984375,
+        -0.03448486328125,
+        -0.01360321044921875,
+        0.03253173828125,
+        -0.032470703125,
+        -0.0190277099609375,
+        0.021759033203125,
+        0.0185394287109375,
+        0.00998687744140625,
+        0.0709228515625,
+        -0.0155792236328125,
+        0.006298065185546875,
+        0.0280914306640625,
+        0.0122528076171875,
+        0.029754638671875,
+        0.01004791259765625,
+        0.00727081298828125,
+        -0.0305633544921875,
+        -0.012451171875,
+        -0.048736572265625,
+        -0.007061004638671875,
+        0.019561767578125,
+        0.07354736328125,
+        -0.0192413330078125,
+        0.0267791748046875,
+        0.006561279296875,
+        -0.0031070709228515625,
+        -0.01503753662109375,
+        -0.036712646484375,
+        0.002681732177734375,
+        0.0164642333984375,
+        0.009735107421875,
+        0.0244903564453125,
+        -0.045379638671875,
+        0.01088714599609375,
+        -0.004924774169921875,
+        0.043243408203125,
+        0.06964111328125,
+        -0.00010716915130615234,
+        0.034698486328125,
+        -0.0491943359375,
+        -0.053863525390625,
+        -0.0229034423828125,
+        -0.0016393661499023438,
+        -0.03466796875,
+        -0.06488037109375,
+        0.01140594482421875,
+        0.007328033447265625,
+        -0.0210418701171875,
+        -0.06146240234375,
+        0.022064208984375,
+        0.0007944107055664062,
+        0.014068603515625,
+        0.0024394989013671875,
+        0.034088134765625,
+        -0.039642333984375,
+        0.0225067138671875,
+        -0.00220489501953125,
+        0.0088043212890625,
+        0.01548004150390625,
+        -0.06634521484375,
+        0.0260772705078125,
+        -0.0005102157592773438,
+        -0.01422882080078125,
+        -0.0135040283203125,
+        0.04290771484375,
+        -0.042205810546875,
+        0.01611328125,
+        -0.02459716796875,
+        -0.0278778076171875,
+        -0.00952911376953125,
+        0.0254058837890625,
+        0.0105743408203125,
+        0.011444091796875,
+        -0.003269195556640625,
+        -0.048126220703125,
+        -0.035858154296875,
+        0.01065826416015625,
+        0.007411956787109375,
+        -0.06793212890625,
+        0.0130615234375,
+        -0.05108642578125,
+        0.00928497314453125,
+        0.031982421875,
+        -0.01000213623046875,
+        -0.0185394287109375,
+        0.003429412841796875,
+        -0.03668212890625,
+        -0.068359375,
+        0.03607177734375,
+        0.0660400390625,
+        -0.0250244140625,
+        -0.0032825469970703125,
+        -0.0281829833984375,
+        0.040802001953125,
+        0.06781005859375,
+        0.041046142578125,
+        -0.040771484375,
+        0.00484466552734375,
+        0.0008130073547363281,
+        -0.011383056640625,
+        0.0106353759765625,
+        -0.021484375,
+        0.00963592529296875,
+        0.00213623046875,
+        -0.06878662109375,
+        0.020599365234375,
+        0.0108795166015625,
+        -0.05157470703125,
+        0.01285552978515625,
+        0.011505126953125,
+        0.00876617431640625,
+        0.03717041015625,
+        -0.026153564453125,
+        0.0196533203125,
+        -0.01641845703125,
+        -9.751319885253906e-05,
+        -0.001804351806640625,
+        -0.0206756591796875,
+        0.00936126708984375,
+        -0.01444244384765625,
+        5.6624412536621094e-05,
+        0.0203704833984375,
+        0.00870513916015625,
+        -0.01148223876953125,
+        0.027984619140625,
+        0.047210693359375,
+        -0.01255035400390625,
+        0.01506805419921875,
+        0.0008039474487304688,
+        0.0076751708984375,
+        -0.0250701904296875,
+        -0.01340484619140625,
+        0.033203125,
+        -0.035675048828125,
+        0.052337646484375,
+        -0.007495880126953125,
+        -0.015380859375,
+        -0.02459716796875,
+        -0.071044921875,
+        0.002185821533203125,
+        -0.02008056640625,
+        -0.02923583984375,
+        0.0273590087890625,
+        0.03765869140625,
+        -0.0211944580078125,
+        0.0196075439453125,
+        -0.032958984375,
+        -0.040802001953125,
+        0.0242767333984375,
+        -0.035614013671875,
+        -0.02569580078125,
+        -0.0249786376953125,
+        0.0299835205078125,
+        -0.025177001953125,
+        -0.01079559326171875,
+        -0.014984130859375,
+        0.052093505859375,
+        -0.033782958984375,
+        -0.025054931640625,
+        -0.05133056640625,
+        -0.0513916015625,
+        -0.019805908203125,
+        -0.0100860595703125,
+        -0.0180511474609375,
+        0.0166778564453125,
+        0.006069183349609375,
+        0.027130126953125,
+        0.0247344970703125,
+        -0.003276824951171875,
+        0.01239013671875,
+        0.006793975830078125,
+        -0.00551605224609375,
+        0.0604248046875,
+        -0.003841400146484375,
+        -0.032623291015625,
+        -0.045562744140625,
+        -0.001895904541015625,
+        -0.0145263671875,
+        0.0438232421875,
+        -0.0140228271484375,
+        -0.0162200927734375,
+        -0.034088134765625,
+        -0.06512451171875,
+        -0.0222320556640625,
+        -0.02728271484375,
+        -0.01003265380859375,
+        -0.06378173828125,
+        -0.043487548828125,
+        -0.021087646484375,
+        0.05963134765625,
+        0.0178985595703125,
+        -0.01300811767578125,
+        0.03997802734375,
+        -0.0250091552734375,
+        0.03662109375,
+        -0.062164306640625,
+        0.01232147216796875,
+        -0.05224609375,
+        -0.037689208984375,
+        -0.03619384765625,
+        0.04669189453125,
+        0.0071868896484375,
+        0.00922393798828125,
+        -0.01251220703125,
+        -0.0277557373046875,
+        -0.005100250244140625,
+        0.01476287841796875,
+        -0.0256195068359375,
+        -0.035888671875,
+        0.017608642578125,
+        0.02459716796875,
+        0.00666046142578125,
+        -0.044097900390625,
+        -0.0628662109375,
+        0.09149169921875,
+        -0.0289459228515625,
+        0.006664276123046875,
+        -0.019683837890625,
+        -0.01531219482421875,
+        -0.045867919921875,
+        -0.0215301513671875,
+        -0.0156707763671875,
+        0.0098114013671875,
+        -0.005397796630859375,
+        -0.02227783203125,
+        0.053497314453125,
+        0.05694580078125,
+        0.05438232421875,
+        -0.02459716796875,
+        -0.00592041015625,
+        -0.037841796875,
+        -0.06982421875,
+        0.0242767333984375,
+        -0.0330810546875,
+        0.0258026123046875,
+        -0.043792724609375,
+        -0.0232696533203125,
+        0.005706787109375,
+        -0.01947021484375,
+        0.0400390625,
+        0.08856201171875,
+        -0.037384033203125,
+        0.01111602783203125,
+        -0.0261383056640625,
+        0.0215911865234375,
+        0.0121002197265625,
+        0.0045013427734375,
+        0.04046630859375,
+        0.01165771484375,
+        0.0323486328125,
+        -0.0166778564453125,
+        -0.04241943359375,
+        -0.0219879150390625,
+        -0.026824951171875,
+        -0.016204833984375,
+        0.042877197265625,
+        -0.0178680419921875,
+        0.0278167724609375,
+        -0.050079345703125,
+        -0.079833984375,
+        -0.044281005859375,
+        0.0662841796875,
+        0.03558349609375,
+        0.033782958984375,
+        0.0587158203125,
+        -0.00836181640625,
+        -0.01436614990234375,
+        0.0208587646484375,
+        -0.023773193359375,
+        0.0262451171875,
+        -0.0187225341796875,
+        0.06134033203125,
+        0.0159149169921875,
+        -0.0295562744140625,
+        0.046630859375,
+        0.036773681640625,
+        0.0006155967712402344,
+        -0.060791015625,
+        0.004253387451171875,
+        -0.0201873779296875,
+        -0.00812530517578125,
+        -0.0174102783203125,
+        0.0222930908203125,
+        -0.054229736328125,
+        -0.049407958984375,
+        0.034210205078125,
+        0.01474761962890625,
+        -0.0128326416015625,
+        0.021331787109375,
+        -0.0249786376953125,
+        0.032318115234375,
+        -0.01727294921875,
+        -0.0182952880859375,
+        0.02056884765625,
+        -0.037933349609375,
+        0.0272216796875,
+        -0.04052734375,
+        -0.03814697265625,
+        0.0235595703125,
+        -0.04315185546875,
+        0.040130615234375,
+        0.048797607421875,
+        0.027313232421875,
+        0.021759033203125,
+        -0.01288604736328125,
+        0.052642822265625,
+        -0.037109375,
+        -0.022216796875,
+        0.004955291748046875,
+        -0.0284423828125,
+        -0.036712646484375,
+        -0.02484130859375,
+        -0.02178955078125,
+        0.008453369140625,
+        0.045928955078125,
+        -0.03582763671875,
+        0.00946044921875,
+        0.02288818359375,
+        0.00873565673828125,
+        -0.0232086181640625,
+        -0.04595947265625,
+        -0.019195556640625,
+        -0.028228759765625,
+        -0.0014085769653320312,
+        -0.0043487548828125,
+        0.0064697265625,
+        -0.0484619140625,
+        0.0655517578125,
+        -0.01343536376953125,
+        -0.0278778076171875,
+        -0.025421142578125,
+        0.0328369140625,
+        0.01052093505859375,
+        -0.04058837890625,
+        0.003948211669921875,
+        -0.01325225830078125,
+        -0.0142822265625,
+        -0.05352783203125,
+        -0.062255859375,
+        -0.0101776123046875,
+        0.0225067138671875,
+        -0.01110076904296875,
+        0.0027008056640625,
+        0.0254058837890625,
+        -0.00927734375,
+        0.00047397613525390625,
+        0.0323486328125,
+        -0.02874755859375,
+        -0.010498046875,
+        -0.033355712890625,
+        0.0019311904907226562,
+        0.039581298828125,
+        0.0243682861328125,
+        0.02325439453125,
+        0.0350341796875,
+        -0.0190582275390625,
+        0.05560302734375,
+        -0.0029449462890625,
+        0.0097198486328125,
+        -0.036865234375,
+        0.0197906494140625,
+        0.0048828125,
+        0.0041656494140625,
+        -0.0413818359375,
+        -0.0469970703125,
+        0.00464630126953125,
+        -0.052398681640625,
+        0.01480865478515625,
+        -0.0211181640625,
+        0.01203155517578125,
+        0.007190704345703125,
+        -0.058319091796875,
+        -0.052337646484375,
+        0.01441192626953125,
+        -0.0018138885498046875,
+        0.04461669921875,
+        0.0023288726806640625,
+        0.01378631591796875,
+        0.0240325927734375,
+        0.0236968994140625,
+        -0.005031585693359375,
+        -0.0430908203125,
+        0.041290283203125,
+        -0.0299072265625,
+        0.07135009765625,
+        0.024078369140625,
+        -0.04168701171875,
+        0.046051025390625,
+        -0.0007505416870117188,
+        -0.020416259765625,
+        -0.034088134765625,
+        0.00023293495178222656,
+        -0.0401611328125,
+        -0.00400543212890625,
+        0.0301361083984375,
+        0.0146636962890625,
+        0.035003662109375,
+        0.0014333724975585938,
+        -0.02508544921875,
+        -0.01244354248046875,
+        -0.0628662109375,
+        -0.043060302734375,
+        0.038665771484375,
+        -0.027496337890625,
+        -0.04034423828125,
+        -0.02947998046875,
+        -0.0310821533203125,
+        -0.005641937255859375,
+        -0.0074615478515625,
+        -0.03326416015625,
+        0.0284576416015625,
+        0.030303955078125,
+        0.0186767578125,
+        0.035064697265625,
+        -0.037261962890625,
+        0.0202484130859375,
+        0.0112457275390625,
+        0.0574951171875,
+        -0.04345703125,
+        -0.0723876953125,
+        0.0007719993591308594,
+        0.019744873046875,
+        -0.00632476806640625,
+        0.0098876953125,
+        0.0113677978515625,
+        -0.0006284713745117188,
+        0.004833221435546875,
+        0.0218048095703125,
+        0.03753662109375,
+        0.0169219970703125,
+        -0.04949951171875,
+        -0.0001957416534423828,
+        0.027313232421875,
+        0.0251312255859375,
+        -0.037017822265625,
+        0.024078369140625,
+        -0.0171051025390625,
+        -0.0166778564453125,
+        -0.04974365234375,
+        0.012939453125,
+        0.037261962890625,
+        -0.0300750732421875,
+        0.052398681640625,
+        0.0408935546875,
+        0.00872802734375,
+        -0.026214599609375,
+        -0.019744873046875,
+        0.0012636184692382812,
+        0.053863525390625,
+        -0.004718780517578125,
+        0.04852294921875,
+        0.0182342529296875,
+        -0.00676727294921875,
+        0.0172576904296875,
+        -0.026336669921875,
+        -0.0027408599853515625,
+        0.0189971923828125,
+        -0.02716064453125,
+        -0.0198516845703125,
+        0.0001519918441772461,
+        -0.024627685546875,
+        0.044342041015625,
+        -0.03472900390625,
+        -0.03521728515625,
+        -0.025787353515625,
+        -0.028564453125,
+        0.00635528564453125,
+        -0.034027099609375,
+        -0.0176849365234375,
+        0.007843017578125,
+        0.004741668701171875,
+        0.017974853515625,
+        -0.033843994140625,
+        -0.014495849609375,
+        0.01122283935546875,
+        0.0273895263671875,
+        0.016082763671875,
+        0.032470703125,
+        0.0304718017578125,
+        -0.0038623809814453125,
+        -0.001953125,
+        0.0239105224609375,
+        0.035919189453125,
+        0.0574951171875,
+        -0.0533447265625,
+        0.0288543701171875,
+        0.0169677734375,
+        2.8014183044433594e-06,
+        -0.035675048828125,
+        -0.0105133056640625,
+        -0.025482177734375,
+        0.028350830078125,
+        -0.0406494140625,
+        0.009674072265625,
+        -0.01812744140625,
+        -0.043426513671875,
+        0.00640106201171875,
+        -0.036285400390625,
+        0.051910400390625,
+        -0.040863037109375,
+        -0.01380157470703125,
+        0.056732177734375,
+        -0.05511474609375,
+        -0.0024509429931640625,
+        0.033477783203125,
+        -0.03240966796875,
+        0.028717041015625,
+        -0.01824951171875,
+        0.060546875,
+        -0.031585693359375,
+        0.00577545166015625,
+        0.063232421875,
+        0.0020294189453125,
+        -0.00794219970703125,
+        0.005390167236328125,
+        -0.03228759765625,
+        0.004634857177734375,
+        0.0250701904296875,
+        -0.046112060546875,
+        -0.026336669921875,
+        -0.0008978843688964844,
+        -0.01171112060546875,
+        -0.01336669921875,
+        0.01129913330078125,
+        -0.0240325927734375,
+        -0.037322998046875,
+        0.041717529296875,
+        0.004833221435546875,
+        -0.0287628173828125,
+        0.002887725830078125,
+        -0.01032257080078125,
+        0.044219970703125,
+        -0.003566741943359375,
+        0.001861572265625,
+        0.0174102783203125,
+        -0.0063018798828125,
+        0.0003116130828857422,
+        -0.0340576171875,
+        -0.031463623046875,
+        0.00020444393157958984,
+        -0.05120849609375,
+        -0.031524658203125,
+        -0.002399444580078125,
+        0.0063018798828125,
+        0.004505157470703125,
+        -0.053009033203125,
+        -0.044769287109375,
+        0.02740478515625,
+        0.032867431640625,
+        0.0276031494140625,
+        0.019287109375,
+        0.014984130859375,
+        0.03802490234375,
+        0.03228759765625,
+        0.032867431640625,
+        0.025238037109375,
+        0.0064544677734375,
+        0.023406982421875,
+        -0.0174713134765625,
+        0.035675048828125,
+        -0.004459381103515625,
+        0.0232086181640625,
+        0.041107177734375,
+        0.0032196044921875,
+        -0.023834228515625,
+        0.0233306884765625,
+        -0.08135986328125,
+        -0.038116455078125,
+        0.03466796875,
+        0.039306640625,
+        0.01462554931640625,
+        -0.041168212890625,
+        -0.056793212890625,
+        -0.0250396728515625,
+        -0.036590576171875,
+        -0.03509521484375,
+        -0.04620361328125,
+        0.039398193359375,
+        -0.0023708343505859375,
+        -0.01354217529296875,
+        0.0199432373046875,
+        -0.0765380859375,
+        0.21533203125,
+        0.03594970703125,
+        0.047271728515625,
+        0.0015382766723632812,
+        -0.004150390625,
+        -0.01552581787109375,
+        0.0140533447265625,
+        0.0184326171875,
+        -0.0291290283203125,
+        -0.0215606689453125,
+        0.0211029052734375,
+        0.007061004638671875,
+        0.0303955078125,
+        0.0269622802734375,
+        0.0273284912109375,
+        0.03118896484375,
+        -0.03240966796875,
+        0.0159149169921875,
+        0.0205841064453125,
+        -0.017608642578125,
+        -0.031982421875,
+        -0.0010519027709960938,
+        0.0022716522216796875,
+        0.071533203125,
+        0.02142333984375,
+        0.0249481201171875,
+        0.0011415481567382812,
+        -0.047698974609375,
+        -0.017364501953125,
+        0.0036869049072265625,
+        0.063232421875,
+        -0.031890869140625,
+        0.033935546875,
+        -0.0068511962890625,
+        -0.049041748046875,
+        0.07391357421875,
+        0.02435302734375,
+        -0.039703369140625,
+        0.02410888671875,
+        -0.056549072265625,
+        -0.0304718017578125,
+        0.01030731201171875,
+        -0.00748443603515625,
+        0.01404571533203125,
+        0.0275726318359375,
+        0.01141357421875,
+        -0.007518768310546875,
+        0.052947998046875,
+        -0.02166748046875,
+        -0.057891845703125,
+        0.020294189453125,
+        0.0066375732421875,
+        0.04736328125,
+        0.0089874267578125,
+        -0.07305908203125,
+        -0.005878448486328125,
+        -0.004177093505859375,
+        -0.02606201171875,
+        0.047821044921875,
+        0.0008611679077148438,
+        0.037109375,
+        0.035552978515625,
+        -0.01104736328125,
+        -0.0016155242919921875,
+        -0.03662109375,
+        0.022369384765625,
+        0.00494384765625,
+        0.00038814544677734375,
+        -0.0193023681640625,
+        -0.0005445480346679688,
+        -0.0015087127685546875,
+        0.0140533447265625,
+        0.019195556640625,
+        -0.008880615234375,
+        -0.02093505859375,
+        0.02001953125,
+        -0.00897979736328125,
+        0.033538818359375,
+        -0.0029125213623046875,
+        -0.0021533966064453125,
+        -0.00021266937255859375,
+        -0.01232147216796875,
+        -0.021209716796875,
+        -0.0161590576171875,
+        0.0390625,
+        0.0280609130859375,
+        -0.022247314453125,
+        -0.038970947265625,
+        -0.0185394287109375,
+        0.047943115234375,
+        0.04443359375,
+        0.0225067138671875,
+        -0.0076751708984375,
+        -0.006618499755859375,
+        -0.0251312255859375
       ]
     }
   ]
