@@ -159,17 +159,22 @@ export function advanceDaily(daily: DailyStats | undefined, todayET: string, run
   };
 }
 
-// Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute list starts at offset i.
-// wrangler.toml MUST list the three crons in this exact order, with each starting one minute later:
-//   members → "0,5,10,15,..."   (offset 0)
-//   stock   → "1,6,11,16,..."   (offset 1)
-//   options → "2,7,12,17,..."   (offset 2)
+// Channel-to-cron mapping: CHANNELS[i] corresponds to the cron whose minute field starts at
+// offset i. wrangler.toml MUST list the three crons in this exact order, each starting one minute
+// later than the last:
+//   members → "0-59/5 ..."   (offset 0)
+//   stock   → "1-59/5 ..."   (offset 1)
+//   options → "2-59/5 ..."   (offset 2)
 // Changing either this array OR the wrangler.toml cron order silently breaks the channel mapping.
 // ponytail: brittle by design — simplest option available; revisit if a 4th channel is added.
 const CHANNELS: Channel[] = [ChannelNames.members, ChannelNames.stock, ChannelNames.options];
 
+// parseInt stops at the first non-digit character, so it reads only the minute field's leading
+// integer regardless of what follows it -- "0-59/5" and the older enumerated "0,5,10,15,..." both
+// parse to 0. That's the actual, load-bearing mechanism this depends on: the minute field's
+// leading digit is the channel offset, in whatever cron syntax wrangler.toml uses.
 export function channelFromCron(cron: string): Channel {
-  const offset = parseInt(cron.split(' ')[0].split(',')[0], 10);
+  const offset = parseInt(cron.split(' ')[0], 10);
   return CHANNELS[offset] ?? ChannelNames.members;
 }
 

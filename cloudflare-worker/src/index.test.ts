@@ -8,6 +8,13 @@ const FK = FeedKeys;
 
 const ACTIONABLE_AUTHORS = ['sean hyman'];
 
+// Mirrors wrangler.toml's [triggers].crons -- kept as one shared copy rather than redeclared in
+// each describe block that needs one, since all of them must stay in sync with the same three
+// real cron strings channelFromCron actually parses.
+const MEMBERS_CRON = '0-59/5 * * * *';
+const STOCK_CRON = '1-59/5 * * * *';
+const OPTIONS_CRON = '2-59/5 * * * *';
+
 function item(feedKey: FeedKey, overrides: { author?: string; title?: string; description?: string } = {}): FilterItem {
   return {
     feedKey,
@@ -200,9 +207,9 @@ describe('CHANNEL_FEEDS consistency with @li/core FEEDKEY_TO_CHANNEL', () => {
 
 describe('channelFromCron', () => {
   it('maps all three cron expressions to the correct channels', () => {
-    expect(channelFromCron('0,5,10,15,20,25,30,35,40,45,50,55 * * * *')).toBe('members');
-    expect(channelFromCron('1,6,11,16,21,26,31,36,41,46,51,56 * * * *')).toBe('stock');
-    expect(channelFromCron('2,7,12,17,22,27,32,37,42,47,52,57 * * * *')).toBe('options');
+    expect(channelFromCron(MEMBERS_CRON)).toBe('members');
+    expect(channelFromCron(STOCK_CRON)).toBe('stock');
+    expect(channelFromCron(OPTIONS_CRON)).toBe('options');
   });
 
   it('falls back to members for unknown cron', () => {
@@ -693,7 +700,6 @@ describe('CORS', () => {
 });
 
 describe('runChannel (via scheduled) — enqueues stale registrations for revalidation (issue #86)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'; // maps to 'options', see channelFromCron tests
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
@@ -868,7 +874,6 @@ describe('queue() — token validation (issue #86)', () => {
 });
 
 describe('runChannel — registrations predating filter/authors/minLength are skipped', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
 
@@ -904,7 +909,6 @@ describe('runChannel — registrations predating filter/authors/minLength are sk
 });
 
 describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   // Realistic shape: a real pubDate on every item, like the actual feed always sends. guids are
   // listed newest-first, each one minute older than the last, matching the feed's real ordering.
   const rssWithItems = (guids: string[], descriptions?: string[]) =>
@@ -991,7 +995,6 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
 // "Bucket" = the runtime grouping in index.ts's runChannel: devices sharing an identical
 // filter|authors|minLength signature share one eligibility check and one push-send call.
 describe('runChannel — push-send failure does not abort remaining buckets (issue #42)', () => {
-  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
@@ -1049,8 +1052,6 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
 // calling the classifier functions directly, since the "classify once per poll cycle, not once per
 // bucket" property only exists at the runChannel level.
 describe('runChannel — actionable classification', () => {
-  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   // Deliberately free of every NEG_PATTERN/POS_PATTERN keyword -- classifySignal returns
   // fail-no-signal for this text. Has a real action verb ("enter") so it clears the
   // necessary-condition gate on its own, confirming it's the pattern match that's absent, not
@@ -1258,7 +1259,6 @@ const webpushSubscription = {
 // (tested separately below) does the actual encrypted send, in its own invocation with its own
 // subrequest budget — see wrangler.toml's queues.consumers max_batch_size.
 describe('runChannel — web push queuing', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
@@ -1421,7 +1421,6 @@ describe('queue() — unrecognized queue name', () => {
 });
 
 describe('runChannel — claims lastRun before slow notify work (cron double-dispatch race)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const NEW_ITEM_RSS = '<?xml version="1.0"?><rss version="2.0"><channel><item><guid>new-guid</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description></item></channel></rss>';
 
   it('writes an updated stats:<channel> before sending any push', async () => {
@@ -1466,7 +1465,6 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
 });
 
 describe('runChannel — daily counters survive a concurrent duplicate-dispatch write', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const NEW_ITEM_RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>new-guid</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
 
   it('bases the final daily write on a fresh read, not the stale pre-slow-work snapshot (issue #32 follow-up)', async () => {
@@ -1509,7 +1507,6 @@ describe('runChannel — daily counters survive a concurrent duplicate-dispatch 
 });
 
 describe('runChannel — duplicate cron dispatch is skipped (Cloudflare at-least-once delivery)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const DUPLICATE_TICK = 1751000000000;
   // Just past getIntervalMinutes()'s longest bucket (overnight, 60min default) — enough for
   // shouldPollNow() to pass regardless of which interval window the test happens to run in.
@@ -1575,7 +1572,6 @@ describe('runChannel — duplicate cron dispatch is skipped (Cloudflare at-least
 });
 
 describe('runChannel — staleness gate on push (issue #48)', () => {
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
   const itemWithPubDate = (guid: string, pubDate: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>Sean Hyman</dc:creator><description>d</description><pubDate>${pubDate}</pubDate></item></channel></rss>`;
 
@@ -1637,10 +1633,6 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
 });
 
 describe('scheduled — heartbeat dead-man\'s-switch (issue #24)', () => {
-  const MEMBERS_CRON = '0,5,10,15,20,25,30,35,40,45,50,55 * * * *';
-  const STOCK_CRON = '1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
-  const OPTIONS_CRON = '2,7,12,17,22,27,32,37,42,47,52,57 * * * *';
-
   function mockEnv(urls: { members?: string; stock?: string; options?: string } = {}) {
     return {
       STATE: { get: vi.fn().mockResolvedValue(null) },

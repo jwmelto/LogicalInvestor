@@ -18,11 +18,15 @@ directory = "../web-push"
 [ai]
 binding = "AI"
 
+# Order matters -- see channelFromCron's comment in src/index.ts. Each entry's minute-field leading
+# digit (0/1/2) is the channel offset; step-range syntax verified against Cloudflare's actual
+# parser source (saffron): a start-end/step range steps from the range's start, so "1-59/5" fires
+# at :01, :06, :11, ... :56, not snapped to absolute multiples of 5.
 [triggers]
 crons = [
-  "0,5,10,15,20,25,30,35,40,45,50,55 * * * *",
-  "1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
-  "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+  "0-59/5 * * * *",
+  "1-59/5 * * * *",
+  "2-59/5 * * * *"
 ]
 
 [observability.logs]
