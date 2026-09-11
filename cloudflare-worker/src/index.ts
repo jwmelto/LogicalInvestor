@@ -13,7 +13,7 @@ export interface Env {
   STATE: KVNamespace;
   WEBPUSH_QUEUE: Queue<WebPushQueueMessage>;
   VALIDATION_QUEUE: Queue<ValidationQueueMessage>;
-  AI: Ai; // Workers AI binding -- classifyActionableIntent's confirmation calls for NEEDS_INTENT_CONFIRMATION regex matches (see @li/core)
+  AI: Ai; // Workers AI binding
   FEED_TOKEN: string;               // secret for GET /status (Authorization: Bearer)
   POLL_INTERVAL_TRADING?: string;   // minutes between polls during trading hours, default "5"
   POLL_INTERVAL_LATEDAY?: string;   // minutes between polls during late-day window, default "15"
@@ -896,25 +896,17 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     return;
   }
 
-  // Classify every fresh item once here, shared by every bucket below — not once per bucket. A
-  // live AI call from inside the per-bucket loop would repeat the same call once per bucket,
-  // wasting latency and Workers AI neuron budget. `members` is checked first and short-circuits
-  // `actionable` entirely (regex and the intent gate both skipped) since Members Area bypasses
-  // every filter tier regardless of actionable-ness.
+  // Classify every fresh item once here, shared by every bucket below. `members` is checked first
+  // and short-circuits `actionable` entirely since Members Area bypasses every filter tier
+  // regardless of actionable-ness. Regex resolves most of what's left; only a
+  // NEEDS_INTENT_CONFIRMATION match needs a live AI call.
   //
-  // The embedding nearest-neighbor fallback (classifyActionableHybrid, @li/core) that used to run
-  // here for regex-undecided (fail-no-signal/fail-too-short) content was removed: measured
-  // leave-one-out against both calibration corpora showed it was a wash on stock (one real catch,
-  // one false alarm, net zero) and a net negative on options (one real catch, six false alarms) --
-  // and in production it produced a real false alarm on genuinely novel content with no close
-  // analog in the ~50-example stock corpus, cosine-similarity-matching on generic financial
-  // vocabulary rather than real semantic content. Regex-undecided content now resolves to
-  // not-actionable outright, same as any other definitive fail-* result. Every feed's own
-  // ActionableStrategy (actionableStrategyFor in @li/core) still supplies which regex patterns
-  // count as definitive -- Members Forum and Stock Insights share the stock-pick strategy (both
-  // stock-pick content, differing only in the star-gate Stock Insights requires; Members Forum is
-  // bundled under the 'members' channel for push-registration purposes only, unrelated to this),
-  // Options Insights has its own.
+  // Every feed's own ActionableStrategy (actionableStrategyFor in @li/core) supplies which regex
+  // patterns count as definitive. Members Forum and Stock Insights share the stock-pick strategy.
+  // Options Insights has its own. Regex-undecided content (fail-no-signal) resolves to
+  // not-actionable outright. No semantic/embedding fallback exists for it (see
+  // classifyActionableHybrid's leave-one-out suite in similarity.test.ts for why one was tried and
+  // measured out).
   const classifications = new Map<string, ItemClassification>();
   const intentCandidates: RssItem[] = [];
   for (const rssItem of freshItems) {
@@ -925,7 +917,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     }
     const text = fi.content ?? '';
     const strategy = actionableStrategyFor(fi.feedKey);
-    const signal = classifySignal(text, 0, strategy.posPatterns);
+    const signal = classifySignal(text, strategy.posPatterns);
     // NEEDS_INTENT_CONFIRMATION (@li/core) names the pass-* results deliberately tuned for recall
     // over precision -- their regex is broad by design, with precision recovered by a live
     // judgment call instead of by narrowing the pattern. Every other pass-*/fail-* result is 100%

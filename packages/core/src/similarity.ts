@@ -94,7 +94,7 @@ const MIN_CONFIDENT_SIMILARITY = 0.7;
 // hypothetical one, so both are threaded through together from the same lookup rather than chosen
 // independently at each call site.
 export function classifyActionableHybrid(text: string, vector: number[], examples: LabeledVector[], posPatterns?: [RegExp, ActionableResult][]): HybridResult {
-  const signal = classifySignal(text, 0, posPatterns);
+  const signal = classifySignal(text, posPatterns);
   if (!isSignalUndecided(signal)) {
     return { isActionable: signal.startsWith('pass'), nearestText: text, similarity: 1, viaKeyword: true };
   }

@@ -154,7 +154,6 @@ export type ActionableResult =
   | 'fail-acknowledgment'
   | 'fail-general-education'
   | 'fail-no-action-verb'
-  | 'fail-too-short'
   | 'fail-no-signal';
 
 // Negative patterns checked first — a match suppresses positive pattern evaluation.
@@ -363,28 +362,27 @@ export function matchPositivePattern(text: string, posPatterns: [RegExp, Actiona
   return null;
 }
 
-export function classifySignal(text: string, minLength: number, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): ActionableResult {
+export function classifySignal(text: string, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): ActionableResult {
   const neg = matchNegativePattern(text);
   if (neg) return neg;
   const pos = matchPositivePattern(text, posPatterns);
   if (pos) return pos;
   if (!ACTION_VERB.test(text)) return 'fail-no-action-verb';
-  return text.length < minLength ? 'fail-too-short' : 'fail-no-signal';
+  return 'fail-no-signal';
 }
 
-export function containsActionableSignal(text: string, minLength = 200, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): boolean {
-  return classifySignal(text, minLength, posPatterns).startsWith('pass');
+export function containsActionableSignal(text: string, posPatterns: [RegExp, ActionableResult][] = STOCK_POS_PATTERNS): boolean {
+  return classifySignal(text, posPatterns).startsWith('pass');
 }
 
-// True only for the two outcomes that mean "the regex/action-verb gate has no opinion either
-// way" -- every other ActionableResult (every pass-*, and every fail-* that isn't one of these
-// two) is a definitive verdict from classifySignal, not something that should fall through to a
-// live embedding call. The single place this distinction is expressed, so classifyActionableHybrid
-// and the Worker's hybrid-candidacy check can't drift from each other or from classifySignal
-// itself -- see classifyActionableHybrid's comment for why that drift is a real, not
-// hypothetical, risk.
+// True only for the one outcome that means "the regex/action-verb gate has no opinion either
+// way" -- every other ActionableResult (every pass-*, and every other fail-*) is a definitive
+// verdict from classifySignal, not something that should fall through to a live embedding call.
+// The single place this distinction is expressed, so classifyActionableHybrid and the Worker's
+// hybrid-candidacy check can't drift from each other or from classifySignal itself -- see
+// classifyActionableHybrid's comment for why that drift is a real, not hypothetical, risk.
 export function isSignalUndecided(result: ActionableResult): boolean {
-  return result === 'fail-no-signal' || result === 'fail-too-short';
+  return result === 'fail-no-signal';
 }
 
 export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
@@ -485,7 +483,7 @@ export function resolveIntentGate(intent: IntentClassification): IntentGateResul
 
 export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {
   if (!isActionableCandidate(item, actionableAuthors)) return false;
-  return containsActionableSignal(item.content ?? '', 0, actionableStrategyFor(item.feedKey).posPatterns);
+  return containsActionableSignal(item.content ?? '', actionableStrategyFor(item.feedKey).posPatterns);
 }
 
 // Empty authors list = no author restriction. `authors` is asserted to be lowercase.
