@@ -47,6 +47,8 @@ scripts/fonts/
 # editor
 .vscode/
 .idea/
+.#*
+*~
 
 # training data (paid content, not for commit)
 training-*.txt
