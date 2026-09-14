@@ -111,15 +111,15 @@ describe('matchesFilter', () => {
 
     // Each feed's own signal text: stock-pick vocabulary ("new pick") only resolves against
     // STOCK_POS_PATTERNS, options vocabulary (strike/put/expiry) only against OPTIONS_POS_PATTERNS
-    // -- see actionableStrategyFor (@li/core).
+    // -- see actionableStrategyFor (@li/core). An unstarred topic title alerts the same as a
+    // starred one: a topic can be renamed to add a star well after the actionable post that
+    // should have triggered it, so gating on the title at classification time misses real alerts.
     it.each([
       [FK.stockInsights, longWithSignal],
       [FK.optionsInsights, 'You can get into the January $55 strike put, 2026 expiry now.'],
-    ])('%s requires a starred title to alert', (feedKey, description) => {
-      const starred = item(feedKey, { title: '*VUTS Trade', description });
-      const unstarred = item(feedKey, { title: 'Discussion post', description });
-      expect(matchesFilter(starred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(starred, ACTIONABLE_AUTHORS))).toBe(true);
-      expect(matchesFilter(unstarred, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(unstarred, ACTIONABLE_AUTHORS))).toBe(false);
+    ])('%s alerts regardless of topic title', (feedKey, description) => {
+      const post = item(feedKey, { title: 'Discussion post', description });
+      expect(matchesFilter(post, 'actionable', [ACTIONABLE_AUTHORS[0]], MIN, classify(post, ACTIONABLE_AUTHORS))).toBe(true);
     });
 
     it('a negative-pattern post does not alert at the actionable tier, but can still alert at the length tier', () => {

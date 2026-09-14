@@ -359,23 +359,19 @@ export function isFresh(pubDate: Date, maxAgeMs: number): boolean {
   return Date.now() - pubDate.getTime() <= maxAgeMs;
 }
 
-// The author/topic-star gate alone, factored out of isActionablePost so the Worker can reuse it
-// to decide whether an item is worth spending a live embedding call on, without re-deriving these
-// three lines. actionableAuthors is asserted to be lowercase.
+// The author gate alone, factored out of isActionablePost so the Worker can reuse it to decide
+// whether an item is worth spending a live AI intent-classification call on, without re-deriving
+// this line. actionableAuthors is asserted to be lowercase.
 export function isActionableCandidate(item: FilterItem, actionableAuthors: string[]): boolean {
   const author = (item.author ?? '').toLowerCase();
-  const isActionableAuthor = actionableAuthors.some((a) => author.includes(a));
-  const requiresStar = item.feedKey === FeedKeys.stockInsights || item.feedKey === FeedKeys.optionsInsights;
-  const topicPass = !requiresStar || (item.title ?? '').startsWith('*');
-  return isActionableAuthor && topicPass;
+  return actionableAuthors.some((a) => author.includes(a));
 }
 
 // A forum's whole "what counts as actionable" method: which closed-class regex patterns resolve a
 // post definitively, and which of those patterns are recall-tuned enough to need a live judgment
 // call before being trusted. One object per vocabulary, not per feed -- Members Forum and Stock
 // Insights share STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick
-// content, differing only in the star-gate isActionableCandidate applies), the same reason they
-// always have.
+// content), the same reason they always have.
 export interface ActionableStrategy {
   posPatterns: [RegExp, ActionableResult][];
   needsIntentConfirmation: Set<ActionableResult>;

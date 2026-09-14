@@ -7,17 +7,12 @@ function item(overrides: Partial<FilterItem> = {}): FilterItem {
 }
 
 describe('isActionableCandidate', () => {
-  it('passes for a matching author on a non-star-gated feed regardless of title', () => {
-    expect(isActionableCandidate(item({ feedKey: FeedKeys.membersForum, title: '' }), ACTIONABLE_AUTHORS)).toBe(true);
+  it.each([FeedKeys.membersForum, FeedKeys.stockInsights, FeedKeys.optionsInsights])('%s passes for a matching author regardless of title', (feedKey) => {
+    expect(isActionableCandidate(item({ feedKey, title: 'Discussion' }), ACTIONABLE_AUTHORS)).toBe(true);
   });
 
   it('fails for a non-matching author', () => {
     expect(isActionableCandidate(item({ author: 'Joe Blow' }), ACTIONABLE_AUTHORS)).toBe(false);
-  });
-
-  it.each([FeedKeys.stockInsights, FeedKeys.optionsInsights])('%s requires a starred title', (feedKey) => {
-    expect(isActionableCandidate(item({ feedKey, title: 'Discussion' }), ACTIONABLE_AUTHORS)).toBe(false);
-    expect(isActionableCandidate(item({ feedKey, title: '*Trade' }), ACTIONABLE_AUTHORS)).toBe(true);
   });
 });
 
@@ -35,12 +30,12 @@ describe('isActionablePost (regex-only)', () => {
   });
 
   it('resolves an Options Insights post against its own pattern set, not stock-pick vocabulary', () => {
-    const post = item({ feedKey: FeedKeys.optionsInsights, title: '*Trade', content: 'You can get into the January $55 strike put, 2026 expiry now.' });
+    const post = item({ feedKey: FeedKeys.optionsInsights, content: 'You can get into the January $55 strike put, 2026 expiry now.' });
     expect(isActionablePost(post, ACTIONABLE_AUTHORS)).toBe(true);
   });
 
   it('a stock-pick-only signal does not resolve as actionable on Options Insights', () => {
-    const post = item({ feedKey: FeedKeys.optionsInsights, title: '*Trade', content: "I've got a new pick for subscribers this month." });
+    const post = item({ feedKey: FeedKeys.optionsInsights, content: "I've got a new pick for subscribers this month." });
     expect(isActionablePost(post, ACTIONABLE_AUTHORS)).toBe(false);
   });
 
