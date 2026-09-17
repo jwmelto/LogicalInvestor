@@ -1129,6 +1129,28 @@ describe('runChannel — actionable classification', () => {
     expect(pushCalls).toBe(1);
   });
 
+  // Real production false positive (2026-09): pass-buy-with-price used to be trusted immediately,
+  // so a personal reply re-entry price ("if it gets to $250ish, you could buy back that half")
+  // alerted with no AI check at all. It now joins pass-sell-fraction/pass-close-enough/
+  // pass-get-now in STOCK_NEEDS_INTENT_CONFIRMATION (@li/core).
+  it('a pass-buy-with-price match becomes an intent-confirmation candidate rather than being trusted immediately', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
+    const env = membersEnv(aiRun);
+    let pushCalls = 0;
+    const buyWithPriceText = 'No, because it is almost $262 in premarket. If it gets to like $250ish or below, you could buy back that half though.';
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', buyWithPriceText)) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
+
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(pushCalls).toBe(0); // confident personal-advice verdict suppresses it
+  });
+
   it('a confident non-directive verdict suppresses the alert', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
     const env = membersEnv(aiRun);
@@ -1178,10 +1200,17 @@ describe('runChannel — actionable classification', () => {
     expect(pushCalls).toBe(1); // regex already found pass-sell-fraction; an AI hiccup shouldn't suppress it
   });
 
-  it('an Options Insights pass-options-contract match is trusted immediately -- options has no needsIntentConfirmation entries currently', async () => {
-    const aiRun = vi.fn();
+  // pass-options-contract joins pass-sell-fraction/pass-close-enough/pass-get-now/
+  // pass-buy-with-price in needing intent confirmation -- a closed-class regex match still can't
+  // tell a live broadcast directive from a personal reply, same reasoning as every stock pattern
+  // in the set. Unlike stock, though, options's own suppressibleLabels (@li/core) excludes
+  // personal-advice: a reply naming a concrete strike and expiry is exactly as actionable as a
+  // broadcast one, regardless of who it was nominally addressed to (verified empirically against
+  // the full options true-positive corpus -- see the comment on OPTIONS_NEEDS_INTENT_CONFIRMATION,
+  // @li/core).
+  function optionsEnv(aiRun: ReturnType<typeof vi.fn>) {
     const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
-    const env = {
+    return {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
@@ -1192,17 +1221,47 @@ describe('runChannel — actionable classification', () => {
       },
       AI: { run: aiRun },
     } as any;
-    let pushCalls = 0;
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', 'March $95 strike, 2026 expiry.', '*Starred Trade')) });
+  }
+
+  function optionsFetchMock(onPush: () => void) {
+    return vi.fn((url: string) => {
+      if (url.includes('exp.host')) { onPush(); return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', 'March $95 strike, 2026 expiry.')) });
     });
-    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  it('a pass-options-contract match becomes an intent-confirmation candidate rather than being trusted immediately', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
+    const env = optionsEnv(aiRun);
+    let pushCalls = 0;
+    vi.stubGlobal('fetch', optionsFetchMock(() => { pushCalls += 1; }));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(aiRun).not.toHaveBeenCalled();
+    expect(aiRun).toHaveBeenCalledTimes(1);
     expect(pushCalls).toBe(1);
+  });
+
+  it('a confident personal-advice verdict still alerts for Options -- personal-advice is not in its suppressibleLabels', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
+    const env = optionsEnv(aiRun);
+    let pushCalls = 0;
+    vi.stubGlobal('fetch', optionsFetchMock(() => { pushCalls += 1; }));
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(pushCalls).toBe(1);
+  });
+
+  it('a confident general-education verdict suppresses the alert for Options', async () => {
+    const aiRun = vi.fn().mockResolvedValue(intentResponse('general-education', 'high'));
+    const env = optionsEnv(aiRun);
+    let pushCalls = 0;
+    vi.stubGlobal('fetch', optionsFetchMock(() => { pushCalls += 1; }));
+
+    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
+
+    expect(pushCalls).toBe(0);
   });
 
   it('multiple buckets sharing one intent-confirmation candidate result in exactly one classifyActionableIntent call', async () => {

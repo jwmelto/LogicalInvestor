@@ -422,7 +422,40 @@ Every matching decision runs in the Worker, in `runChannel` (`cloudflare-worker/
    Members Forum and Stock Insights share `STOCK_PICK_STRATEGY` (tranche-pricing vocabulary),
    Options Insights has its own `OPTIONS_STRATEGY` (strike/expiry contract vocabulary).
    Given a strategy, `actionable` is resolved by whichever of these applies:
-   - **`classifySignal` matches a pattern in that item's own forum strategy `needsIntentConfirmation` set** (`ActionableStrategy`, `@li/core`: stock has `pass-sell-fraction`/`pass-close-enough`/`pass-get-now`, options has `pass-options-contract`) — regex deliberately tuned for recall over precision, since the same trigger phrase ("sell half", a strike+expiry mention) is used identically by a genuine broadcast directive, personal advice to one reader, and general strategy education; measured leave-one-out accuracy shows every other pattern in the calibration corpus is 100% correct, these aren't. Each such item gets one call (not batched — unlike embeddings, chat completion has no batch input shape) to `classifyActionableIntent` (`cloudflare-worker/src/intentClassifier.ts`): a Workers AI chat call (`llama-3.3-70b-instruct-fp8-fast`, schema-enforced JSON Mode) using the calling forum's own `IntentStrategy` (`intentStrategyFor(feedKey)` — `STOCK_INTENT_STRATEGY` or `OPTIONS_INTENT_STRATEGY`, a separate prompt and few-shot set per discourse, mirroring `ActionableStrategy`'s own per-forum separation) that classifies the post as `directive`/`personal-advice`/`general-education` with a stated confidence. `resolveIntentGate` (`@li/core`) only suppresses the alert on a *confident* (`high`) non-directive verdict — anything less defaults to actionable, so the gate can only ever add a false alarm, never a missed alert. A failed/errored AI call falls back to the regex's own positive verdict (stays actionable) rather than blocking the run, for the same reason. Every decision — reasoning, evidence, label, confidence — is logged in `ChannelState.intentLog` (capped at the most recent 50 per channel) and surfaced via `GET /status`, riding along in the one KV write `runChannel` already makes per poll rather than costing an extra write per decision (Workers KV's free-tier write budget is already tight — see issue #32).
+   - **`classifySignal` matches a pattern in that item's own forum strategy `needsIntentConfirmation` set**
+     (`ActionableStrategy`, `@li/core`: stock has
+     `pass-sell-fraction`/`pass-close-enough`/`pass-get-now`/`pass-buy-with-price`,
+     options has `pass-options-contract`) —
+     regex deliberately tuned for recall over precision,
+     since the same trigger phrase ("sell half", a strike+expiry mention)
+     is used identically by a genuine broadcast directive, personal advice to one reader,
+     and general strategy education;
+     measured leave-one-out accuracy shows every other pattern in the calibration corpus
+     is 100% correct, these aren't.
+     Each such item gets one call (not batched — unlike embeddings,
+     chat completion has no batch input shape) to `classifyActionableIntent`
+     (`cloudflare-worker/src/intentClassifier.ts`):
+     a Workers AI chat call (`llama-3.3-70b-instruct-fp8-fast`, schema-enforced JSON Mode)
+     using the calling forum's own `IntentStrategy` (`intentStrategyFor(feedKey)` —
+     `STOCK_INTENT_STRATEGY` or `OPTIONS_INTENT_STRATEGY`, a separate prompt and few-shot set
+     per discourse, mirroring `ActionableStrategy`'s own per-forum separation)
+     that classifies the post as `directive`/`personal-advice`/`general-education`
+     with a stated confidence.
+     `resolveIntentGate` (`@li/core`) only suppresses the alert on a *confident* (`high`) verdict
+     whose label is in the calling forum's own `suppressibleLabels` (`ActionableStrategy`, `@li/core`) —
+     stock suppresses on `personal-advice` or `general-education`,
+     options suppresses only on `general-education`,
+     since an options reply naming a concrete strike and expiry is exactly as actionable
+     as a broadcast one regardless of who it was nominally addressed to.
+     Anything less than `high` confidence defaults to actionable,
+     so the gate can only ever add a false alarm, never a missed alert.
+     A failed/errored AI call falls back to the regex's own positive verdict
+     (stays actionable) rather than blocking the run, for the same reason.
+     Every decision — reasoning, evidence, label, confidence —
+     is logged in `ChannelState.intentLog` (capped at the most recent 50 per channel)
+     and surfaced via `GET /status`, riding along in the one KV write `runChannel`
+     already makes per poll rather than costing an extra write per decision
+     (Workers KV's free-tier write budget is already tight — see issue #32).
    - **Otherwise** (regex already has a definitive opinion, `isActionablePost`, `@li/core`, regex-only,
      also used as the AI-failure fallback above):
      author is in the Worker's own `ACTIONABLE_AUTHORS` list (`env.ACTIONABLE_AUTHORS`, default "Sean Hyman") —

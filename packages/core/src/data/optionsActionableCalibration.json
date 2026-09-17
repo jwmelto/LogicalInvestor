@@ -37,12 +37,14 @@
   {
     "text": "Great job! Anyone else, that’s up a quick 20% in such a short time can capture profits as well.\n\nYou might report your gains on the Testimonial page of the LI forum.\n\nCongrats!",
     "isActionable": true,
-    "source": "options-pos-7"
+    "source": "options-pos-7",
+    "note": "Explicit sell/take-profit alerts are rare for options -- the system mostly relies on an auto-profit limit order set at 25% on the day of entry rather than a manual call to exit. This is a genuine rare exception. Doesn't match pass-options-contract (no strike/expiry named), a known, accepted regex recall gap -- not worth chasing given how rare this shape is."
   },
   {
     "text": "I’m assuming everyone is out of this one with their profit, since it dropped so fast after we got into it.\n\nBut if you’re still in it, let me know. It’s down almost 1.9% today.\n\nIf you get a profit of 20% on it, take it, since its come so quickly.",
     "isActionable": true,
-    "source": "options-pos-8"
+    "source": "options-pos-8",
+    "note": "Weak signal, but a real one. Same known, accepted regex recall gap as options-pos-7 -- no strike/expiry named, so pass-options-contract doesn't fire."
   },
   {
     "text": "You can get back into JCI puts now. Here are two potential paths, along with what it’s done in the past when it’s gotten stretched away from its 200-week moving average. Forward P/E is still high too: 27. Not holding as much cash on their books as they should either.\n\nYou can get into the MARCH $95 strike put, 2026 expiry.",

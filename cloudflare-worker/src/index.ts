@@ -939,7 +939,7 @@ async function runChannel(channel: Channel, env: Env, event: ScheduledEvent): Pr
     intentCandidates.forEach((rssItem, i) => {
       const outcome = outcomes[i];
       if (outcome.status === 'fulfilled') {
-        const gate = resolveIntentGate(outcome.value);
+        const gate = resolveIntentGate(outcome.value, actionableStrategyFor(rssItem.feedKey).suppressibleLabels);
         newIntentLogEntries.push({ guid: rssItem.guid, text: rssItem.description.slice(0, 160), timestamp: now.toISOString(), ...outcome.value, actionable: gate.actionable });
         classifications.set(rssItem.guid, { members: false, actionable: gate.actionable });
       } else {

@@ -28,7 +28,7 @@ const CONFIDENCE_CALIBRATION = `Do not default to low or medium confidence out o
 Read the post. Quote the exact evidence. Reason about which of the three categories it belongs to. Then give your verdict. Respond only with the requested JSON.`;
 
 const STOCK_CATEGORY_DEFINITIONS = `- directive: a live instruction to act now on a specific holding. It names a specific trigger: a price, a percent gain, or a tranche number. It is addressed to a plural or broadcast audience, such as "many of you", "y'all", "everyone", or "those of you in X". Or it has no addressee at all and reads as flat newsletter guidance. Or it addresses a singular "you" with a general condition anyone could meet, such as "if you're up 20%+, go ahead and sell half" -- the condition is stated fresh in this post as a rule, not a fact already known about one person. An action word like "sell" or "buy", stated directly or clearly implied, is core evidence for this category.
-- personal-advice: a reply giving one specific person advice about a fact of their situation already established before this post, such as "you're up that much" or "what you have left" -- referencing an amount or holding the post treats as already known, not a fresh conditional rule stated in the same post. It is not addressed to a plural or generic audience, and it is not a general "if you meet this condition" rule. This category can apply even to a very short post, such as one line naming the person's own already-known gain or holding.
+- personal-advice: a reply giving one specific person advice about a fact of their situation already established before this post, such as "you're up that much" or "what you have left" -- referencing an amount or holding the post treats as already known, not a fresh conditional rule stated in the same post. It is not addressed to a plural or generic audience, and it is not a general "if you meet this condition" rule. This category can apply even to a very short post, such as one line naming the person's own already-known gain or holding. A post that opens with a bare "Yes," or "No," before the rest of the sentence is itself strong evidence that this is answering someone's specific question rather than issuing standalone newsletter guidance -- treat that opening as real signal even in a very short post, not as "too short to judge," unless the sentence also carries a plural/broadcast addressee or states a fresh general condition anyone could meet (either of which would make it a directive instead).
 - general-education: an explanation of how the trading strategy or market mechanics work in general. It names no specific holding, no specific price, and no specific trigger to act on right now. It explains why or how the approach works, often with a numbered list of reasons or phrases like "the reason we..." or "so that...". It describes the method itself. It does not report on a live position. It may still contain action words like "sell" or "buy"; there, they describe the method, not a live call.`;
 
 const OPTIONS_CATEGORY_DEFINITIONS = `- directive: a live instruction to act now on a specific options contract. It names a strike price and an expiry month and year, such as "March $95 strike, 2026 expiry". It is addressed to a plural or broadcast audience. Or it has no addressee at all and reads as flat newsletter guidance. Or it addresses a singular "you" with a general condition anyone could meet, stated fresh in this post as a rule, not a fact already known about one person. An action word like "sell" or "buy", stated directly or clearly implied, is core evidence for this category.
@@ -36,7 +36,7 @@ const OPTIONS_CATEGORY_DEFINITIONS = `- directive: a live instruction to act now
 - general-education: an explanation of how the options strategy or market mechanics work in general. It names no specific contract, no specific strike or expiry, and no specific trigger to act on right now. It explains why or how the approach works. It describes the method itself. It does not report on a live position. It may still contain action words like "sell" or "buy"; there, they describe the method, not a live call.`;
 
 const STOCK_INTENT_STRATEGY: IntentStrategy = {
-  systemPrompt: `You are classifying a single forum post from a stock-trading newsletter. The post already matched a broad, recall-tuned pattern for trade-related language: a "sell half"/"sell all" style call, or a "close enough...now" immediacy trigger. That match alone doesn't tell you what the post actually means. It is one of three things:
+  systemPrompt: `You are classifying a single forum post from a stock-trading newsletter. The post already matched a broad, recall-tuned pattern for trade-related language: a "sell half"/"sell all" style call, a "close enough...now" immediacy trigger, or a specific re-entry/buy price mentioned near a "buy"/"enter" verb. That match alone doesn't tell you what the post actually means. It is one of three things:
 
 ${STOCK_CATEGORY_DEFINITIONS}
 
@@ -65,6 +65,33 @@ ${CONFIDENCE_CALIBRATION}`,
       response: {
         reasoning: 'Addressed to a singular "you" about "that much" gain -- a specific, individual amount, not a broadcast trigger stated for the whole readership. "I\'d not sell the last bit" is the author\'s personal reply to one person\'s situation, not a general call to action.',
         evidence: "Because you're up that much, you can sell half",
+        label: 'personal-advice',
+        confidence: 'high',
+      },
+    },
+    {
+      post: "Yes, you can sell half.",
+      response: {
+        reasoning: 'Opens with a bare "Yes," which is itself evidence this is answering a specific question someone asked, not standalone newsletter guidance. There is no plural/broadcast addressee and no fresh general condition stated ("if you\'re up X%, sell half") -- just a direct confirmation to whoever asked. Short length alone isn\'t a reason to default to low confidence when this opening is present.',
+        evidence: 'Yes, you can sell half.',
+        label: 'personal-advice',
+        confidence: 'high',
+      },
+    },
+    {
+      post: "MNP hit $41 for a split second but that was probably on the bid/sell quote and not the ask/buy quote, would be my assumption. If it gets back fairly close to $41ish again, you can enter if you didn't get filled already.",
+      response: {
+        reasoning: 'Reads most naturally as a reply to one specific person who missed an earlier entry call at $41 -- "if you didn\'t get filled already" treats that person\'s situation (they wanted in, but may have missed it) as an already-known fact rather than stating a fresh rule for every reader. But there\'s no explicit addressee and no restated context confirming that reading, so it could also be forward-looking guidance for anyone still watching this level. Genuinely ambiguous between the two, not a clear-cut case either way.',
+        evidence: "If it gets back fairly close to $41ish again, you can enter if you didn't get filled already",
+        label: 'personal-advice',
+        confidence: 'medium',
+      },
+    },
+    {
+      post: "No, because CRTV is almost $262 in premarket. If it gets to like $250ish or below, you could buy back that half though.",
+      response: {
+        reasoning: 'Opens with "No, because" -- a direct reply to a specific question about whether to act right now, explaining why not (current price too high) before offering a conditional re-entry point. "That half" refers to a position the addressee already sold, a fact already established before this post, not a fresh rule stated for every reader. No plural or broadcast addressee.',
+        evidence: 'No, because CRTV is almost $262 in premarket',
         label: 'personal-advice',
         confidence: 'high',
       },
