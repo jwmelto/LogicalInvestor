@@ -228,6 +228,14 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // whitespace — a decimal price like "$66.50" doesn't trip it, since the period there isn't
   // followed by whitespace. 200 is a sanity backstop against pathological run-on sentences, not
   // the primary boundary.
+  //
+  // Two real production false positives (2026-09): a reply beginning "No, because [ticker] is
+  // almost $262..." and another beginning "No, but if it went back to $76ish you could enter it
+  // then..." both matched this pattern while answering a specific person's question about
+  // re-entering a position they already held, not issuing a fresh broadcast call. Same
+  // discourse-ambiguity problem pass-sell-fraction/pass-close-enough/pass-get-now already solve by
+  // deferring to a live AI judgment call rather than a narrower regex -- see
+  // STOCK_NEEDS_INTENT_CONFIRMATION below, which this pattern now joins.
   [/\$\d+(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\b(buy|enter)\b|\b(buy|enter)\b(?:(?!\.\s|!\s|\?\s)[\s\S]){0,200}\$\d+/i, 'pass-buy-with-price'],
   // #82: "sell it all" — the fraction word doesn't always sit directly after the verb; an
   // intervening pronoun is common, natural phrasing missed by the original bare-adjacency regex.
@@ -269,7 +277,7 @@ const STOCK_POS_PATTERNS: [RegExp, ActionableResult][] = [
 // failure surface for no accuracy gain. Lives on STOCK_PICK_STRATEGY below, not as one shared set
 // across vocabularies -- same reasoning as posPatterns being per strategy: which patterns need a
 // live judgment call is itself part of a vocabulary's own definition.
-const STOCK_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-get-now']);
+const STOCK_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-sell-fraction', 'pass-close-enough', 'pass-get-now', 'pass-buy-with-price']);
 
 // Options Insights vocabulary: this feed has tranches too (a 2nd tranche on an existing options
 // position is common), but a real tranche entry still always carries the strike/put-or-call/expiry
@@ -284,22 +292,35 @@ const OPTIONS_POS_PATTERNS: [RegExp, ActionableResult][] = [
   // is this author's own stated convention for a live contract reference. Originally required a
   // third token (put/call) too, but measured against the full 127-example options corpus: true
   // positives already carry strike+expiry regardless, and dropping the put/call requirement adds
-  // real matches with zero new false positives. Trusted immediately, unlike pass-sell-fraction:
-  // measured leave-one-out is 22/22 (100%) once the one real false positive found (restating a
-  // contract already given in an earlier post) is caught by its own NEG_PATTERN above, so there's
-  // no measured precision problem here to justify routing this through a live judgment call.
+  // real matches with zero new false positives. Leave-one-out against the full corpus is 22/22
+  // (100%) once the one real false positive found (restating a contract already given in an
+  // earlier post) is caught by its own NEG_PATTERN above -- see OPTIONS_NEEDS_INTENT_CONFIRMATION
+  // below for why this still routes through a live judgment call despite that.
   // A bare 4-digit year alone doesn't count as the expiry token -- only "expiry"/"expiries"/
   // "expiration" or an actual month+year pairing does, so an unrelated year mention elsewhere in
   // the post can't supply it. No verb requirement, unlike every STOCK_POS_PATTERNS entry: this
   // author sometimes confirms a contract with no verb at all ("JCI PUT MAR 2026 $95 strike").
+  // Known, accepted gap: an explicit take-profit/sell instruction with no strike or expiry named
+  // (e.g. "if you get a profit of 20% on it, take it") never matches this pattern at all --
+  // options-pos-7/options-pos-8 in the calibration corpus document two real examples. Not worth
+  // chasing: explicit sell alerts are rare for options in the first place, since the system mostly
+  // relies on an auto-profit limit order set at 25% on the day of entry rather than a manual call
+  // to exit.
   [/(?=[\s\S]*\bstrikes?\b)(?=[\s\S]*(?:\bexpir(?:y|ies|ation)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+20\d\d\b))/i, 'pass-options-contract'],
 ];
 
-// Currently empty. Kept as its own set, matching STOCK_NEEDS_INTENT_CONFIRMATION's shape, so any
-// future entry stays scoped to options specifically. pass-options-contract has no measured
-// precision problem to justify one today (see its own comment above: 22/22, including the one
-// real false positive found, now caught by its own NEG_PATTERN).
-const OPTIONS_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>([]);
+// Kept as its own set, matching STOCK_NEEDS_INTENT_CONFIRMATION's shape, so any future entry stays
+// scoped to options specifically. pass-options-contract has no measured false-positive problem on
+// its own (22/22 against the full corpus, see its own comment above) -- routing it through the
+// intent classifier isn't about fixing a regex accuracy gap, it's for the same reasoning every
+// STOCK_NEEDS_INTENT_CONFIRMATION entry already gets: a closed-class regex match still can't tell
+// a live broadcast directive from a personal reply, and every actionable-tier decision should go
+// through the same live-judgment path rather than special-casing one vocabulary as "trusted
+// outright." Verified this doesn't regress: options's own suppressibleLabels (ActionableStrategy
+// above) never suppresses on personal-advice, only general-education, so the one real personal-
+// advice verdict found in a live probe against the full true-positive corpus still resolves to
+// actionable.
+const OPTIONS_NEEDS_INTENT_CONFIRMATION = new Set<ActionableResult>(['pass-options-contract']);
 
 // Necessary-condition check: a real directive always names a trade action, in some form, even
 // when phrased as a modal ("you can sell half now"), infinitive ("close enough to get your
@@ -368,23 +389,44 @@ export function isActionableCandidate(item: FilterItem, actionableAuthors: strin
 }
 
 // A forum's whole "what counts as actionable" method: which closed-class regex patterns resolve a
-// post definitively, and which of those patterns are recall-tuned enough to need a live judgment
-// call before being trusted. One object per vocabulary, not per feed -- Members Forum and Stock
-// Insights share STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick
-// content), the same reason they always have.
+// post definitively, which of those patterns are recall-tuned enough to need a live judgment call
+// before being trusted, and which of that judgment call's verdicts actually justify suppressing
+// the alert. One object per vocabulary, not per feed -- Members Forum and Stock Insights share
+// STOCK_PICK_STRATEGY today because they share a discourse (both stock-pick content), the same
+// reason they always have.
+//
+// suppressibleLabels differs by vocabulary because "personal-advice" doesn't mean the same thing
+// for the two: a stock reply giving one person advice about their own position is genuinely not
+// useful to broadcast, but an options reply naming a concrete strike and expiry is exactly as
+// actionable as a broadcast one regardless of who it was nominally addressed to -- a specific
+// contract is only tradeable for a narrow window, so alerting on it isn't optional the way
+// re-broadcasting stock chit-chat is. Confirmed empirically, not assumed: a live probe against
+// every real options true-positive in optionsActionableCalibration.json found the model correctly
+// resolves personal-advice-addressed contract confirmations (e.g. "Vince, yes you can get into the
+// June $110 strike put, 2026 expiry, now") as personal-advice -- that's an accurate read of the
+// text, not a model error, so the fix is in the suppression policy, not the prompt.
 export interface ActionableStrategy {
   posPatterns: [RegExp, ActionableResult][];
   needsIntentConfirmation: Set<ActionableResult>;
+  suppressibleLabels: Set<IntentLabel>;
 }
 
-const STOCK_PICK_STRATEGY: ActionableStrategy = { posPatterns: STOCK_POS_PATTERNS, needsIntentConfirmation: STOCK_NEEDS_INTENT_CONFIRMATION };
-const OPTIONS_STRATEGY: ActionableStrategy = { posPatterns: OPTIONS_POS_PATTERNS, needsIntentConfirmation: OPTIONS_NEEDS_INTENT_CONFIRMATION };
+const STOCK_PICK_STRATEGY: ActionableStrategy = {
+  posPatterns: STOCK_POS_PATTERNS,
+  needsIntentConfirmation: STOCK_NEEDS_INTENT_CONFIRMATION,
+  suppressibleLabels: new Set<IntentLabel>(['personal-advice', 'general-education']),
+};
+const OPTIONS_STRATEGY: ActionableStrategy = {
+  posPatterns: OPTIONS_POS_PATTERNS,
+  needsIntentConfirmation: OPTIONS_NEEDS_INTENT_CONFIRMATION,
+  suppressibleLabels: new Set<IntentLabel>(['general-education']),
+};
 
 // Members Area bypasses every filter tier unconditionally (see matchesFilter), so its
 // actionable-ness is never computed at all -- this is unused data, not behavior. An empty
 // posPatterns array can never produce a pass-* result, so isActionablePost already resolves false
 // for it with no separate branch.
-const NULL_STRATEGY: ActionableStrategy = { posPatterns: [], needsIntentConfirmation: new Set() };
+const NULL_STRATEGY: ActionableStrategy = { posPatterns: [], needsIntentConfirmation: new Set(), suppressibleLabels: new Set() };
 
 // One entry per feed, every consumer resolves it through actionableStrategyFor rather than
 // checking feed identity itself.
@@ -430,16 +472,18 @@ export interface IntentGateResult {
 }
 
 // A missed alert costs more than a false alarm (see CLAUDE.md's design philosophy for this
-// classifier) -- so only a *confident* non-directive verdict suppresses the post. Anything less
-// than full confidence, regardless of label, defaults to actionable rather than being trusted
-// either way, mirroring pass-sell-fraction's own prior behavior (trust the regex) for the
-// uncertain case.
-export function resolveIntentGate(intent: IntentClassification): IntentGateResult {
-  const confidentNonDirective = intent.label !== 'directive' && intent.confidence === 'high';
-  const result: ActionableResult = !confidentNonDirective
+// classifier) -- so only a *confident* verdict in the calling vocabulary's own suppressibleLabels
+// (ActionableStrategy above) suppresses the post. Anything less than full confidence, regardless
+// of label, defaults to actionable rather than being trusted either way, mirroring
+// pass-sell-fraction's own prior behavior (trust the regex) for the uncertain case. Which labels
+// are suppressible is a per-vocabulary policy decision, not a universal one -- see
+// suppressibleLabels' own comment for why stock and options disagree about personal-advice.
+export function resolveIntentGate(intent: IntentClassification, suppressibleLabels: Set<IntentLabel>): IntentGateResult {
+  const suppressed = intent.confidence === 'high' && suppressibleLabels.has(intent.label);
+  const result: ActionableResult = !suppressed
     ? 'pass-sell-fraction'
     : intent.label === 'personal-advice' ? 'fail-personal-advice' : 'fail-general-education';
-  return { actionable: !confidentNonDirective, result };
+  return { actionable: !suppressed, result };
 }
 
 export function isActionablePost(item: FilterItem, actionableAuthors: string[]): boolean {

@@ -265,5 +265,26 @@
     "text": "Good job. Congrats!",
     "isActionable": false,
     "source": "fail-acknowledgment-2026-09"
+  },
+  {
+    "text": "No, because CRTV is almost $262 in premarket. If it gets to like $250ish or below, you could buy back that half though.",
+    "isActionable": false,
+    "source": "fail-conditional-reentry-2026-09-1"
+  },
+  {
+    "text": "No, but if it went back to $76ish you could enter it then. It's best to have those buy limits put in from the beginning and you won't have to watch for them or miss them.",
+    "isActionable": false,
+    "source": "fail-conditional-reentry-2026-09-2"
+  },
+  {
+    "text": "Let's go ahead and get into it now. 1st tranche now. It's trading in the $167's. 2nd tranche: $157's 3rd tranche: $147's Upside target: $290+ (filling half of a former gap, yellow zoned area).",
+    "isActionable": true,
+    "source": "tranche-ladder-anchor-2026-09"
+  },
+  {
+    "text": "If you guys see IT get to $205ish, I'd encourage you to sell half at that point.",
+    "isActionable": true,
+    "source": "ticker-ambiguity-real-2026-09",
+    "note": "Real ticker (IT) deliberately kept unobfuscated -- the point of this entry is testing whether a common-English-word ticker confuses the classifier by colliding with the pronoun 'it'. A fictitious substitute ticker would never collide with an English word this way, so it would defeat the entry's purpose. Confirmed correctly alerted in production. Matches pass-sell-fraction; ticker text itself doesn't affect the regex match, so any confusion risk is at the AI intent-classification layer, not here."
   }
 ]
