@@ -280,7 +280,7 @@ describe('findAndStorePollToken', () => {
   it('returns null when no registered tokens have a feedToken', async () => {
     vi.stubGlobal('fetch', vi.fn());
     const result = await findAndStorePollToken('stock', mockEnv([
-      { name: 'stock:ExponentPushToken[abc]', metadata: { } },
+      { name: 'stock:web:https://fcm.googleapis.com/fcm/send/abc', metadata: { } },
     ]));
     expect(result).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
@@ -325,6 +325,8 @@ describe('findAndStorePollToken', () => {
   });
 });
 
+const TEST_SUBSCRIPTION = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+
 describe('registerDevice (logic, plain-object inputs)', () => {
   function mockEnv() {
     return {
@@ -336,7 +338,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
   it('rejects an optional-channel registration whose feed_token has no access', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'unauthorized' }, env);
+    const res = await registerDevice({ channel: 'options', subscription: TEST_SUBSCRIPTION, filter: 'actionable', authors: [], minLength: 200, feedToken: 'unauthorized' }, env);
     expect(res.status).toBe(403);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -344,35 +346,35 @@ describe('registerDevice (logic, plain-object inputs)', () => {
   it('accepts an optional-channel registration whose feed_token has access, and stores it as the poll token', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', subscription: TEST_SUBSCRIPTION, filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(env.STATE.put).toHaveBeenCalledWith('poll:options', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:web:https://fcm.googleapis.com/fcm/send/abc', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, subscription: TEST_SUBSCRIPTION, lastValidated: expect.any(Number) } });
   });
 
   it('lowercases and trims authors before storing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', subscription: TEST_SUBSCRIPTION, filter: 'length', authors: ['  Sean Hyman  '], minLength: 0, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('options:push1', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, lastValidated: expect.any(Number) } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('options:web:https://fcm.googleapis.com/fcm/send/abc', '1', { metadata: { feedToken: 'valid', filter: 'length', authors: ['sean hyman'], minLength: 0, subscription: TEST_SUBSCRIPTION, lastValidated: expect.any(Number) } });
   });
 
   it('members channel verifies feedToken against Members Forum, and stores it as the poll token', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
     vi.stubGlobal('fetch', fetchMock);
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'members', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'members', subscription: TEST_SUBSCRIPTION, filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('members-forum'));
     expect(env.STATE.put).toHaveBeenCalledWith('poll:members', 'valid');
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith('members:web:https://fcm.googleapis.com/fcm/send/abc', '1', { metadata: { feedToken: 'valid', filter: 'actionable', authors: [], minLength: 200, subscription: TEST_SUBSCRIPTION, lastValidated: expect.any(Number) } });
   });
 
   it('rejects a members registration with an expired or invalid feed_token', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'members', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'expired' }, env);
+    const res = await registerDevice({ channel: 'members', subscription: TEST_SUBSCRIPTION, filter: 'actionable', authors: [], minLength: 200, feedToken: 'expired' }, env);
     expect(res.status).toBe(403);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -380,7 +382,7 @@ describe('registerDevice (logic, plain-object inputs)', () => {
   it('returns 503 (not 403) when the access check itself fails, and does not store anything (issue #42)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
     const env = mockEnv();
-    const res = await registerDevice({ channel: 'options', pushToken: 'push1', filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
+    const res = await registerDevice({ channel: 'options', subscription: TEST_SUBSCRIPTION, filter: 'actionable', authors: [], minLength: 200, feedToken: 'valid' }, env);
     expect(res.status).toBe(503);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
     expect(env.STATE.put).not.toHaveBeenCalled();
@@ -399,41 +401,41 @@ describe('/register endpoint validation (HTTP boundary)', () => {
     return new Request('https://worker.test/register', { method: 'POST', body: JSON.stringify(body) });
   }
 
-  it('rejects a missing token', async () => {
+  it('rejects a missing subscription', async () => {
     const res = await worker.fetch(registerRequest({ channel: 'members', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
     expect(res.status).toBe(400);
   });
 
   it('rejects a missing or unknown channel', async () => {
-    const res = await worker.fetch(registerRequest({ token: 'push1', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
     expect(res.status).toBe(400);
-    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'bogus', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
+    const res2 = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'bogus', filter: 'actionable', authors: [], minLength: 200 }), mockEnv());
     expect(res2.status).toBe(400);
   });
 
   it('rejects a missing or invalid filter rather than silently defaulting it', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', authors: [], minLength: 200 }), env);
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', authors: [], minLength: 200 }), env);
     expect(res.status).toBe(400);
-    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'bogus', authors: [], minLength: 200 }), env);
+    const res2 = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'bogus', authors: [], minLength: 200 }), env);
     expect(res2.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
 
   it('rejects missing or invalid authors', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', minLength: 200 }), env);
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'actionable', minLength: 200 }), env);
     expect(res.status).toBe(400);
-    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: 'sean', minLength: 200 }), env);
+    const res2 = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'actionable', authors: 'sean', minLength: 200 }), env);
     expect(res2.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
 
   it('rejects missing or invalid minLength', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [] }), env);
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'actionable', authors: [] }), env);
     expect(res.status).toBe(400);
-    const res2 = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: -1 }), env);
+    const res2 = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'actionable', authors: [], minLength: -1 }), env);
     expect(res2.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -441,52 +443,27 @@ describe('/register endpoint validation (HTTP boundary)', () => {
   it('valid members registration reaches registerDevice and succeeds', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith('members:push1', '1', { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, lastValidated: expect.any(Number) } });
+    expect(env.TOKENS.put).toHaveBeenCalledWith(
+      'members:web:https://fcm.googleapis.com/fcm/send/abc',
+      '1',
+      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, subscription: TEST_SUBSCRIPTION, lastValidated: expect.any(Number) } },
+    );
   });
 
   it('rejects an empty-string feed_token', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'options', filter: 'actionable', authors: [], minLength: 200, feed_token: '' }), env);
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'options', filter: 'actionable', authors: [], minLength: 200, feed_token: '' }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
 
   it('rejects a missing feed_token for the members channel', async () => {
     const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ token: 'push1', channel: 'members', filter: 'actionable', authors: [], minLength: 200 }), env);
+    const res = await worker.fetch(registerRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', filter: 'actionable', authors: [], minLength: 200 }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
-  });
-});
-
-// The web-push registration page sends `subscription` instead of `token`. Channel, filter,
-// authors, minLength, and feed_token validation are all shared with the Expo path above.
-describe('/register endpoint validation — webpush subscription path', () => {
-  function mockEnv() {
-    return {
-      TOKENS: { put: vi.fn().mockResolvedValue(undefined) },
-      STATE: { put: vi.fn().mockResolvedValue(undefined) },
-    } as any;
-  }
-
-  function registerRequest(body: Record<string, unknown>) {
-    return new Request('https://worker.test/register', { method: 'POST', body: JSON.stringify(body) });
-  }
-
-  const validSubscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
-
-  it('accepts a well-formed subscription in place of token, and stores it under a web:-namespaced key', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
-    const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ subscription: validSubscription, channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
-    expect(res.status).toBe(200);
-    expect(env.TOKENS.put).toHaveBeenCalledWith(
-      'members:web:https://fcm.googleapis.com/fcm/send/abc',
-      '1',
-      { metadata: { feedToken: 'anything', filter: 'actionable', authors: [], minLength: 200, kind: 'webpush', subscription: { endpoint: validSubscription.endpoint, expirationTime: null, keys: validSubscription.keys }, lastValidated: expect.any(Number) } },
-    );
   });
 
   it.each([
@@ -497,13 +474,6 @@ describe('/register endpoint validation — webpush subscription path', () => {
   ])('rejects a malformed subscription (%s)', async (_desc, subscription) => {
     const env = mockEnv();
     const res = await worker.fetch(registerRequest({ subscription, channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
-    expect(res.status).toBe(400);
-    expect(env.TOKENS.put).not.toHaveBeenCalled();
-  });
-
-  it('rejects when neither token nor subscription is present', async () => {
-    const env = mockEnv();
-    const res = await worker.fetch(registerRequest({ channel: 'members', filter: 'actionable', authors: [], minLength: 200, feed_token: 'anything' }), env);
     expect(res.status).toBe(400);
     expect(env.TOKENS.put).not.toHaveBeenCalled();
   });
@@ -524,43 +494,20 @@ describe('sendTestPush (logic, plain-object inputs)', () => {
 
   it('rejects when feed_token has no access', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }));
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'unauthorized' }, envWithQueue());
+    const res = await sendTestPush({ channel: 'options', subscription: validSubscription, feedToken: 'unauthorized' }, envWithQueue());
     expect(res.status).toBe(403);
   });
 
   it('returns 503 (not 403) when the access check itself fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network blip')));
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, envWithQueue());
+    const res = await sendTestPush({ channel: 'options', subscription: validSubscription, feedToken: 'valid' }, envWithQueue());
     expect(res.status).toBe(503);
-  });
-
-  it('sends via exp.host for an Expo pushToken and returns ok', async () => {
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, envWithQueue());
-    expect(res.status).toBe(200);
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    const messages = JSON.parse(pushCall![1]!.body as string);
-    expect(messages).toEqual([{ to: 'push1', title: 'Test notification', body: 'If you can see this, push notifications are working.' }]);
-  });
-
-  it('reports 502 when the Expo send itself fails', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: false, status: 500 });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const res = await sendTestPush({ channel: 'options', pushToken: 'push1', feedToken: 'valid' }, envWithQueue());
-    expect(res.status).toBe(502);
   });
 
   it('enqueues via WEBPUSH_QUEUE for a subscription and returns ok', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, envWithQueue(sendBatch));
+    const res = await sendTestPush({ channel: 'options', subscription: validSubscription, feedToken: 'valid' }, envWithQueue(sendBatch));
     expect(res.status).toBe(200);
     expect(sendBatch).toHaveBeenCalledWith([{ body: { channel: 'options', subscription: validSubscription, title: 'Test notification', body: 'If you can see this, push notifications are working.' } }]);
   });
@@ -568,7 +515,7 @@ describe('sendTestPush (logic, plain-object inputs)', () => {
   it('reports 502 when the enqueue itself fails, without throwing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const sendBatch = vi.fn().mockRejectedValue(new Error('queue unavailable'));
-    const res = await sendTestPush({ channel: 'options', pushToken: validSubscription.endpoint, subscription: validSubscription, feedToken: 'valid' }, envWithQueue(sendBatch));
+    const res = await sendTestPush({ channel: 'options', subscription: validSubscription, feedToken: 'valid' }, envWithQueue(sendBatch));
     expect(res.status).toBe(502);
   });
 
@@ -580,7 +527,7 @@ describe('sendTestPush (logic, plain-object inputs)', () => {
   it('enqueues even a cryptographically malformed subscription — validation happens in the consumer', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) }));
     const malformed = { endpoint: 'https://fcm.googleapis.com/fcm/send/bad', expirationTime: null, keys: { p256dh: 'not-a-real-key', auth: 'not-a-real-auth' } };
-    const res = await sendTestPush({ channel: 'options', pushToken: malformed.endpoint, subscription: malformed, feedToken: 'valid' }, envWithQueue());
+    const res = await sendTestPush({ channel: 'options', subscription: malformed, feedToken: 'valid' }, envWithQueue());
     expect(res.status).toBe(200);
   });
 });
@@ -592,23 +539,13 @@ describe('/test-push endpoint validation (HTTP boundary)', () => {
   }
 
   it('rejects a missing feed_token', async () => {
-    const res = await worker.fetch(testPushRequest({ token: 'push1', channel: 'members' }), mockEnv());
+    const res = await worker.fetch(testPushRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members' }), mockEnv());
     expect(res.status).toBe(400);
   });
 
   it('rejects an empty-string feed_token', async () => {
-    const res = await worker.fetch(testPushRequest({ token: 'push1', channel: 'members', feed_token: '' }), mockEnv());
+    const res = await worker.fetch(testPushRequest({ subscription: TEST_SUBSCRIPTION, channel: 'members', feed_token: '' }), mockEnv());
     expect(res.status).toBe(400);
-  });
-
-  it('a valid Expo token request reaches sendTestPush and succeeds', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_WITH_ITEM) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const res = await worker.fetch(testPushRequest({ token: 'push1', channel: 'members', feed_token: 'valid' }), mockEnv());
-    expect(res.status).toBe(200);
   });
 
   it('a valid subscription request reaches sendTestPush, enqueues it, and succeeds', async () => {
@@ -710,43 +647,44 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
     const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const webpushSendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn().mockResolvedValue(undefined) },
       VALIDATION_QUEUE: { sendBatch },
+      WEBPUSH_QUEUE: { sendBatch: webpushSendBatch },
     } as any;
-    return { env, stateStore, sendBatch };
+    return { env, stateStore, sendBatch, webpushSendBatch };
   }
 
   const pushFetch = (extra: (url: string) => { ok: boolean; text?: () => Promise<string> } | undefined = () => undefined) =>
     vi.fn((url: string, _init?: RequestInit) => {
       const custom = extra(url);
       if (custom) return Promise.resolve(custom);
-      if (url.includes('feed_token=poll-token')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); // exp.host push send
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
     });
 
+  const sub = (endpoint: string) => ({ endpoint, expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } });
+
   it('notifies every registered device regardless of stored access state — validation is fully decoupled from the notify path', async () => {
-    const { env } = mockEnv([
-      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
-      { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
+    const { env, webpushSendBatch } = mockEnv([
+      { name: 'options:web:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token', subscription: sub('good-push') } },
+      { name: 'options:web:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token', subscription: sub('bad-push') } },
     ]);
-    const fetchMock = pushFetch();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', pushFetch());
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    // No feedTokenHasAccess fetch happens inline anymore — only the poll fetch and the push send.
-    expect(fetchMock.mock.calls.every(([url]) => (url as string).includes('feed_token=poll-token') || (url as string).includes('exp.host'))).toBe(true);
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    const body = JSON.parse(pushCall![1]!.body as string);
-    expect(body.flatMap((m: { to: string[] }) => m.to).sort()).toEqual(['bad-push', 'good-push']);
+    // No feedTokenHasAccess fetch happens inline anymore — only the poll fetch.
+    expect(webpushSendBatch).toHaveBeenCalledTimes(1);
+    const [messages] = webpushSendBatch.mock.calls[0];
+    expect(messages.map((m: any) => m.body.subscription.endpoint).sort()).toEqual(['bad-push', 'good-push']);
   });
 
   it('enqueues one VALIDATION_QUEUE message per registration with a feedToken, each carrying its own channel', async () => {
     const { env, sendBatch } = mockEnv([
-      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token' } },
-      { name: 'options:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token' } },
+      { name: 'options:web:good-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'good-device-token', subscription: sub('good-push') } },
+      { name: 'options:web:bad-push',  metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'bad-device-token', subscription: sub('bad-push') } },
     ]);
     vi.stubGlobal('fetch', pushFetch());
 
@@ -755,13 +693,13 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
     expect(sendBatch).toHaveBeenCalledTimes(1);
     const [messages] = sendBatch.mock.calls[0];
     expect(messages).toHaveLength(2);
-    expect(messages.map((m: any) => m.body.tokenKey).sort()).toEqual(['options:bad-push', 'options:good-push']);
+    expect(messages.map((m: any) => m.body.tokenKey).sort()).toEqual(['options:web:bad-push', 'options:web:good-push']);
     expect(messages.every((m: any) => m.body.channel === 'options')).toBe(true);
   });
 
   it('does not enqueue a registration validated less than 24h ago', async () => {
     const { env, sendBatch } = mockEnv([
-      { name: 'options:fresh-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'fresh-token', lastValidated: Date.now() - 60_000 } },
+      { name: 'options:web:fresh-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'fresh-token', subscription: sub('fresh-push'), lastValidated: Date.now() - 60_000 } },
     ]);
     vi.stubGlobal('fetch', pushFetch());
 
@@ -772,7 +710,7 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
 
   it('enqueues a registration last validated more than 24h ago', async () => {
     const { env, sendBatch } = mockEnv([
-      { name: 'options:stale-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'stale-token', lastValidated: Date.now() - 25 * 60 * 60 * 1000 } },
+      { name: 'options:web:stale-push', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'stale-token', subscription: sub('stale-push'), lastValidated: Date.now() - 25 * 60 * 60 * 1000 } },
     ]);
     vi.stubGlobal('fetch', pushFetch());
 
@@ -780,12 +718,12 @@ describe('runChannel (via scheduled) — enqueues stale registrations for revali
 
     expect(sendBatch).toHaveBeenCalledTimes(1);
     const [messages] = sendBatch.mock.calls[0];
-    expect(messages[0].body.tokenKey).toBe('options:stale-push');
+    expect(messages[0].body.tokenKey).toBe('options:web:stale-push');
   });
 
   it('does not enqueue at all once this channel has already been scanned in the last ~24h', async () => {
     const { env, stateStore, sendBatch } = mockEnv([
-      { name: 'options:never-validated', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
+      { name: 'options:web:never-validated', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token', subscription: sub('never-validated') } },
     ]);
     stateStore['run:options'] = JSON.stringify({
       ...JSON.parse(runState({ optionsInsights: ['old-guid'] })),
@@ -886,6 +824,7 @@ describe('runChannel — registrations predating filter/authors/minLength are sk
       'poll:options': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const webpushSendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: {
@@ -895,16 +834,13 @@ describe('runChannel — registrations predating filter/authors/minLength are sk
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
+      WEBPUSH_QUEUE: { sendBatch: webpushSendBatch },
     } as any;
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(itemWithAuthor('1', 'Sean Hyman')) }));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('exp.host'))).toBe(false);
+    expect(webpushSendBatch).not.toHaveBeenCalled();
   });
 });
 
@@ -922,11 +858,13 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
       'poll:options': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const webpushSendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: { list: vi.fn().mockResolvedValue({ keys, list_complete: true }), delete: vi.fn() },
+      WEBPUSH_QUEUE: { sendBatch: webpushSendBatch },
     } as any;
-    return { env, stateStore };
+    return { env, stateStore, webpushSendBatch };
   }
 
   it('first-ever poll for a feed seeds seen guids without treating anything as new', async () => {
@@ -973,22 +911,18 @@ describe('runChannel — seen-tracking (early exit on first-seen guid)', () => {
   });
 
   it('alerts oldest-to-newest, not newest-first, when multiple new items exist', async () => {
-    const { env } = mockEnv(['old-guid'], [
-      { name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } },
+    const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/push1', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+    const { env, webpushSendBatch } = mockEnv(['old-guid'], [
+      { name: 'options:web:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token', subscription } },
     ]);
     // Feed returns newest-first: c, b, a — all three are new. description carries the guid so
     // push message order is directly observable below.
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(rssWithItems(['c', 'b', 'a'], ['c', 'b', 'a'])) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(rssWithItems(['c', 'b', 'a'], ['c', 'b', 'a'])) }));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    const messages = JSON.parse(pushCall![1]!.body as string);
-    expect(messages.map((m: { body: string }) => m.body)).toEqual(['a', 'b', 'c']);
+    const [messages] = webpushSendBatch.mock.calls[0];
+    expect(messages.map((m: any) => m.body.body)).toEqual(['a', 'b', 'c']);
   });
 });
 
@@ -998,33 +932,36 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
   const itemWithAuthor = (guid: string, author: string) =>
     `<?xml version="1.0"?><rss version="2.0"><channel><item><guid>${guid}</guid><title>t</title><link>l</link><dc:creator>${author}</dc:creator><description>d</description></item></channel></rss>`;
 
-  it('still attempts every notification bucket, and still writes final stats, after one bucket\'s push-send throws', async () => {
+  it('still attempts every notification bucket, and still writes final stats, after one bucket\'s enqueue throws', async () => {
     const stateStore: Record<string, string | null> = {
       'run:members': runState({ membersArea: ['old-guid'] }),
       'poll:members': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const subA = { endpoint: 'https://fcm.googleapis.com/fcm/send/push-a', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+    const subB = { endpoint: 'https://fcm.googleapis.com/fcm/send/push-b', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+    let sendBatchCalls = 0;
+    const sendBatch = vi.fn(() => {
+      sendBatchCalls += 1;
+      if (sendBatchCalls === 1) return Promise.reject(new Error('queue unavailable'));
+      return Promise.resolve(undefined);
+    });
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
           keys: [
-            { name: 'members:push-a', metadata: { filter: 'members', authors: [], minLength: 0, feedToken: 'device-a' } },
-            { name: 'members:push-b', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-b' } },
+            { name: 'members:web:push-a', metadata: { filter: 'members', authors: [], minLength: 0, feedToken: 'device-a', subscription: subA } },
+            { name: 'members:web:push-b', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-b', subscription: subB } },
           ],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
+      WEBPUSH_QUEUE: { sendBatch },
     } as any;
 
-    let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) {
-        pushCalls += 1;
-        if (pushCalls === 1) return Promise.reject(new Error('exp.host down'));
-        return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      }
       if (url.includes('members-forum')) {
         // Main poll (feed_token=poll-token) sees no forum items; per-device access re-checks
         // (feed_token=device-a/device-b) see an item, so neither device is treated as revoked.
@@ -1038,8 +975,7 @@ describe('runChannel — push-send failure does not abort remaining buckets (iss
 
     await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
 
-    const pushSendCalls = fetchMock.mock.calls.filter(([url]) => (url as string).includes('exp.host'));
-    expect(pushSendCalls).toHaveLength(2); // both buckets attempted despite the first throwing
+    expect(sendBatch).toHaveBeenCalledTimes(2); // both buckets attempted despite the first throwing
 
     const finalState = JSON.parse(stateStore['run:members']!);
     expect(finalState.stats.sent).toBe(1); // only the second (successful) bucket counted
@@ -1066,27 +1002,30 @@ describe('runChannel — actionable classification', () => {
     response: { reasoning: 'test reasoning', evidence: 'test evidence', label, confidence },
   });
 
+  const CLASSIFICATION_SUB = { endpoint: 'https://fcm.googleapis.com/fcm/send/push-a', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+
   function membersEnv(aiRun: ReturnType<typeof vi.fn>) {
     const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     return {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'members:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0 } }],
+          keys: [{ name: 'members:web:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0, subscription: CLASSIFICATION_SUB } }],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
       AI: { run: aiRun },
+      WEBPUSH_QUEUE: { sendBatch },
     } as any;
   }
+  const pushCallsOf = (env: any) => env.WEBPUSH_QUEUE.sendBatch.mock.calls.length;
 
   it('regex-undecided content resolves to not-actionable with no AI call at all (no embedding fallback)', async () => {
     const aiRun = vi.fn();
     const env = membersEnv(aiRun);
-    let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', AMBIGUOUS)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1095,17 +1034,13 @@ describe('runChannel — actionable classification', () => {
     await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
     expect(aiRun).not.toHaveBeenCalled();
-    expect(pushCalls).toBe(0);
+    expect(pushCallsOf(env)).toBe(0);
   });
 
   it('zero candidates means env.AI.run is never called', async () => {
     const aiRun = vi.fn();
     const env = membersEnv(aiRun);
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) }); // nothing new anywhere
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(RSS_EMPTY) })); // nothing new anywhere
 
     await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
@@ -1115,9 +1050,7 @@ describe('runChannel — actionable classification', () => {
   it('a pass-sell-fraction match becomes an intent-confirmation candidate, and a confident directive verdict drives the alert', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
     const env = membersEnv(aiRun);
-    let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1126,7 +1059,7 @@ describe('runChannel — actionable classification', () => {
     await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
     expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(pushCalls).toBe(1);
+    expect(pushCallsOf(env)).toBe(1);
   });
 
   // Real production false positive (2026-09): pass-buy-with-price used to be trusted immediately,
@@ -1136,10 +1069,8 @@ describe('runChannel — actionable classification', () => {
   it('a pass-buy-with-price match becomes an intent-confirmation candidate rather than being trusted immediately', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
     const env = membersEnv(aiRun);
-    let pushCalls = 0;
     const buyWithPriceText = 'No, because it is almost $262 in premarket. If it gets to like $250ish or below, you could buy back that half though.';
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', buyWithPriceText)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1148,15 +1079,13 @@ describe('runChannel — actionable classification', () => {
     await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
     expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(pushCalls).toBe(0); // confident personal-advice verdict suppresses it
+    expect(pushCallsOf(env)).toBe(0); // confident personal-advice verdict suppresses it
   });
 
   it('a confident non-directive verdict suppresses the alert', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
     const env = membersEnv(aiRun);
-    let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1164,15 +1093,13 @@ describe('runChannel — actionable classification', () => {
 
     await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
-    expect(pushCalls).toBe(0);
+    expect(pushCallsOf(env)).toBe(0);
   });
 
   it('a non-directive verdict below high confidence stays actionable rather than being trusted either way', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('general-education', 'medium'));
     const env = membersEnv(aiRun);
-    let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1180,15 +1107,13 @@ describe('runChannel — actionable classification', () => {
 
     await worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any);
 
-    expect(pushCalls).toBe(1);
+    expect(pushCallsOf(env)).toBe(1);
   });
 
   it('an intent-confirmation AI failure falls back to the regex verdict', async () => {
     const aiRun = vi.fn().mockRejectedValue(new Error('Workers AI unavailable'));
     const env = membersEnv(aiRun);
-    let pushCalls = 0;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) { pushCalls += 1; return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1197,7 +1122,7 @@ describe('runChannel — actionable classification', () => {
     await expect(worker.scheduled(scheduledEvent(MEMBERS_CRON), env, {} as any)).resolves.not.toThrow();
 
     expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(pushCalls).toBe(1); // regex already found pass-sell-fraction; an AI hiccup shouldn't suppress it
+    expect(pushCallsOf(env)).toBe(1); // regex already found pass-sell-fraction; an AI hiccup shouldn't suppress it
   });
 
   // pass-options-contract joins pass-sell-fraction/pass-close-enough/pass-get-now/
@@ -1210,79 +1135,74 @@ describe('runChannel — actionable classification', () => {
   // @li/core).
   function optionsEnv(aiRun: ReturnType<typeof vi.fn>) {
     const stateStore: Record<string, string | null> = { 'run:options': runState({ optionsInsights: [] }), 'poll:options': 'poll-token' };
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     return {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0 } }],
+          keys: [{ name: 'options:web:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0, subscription: CLASSIFICATION_SUB } }],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
       AI: { run: aiRun },
+      WEBPUSH_QUEUE: { sendBatch },
     } as any;
   }
 
-  function optionsFetchMock(onPush: () => void) {
-    return vi.fn((url: string) => {
-      if (url.includes('exp.host')) { onPush(); return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }); }
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', 'March $95 strike, 2026 expiry.')) });
-    });
-  }
+  const optionsFetchMock = () => vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(itemXml('opt-guid', 'March $95 strike, 2026 expiry.')) });
 
   it('a pass-options-contract match becomes an intent-confirmation candidate rather than being trusted immediately', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
     const env = optionsEnv(aiRun);
-    let pushCalls = 0;
-    vi.stubGlobal('fetch', optionsFetchMock(() => { pushCalls += 1; }));
+    vi.stubGlobal('fetch', optionsFetchMock());
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
     expect(aiRun).toHaveBeenCalledTimes(1);
-    expect(pushCalls).toBe(1);
+    expect(pushCallsOf(env)).toBe(1);
   });
 
   it('a confident personal-advice verdict still alerts for Options -- personal-advice is not in its suppressibleLabels', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('personal-advice', 'high'));
     const env = optionsEnv(aiRun);
-    let pushCalls = 0;
-    vi.stubGlobal('fetch', optionsFetchMock(() => { pushCalls += 1; }));
+    vi.stubGlobal('fetch', optionsFetchMock());
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(pushCalls).toBe(1);
+    expect(pushCallsOf(env)).toBe(1);
   });
 
   it('a confident general-education verdict suppresses the alert for Options', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('general-education', 'high'));
     const env = optionsEnv(aiRun);
-    let pushCalls = 0;
-    vi.stubGlobal('fetch', optionsFetchMock(() => { pushCalls += 1; }));
+    vi.stubGlobal('fetch', optionsFetchMock());
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(pushCalls).toBe(0);
+    expect(pushCallsOf(env)).toBe(0);
   });
 
   it('multiple buckets sharing one intent-confirmation candidate result in exactly one classifyActionableIntent call', async () => {
     const aiRun = vi.fn().mockResolvedValue(intentResponse('directive', 'high'));
     const stateStore: Record<string, string | null> = { 'run:members': runState({ membersForum: [] }), 'poll:members': 'poll-token' };
+    const subB = { endpoint: 'https://fcm.googleapis.com/fcm/send/push-b', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: vi.fn((k: string, v: string) => { stateStore[k] = v; return Promise.resolve(); }) },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
           keys: [
-            { name: 'members:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0 } },
-            { name: 'members:push-b', metadata: { filter: 'length', authors: [], minLength: 0 } },
+            { name: 'members:web:push-a', metadata: { filter: 'actionable', authors: [], minLength: 0, subscription: CLASSIFICATION_SUB } },
+            { name: 'members:web:push-b', metadata: { filter: 'length', authors: [], minLength: 0, subscription: subB } },
           ],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
       AI: { run: aiRun },
+      WEBPUSH_QUEUE: { sendBatch: vi.fn().mockResolvedValue(undefined) },
     } as any;
     const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
       if (url.includes('members-forum')) return Promise.resolve({ ok: true, text: () => Promise.resolve(itemXml('forum-guid', SELL_FRACTION_TEXT)) });
       return Promise.resolve({ ok: true, text: () => Promise.resolve(RSS_EMPTY) });
     });
@@ -1337,7 +1257,7 @@ describe('runChannel — web push queuing', () => {
 
   it('enqueues one message for a registered browser subscription', async () => {
     const { env, sendBatch } = mockEnv([
-      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription: webpushSubscription } },
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, subscription: webpushSubscription } },
     ]);
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) })));
 
@@ -1351,27 +1271,10 @@ describe('runChannel — web push queuing', () => {
     expect(finalState.stats.sent).toBeGreaterThan(0);
   });
 
-  it('enqueuing a webpush recipient does not block an Expo recipient in the same bucket', async () => {
-    const { env } = mockEnv([
-      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription: webpushSubscription } },
-      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0 } },
-    ]);
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
-
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
-  });
-
   it('chunks sendBatch calls at 100 messages', async () => {
     const manySubs = Array.from({ length: 150 }, (_, i) => ({
       name: `options:web:endpoint-${i}`,
-      metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush', subscription: { ...webpushSubscription, endpoint: `endpoint-${i}` } },
+      metadata: { filter: 'length', authors: [], minLength: 0, subscription: { ...webpushSubscription, endpoint: `endpoint-${i}` } },
     }));
     const { env, sendBatch } = mockEnv(manySubs);
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) })));
@@ -1383,22 +1286,20 @@ describe('runChannel — web push queuing', () => {
     expect(sendBatch.mock.calls[1][0]).toHaveLength(50);
   });
 
-  it('a WEBPUSH_QUEUE.sendBatch failure in one bucket does not abort another bucket\'s Expo send', async () => {
-    const { env } = mockEnv([
-      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'members', authors: [], minLength: 0, kind: 'webpush', subscription: webpushSubscription } },
-      { name: 'options:good-push', metadata: { filter: 'length', authors: [], minLength: 0 } },
+  it('a WEBPUSH_QUEUE.sendBatch failure in one bucket does not abort another bucket\'s send', async () => {
+    const secondSub = { ...webpushSubscription, endpoint: 'https://fcm.googleapis.com/fcm/send/second-endpoint' };
+    const { env, sendBatch } = mockEnv([
+      // Different authors whitelists give these two devices distinct bucket signatures, even
+      // though both are 'length' tier — an empty whitelist and a matching one both pass here.
+      { name: `options:web:${WEBPUSH_ENDPOINT}`, metadata: { filter: 'length', authors: [], minLength: 0, subscription: webpushSubscription } },
+      { name: `options:web:${secondSub.endpoint}`, metadata: { filter: 'length', authors: ['sean hyman'], minLength: 0, subscription: secondSub } },
     ]);
-    env.WEBPUSH_QUEUE.sendBatch.mockRejectedValue(new Error('queue unavailable'));
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    sendBatch.mockRejectedValueOnce(new Error('queue unavailable'));
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(itemWithAuthor('new-guid', 'Sean Hyman')) })));
 
     await expect(worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any)).resolves.not.toThrow();
 
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
+    expect(sendBatch).toHaveBeenCalledTimes(2); // both buckets attempted despite the first throwing
   });
 });
 
@@ -1491,26 +1392,22 @@ describe('runChannel — claims lastRun before slow notify work (cron double-dis
       if (key === 'run:options' && JSON.parse(value).stats.lastRun) callOrder.push('stats-claimed');
       return Promise.resolve();
     });
+    const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/push1', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+    const sendBatch = vi.fn(() => { callOrder.push('push-sent'); return Promise.resolve(undefined); });
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } }],
+          keys: [{ name: 'options:web:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token', subscription } }],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
+      WEBPUSH_QUEUE: { sendBatch },
     } as any;
 
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) {
-        callOrder.push('push-sent');
-        return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      }
-      // Both the main-feed poll and the per-device access re-check resolve to the same item.
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(NEW_ITEM_RSS) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    // Both the main-feed poll and the per-device access re-check resolve to the same item.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(NEW_ITEM_RSS) }));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
@@ -1638,54 +1535,51 @@ describe('runChannel — staleness gate on push (issue #48)', () => {
       'poll:options': 'poll-token',
     };
     const statePut = vi.fn((key: string, value: string) => { stateStore[key] = value; return Promise.resolve(); });
+    const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/push1', expirationTime: null, keys: { p256dh: 'p256dh-value', auth: 'auth-value' } };
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
     const env = {
       STATE: { get: vi.fn((key: string) => Promise.resolve(stateStore[key] ?? null)), put: statePut },
       TOKENS: {
         list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token' } }],
+          keys: [{ name: 'options:web:push1', metadata: { filter: 'length', authors: [], minLength: 0, feedToken: 'device-token', subscription } }],
           list_complete: true,
         }),
         delete: vi.fn().mockResolvedValue(undefined),
       },
+      WEBPUSH_QUEUE: { sendBatch },
       MAX_PUSH_AGE_MINUTES: '120',
     } as any;
-    const fetchMock = vi.fn((url: string) => {
-      if (url.includes('exp.host')) return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
-      return Promise.resolve({ ok: true, text: () => Promise.resolve(mainFeedRss) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    return { env, stateStore, fetchMock };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(mainFeedRss) }));
+    return { env, stateStore, sendBatch };
   }
 
   it('does not push an item older than the 2h window, but still marks it seen', async () => {
     const staleDate = new Date(Date.now() - 3 * 60 * 60 * 1000).toUTCString();
-    const { env, stateStore, fetchMock } = mockEnv(itemWithPubDate('stale-guid', staleDate));
+    const { env, stateStore, sendBatch } = mockEnv(itemWithPubDate('stale-guid', staleDate));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('exp.host'))).toBe(false);
+    expect(sendBatch).not.toHaveBeenCalled();
     expect(JSON.parse(stateStore['run:options']!).seen.optionsInsights).toContain('stale-guid');
   });
 
   it('pushes an item within the 2h window', async () => {
     const freshDate = new Date(Date.now() - 30 * 60 * 1000).toUTCString();
-    const { env, fetchMock } = mockEnv(itemWithPubDate('fresh-guid', freshDate));
+    const { env, sendBatch } = mockEnv(itemWithPubDate('fresh-guid', freshDate));
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
+    expect(sendBatch).toHaveBeenCalledTimes(1);
   });
 
   it('MAX_PUSH_AGE_MINUTES widens the window when set higher than the default', async () => {
     const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toUTCString();
-    const { env, fetchMock } = mockEnv(itemWithPubDate('old-but-allowed-guid', fourHoursAgo));
+    const { env, sendBatch } = mockEnv(itemWithPubDate('old-but-allowed-guid', fourHoursAgo));
     env.MAX_PUSH_AGE_MINUTES = '300';
 
     await worker.scheduled(scheduledEvent(OPTIONS_CRON), env, {} as any);
 
-    const pushCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('exp.host'));
-    expect(pushCall).toBeDefined();
+    expect(sendBatch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1840,16 +1734,15 @@ describe('GET /status — version metadata', () => {
   });
 });
 
-describe('GET /status — registration counts by delivery kind', () => {
-  it('splits registeredTokens into registeredExpo and registeredWebpush per channel', async () => {
+describe('GET /status — registration counts', () => {
+  it('reports the total registration count for a channel', async () => {
     const env = {
       FEED_TOKEN: 'secret',
       TOKENS: {
         list: vi.fn().mockResolvedValue({
           keys: [
-            { name: 'members:expo-a', metadata: { filter: 'length', authors: [], minLength: 0 } },
-            { name: 'members:expo-b', metadata: { filter: 'length', authors: [], minLength: 0 } },
-            { name: 'members:web:endpoint-a', metadata: { filter: 'length', authors: [], minLength: 0, kind: 'webpush' } },
+            { name: 'members:web:endpoint-a', metadata: { filter: 'length', authors: [], minLength: 0 } },
+            { name: 'members:web:endpoint-b', metadata: { filter: 'length', authors: [], minLength: 0 } },
           ],
           list_complete: true,
         }),
@@ -1863,31 +1756,7 @@ describe('GET /status — registration counts by delivery kind', () => {
     );
     const body = await res.json() as any;
 
-    expect(body.members.registeredTokens).toBe(3);
-    expect(body.members.registeredExpo).toBe(2);
-    expect(body.members.registeredWebpush).toBe(1);
-  });
-
-  it('reports zero webpush registrations for a channel with only Expo devices', async () => {
-    const env = {
-      FEED_TOKEN: 'secret',
-      TOKENS: {
-        list: vi.fn().mockResolvedValue({
-          keys: [{ name: 'options:expo-a', metadata: { filter: 'length', authors: [], minLength: 0 } }],
-          list_complete: true,
-        }),
-      },
-      STATE: { get: vi.fn().mockResolvedValue(null) },
-    } as any;
-
-    const res = await worker.fetch(
-      new Request('https://worker.test/status', { headers: { Authorization: 'Bearer secret' } }),
-      env,
-    );
-    const body = await res.json() as any;
-
-    expect(body.options.registeredExpo).toBe(1);
-    expect(body.options.registeredWebpush).toBe(0);
+    expect(body.members.registeredTokens).toBe(2);
   });
 });
 

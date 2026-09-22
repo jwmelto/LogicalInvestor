@@ -1,5 +1,21 @@
 # Release History
 
+Historical record of the React Native/Expo app's releases. The app was removed from this
+repository in September 2026 — see the `expo-app-final` git tag for its last complete state.
+The Cloudflare Worker and web-push registration page are the surviving product and don't use
+version numbers; see `cloudflare-worker/deploy.sh`'s git-SHA tagging instead.
+
+## App removed — September 2026
+
+- The React Native/Expo app source, and everything specific to building/distributing it
+  (Xcode/CocoaPods toolchain, EAS Build, app.json/eas.json, native `ios/`/`android/` projects),
+  removed from the repository entirely
+- The Cloudflare Worker's push delivery dropped its Expo push-token path — Web Push
+  (`web-push/`, browser subscriptions) is the only remaining delivery mechanism
+- `packages/core` (shared feed/classification logic) is unaffected and now stands alone as its
+  own npm project, no longer requiring the app's root `package.json`/`jest.config.js` to install
+  or test it
+
 ## 1.0.0 — July 2026
 
 - First 1.0 release

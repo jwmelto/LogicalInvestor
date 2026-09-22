@@ -15,10 +15,9 @@ import { FeedKeys, type Channel, type FeedKey } from '@li/core';
 // invalid token). Members Area's feed is readable regardless of token validity — only the
 // content snippet is paywalled — so it would never catch anything if checked instead.
 //
-// No `discoverTopics`/topic-sub-feed fetching here — the top-level "All Posts" feed for a forum
-// already aggregates replies from every topic in it (confirmed against a real authenticated
-// fetch), so alerting never needs to walk into individual topics. Topic discovery remains a
-// purely app-side concern (topicService.ts) for the browsing UI.
+// No per-topic sub-feed fetching here — the top-level "All Posts" feed for a forum already
+// aggregates replies from every topic in it (confirmed against a real authenticated fetch), so
+// alerting never needs to walk into individual topics.
 export const CHANNEL_FEEDS: Record<Channel, { url: string; feedKey: FeedKey }[]> = {
   members: [
     { url: 'https://logicalinvestor.net/forums/forum/members-forum/feed/', feedKey: FeedKeys.membersForum },
