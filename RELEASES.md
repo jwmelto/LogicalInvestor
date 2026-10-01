@@ -1,9 +1,9 @@
 # Release History
 
-Historical record of the React Native/Expo app's releases. The app was removed from this
-repository in September 2026 — see the `expo-app-final` git tag for its last complete state.
-The Cloudflare Worker and web-push registration page are the surviving product and don't use
-version numbers; see `cloudflare-worker/deploy.sh`'s git-SHA tagging instead.
+Historical record of the React Native/Expo app's releases.
+The app was removed from this repository in September 2026 — see the `expo-app-final` git tag for its last complete state.
+The Cloudflare Worker and web-push registration page are the surviving product and don't use version numbers.
+See `cloudflare-worker/deploy.sh`'s git-SHA tagging instead.
 
 ## App removed — September 2026
 
