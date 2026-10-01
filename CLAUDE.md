@@ -31,8 +31,6 @@ for its last complete state, and `RELEASES.md` for what changed when it was remo
 
 ## Development Environment
 
-**Project path:** `~/development/LogicalInvestor`
-**Git branch:** `main`
 **Node:** Node 24 LTS via fnm (Fast Node Manager), **NOT system Node**
 
 `cloudflare-worker/` and `packages/core/` are each independent npm projects (own `package.json`,
@@ -256,7 +254,7 @@ through npm dependency resolution — there's no `@li/core` entry in `cloudflare
 ## File Structure
 
 ```
-~/development/LogicalInvestor/
+LogicalInvestor/
 ├── cloudflare-worker/
 │   ├── src/
 │   │   ├── index.ts             ← fetch()/scheduled()/queue() handlers, polling, classification, dispatch
