@@ -1,6 +1,7 @@
 # LogicalInvestor
 
-Push notification backend for logicalinvestor.net, a paywalled WordPress/bbPress site. No app, no backend server beyond a single Cloudflare Worker — it polls the site's RSS feeds on a cron schedule and pushes alerts to registered browsers.
+Push notification backend for logicalinvestor.net, a paywalled WordPress/bbPress site.
+No app, no backend server beyond a single Cloudflare Worker — it polls the site's RSS feeds on a cron schedule and pushes alerts to registered browsers.
 
 ## What This Is
 
