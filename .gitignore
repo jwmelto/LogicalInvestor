@@ -11,6 +11,14 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# signing keys/certs — never commit these regardless of what produced them
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
 # local env files
 .env*.local
 
