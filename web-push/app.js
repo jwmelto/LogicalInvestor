@@ -36,10 +36,9 @@ if ('serviceWorker' in navigator) {
 }
 
 // Only a same-origin request (this page served from logicalinvestor.net itself) can read
-// /my-feed-url without CORS, using the visitor's existing WordPress session cookie.
-// authService.ts does the same extraction in the RN app. A cross-origin fetch, such as one
-// from the Worker's own domain, would be blocked by the browser. This gate avoids sending a
-// request that would always fail.
+// /my-feed-url without CORS, using the visitor's existing WordPress session cookie. A
+// cross-origin fetch, such as one from the Worker's own domain, would be blocked by the
+// browser. This gate avoids sending a request that would always fail.
 if (location.hostname === 'logicalinvestor.net') {
   fetch('/my-feed-url', { credentials: 'same-origin' })
     .then((res) => res.text())

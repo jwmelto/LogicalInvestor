@@ -7,9 +7,9 @@ compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Serves the web-push registration page. It's a client of this Worker's API, not part of the
-# Worker's own source, so it lives at the repo's top level (../web-push), alongside the RN app,
-# instead of nested in here. Requests that don't match a file there fall through to the fetch()
-# handler below. /register, /unregister, /status, and /vapid-public-key are unaffected.
+# Worker's own source, so it lives at the repo's top level (../web-push) instead of nested in
+# here. Requests that don't match a file there fall through to the fetch() handler below.
+# /register, /unregister, /status, and /vapid-public-key are unaffected.
 [assets]
 directory = "../web-push"
 

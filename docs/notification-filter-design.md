@@ -20,18 +20,17 @@ The forum's top-level feed (bbPress's "All Posts" feed) already contains
 every reply in that forum, not just new-topic creation — confirmed against a
 real authenticated fetch (25/25 sampled items were replies, spanning 8+
 topics, strictly reverse-chronological by `pubDate`). So alerting reads only
-the flat per-forum feed; topic discovery and per-topic sub-feeds
-(`topicService.ts`) are an app-only concern for the browsing UI.
+the flat per-forum feed; there's no need to discover or fetch individual
+topics.
 
 Complexity: O(items × registered devices) per forum per poll. Items are
 capped per poll (`MAX_ALERT_ITEMS_PER_FEED`, configurable); `matchesFilter`
 is a handful of regex/string checks, so linear scaling in device count is
 fine at current and foreseeable scale.
 
-The app does its own full reconciliation (complete topic history, unread
-tracking, hierarchical browsing) on every foreground refresh, independent of
-the server. The server's per-poll item cap bounds what's timely enough to
-alert on — it is not a completeness guarantee.
+The per-poll item cap is the only view of feed history the system has —
+there's no separate reconciliation pass anywhere. Content already past the
+cap the first time it's observed is never alerted on.
 
 ## Filter tiers
 
@@ -74,26 +73,10 @@ interface TokenMeta {
 ```
 
 All three are required on every new registration. Any KV entry missing them
-is excluded from bucketing (gets no alerts) until the device re-registers,
-which happens automatically the next time the app is foregrounded
-(`FeedContext.tsx` re-registers once per session). No migration is needed —
-stale entries age out via normal app usage.
-
-## Local notifications
-
-`services/notificationService.ts` (the scheduling pipeline and its test)
-is deleted. `backgroundFetchService.ts` keeps its unread-count/badge-caching
-logic — only the dead notification call inside its task callback is
-removed; tab and app-icon badges behave exactly as before, including while
-the app is backgrounded or closed.
-
-`authorFilters`/`minContentLength` (the local-pipeline settings) are now
-`authors`/`minLength` in `pushService.ts`, synced to `/register`. The
-existing Settings UI fields (author whitelist, min-length slider) drive
-server registration directly.
-
-Per-topic muting (`subscriptionService`, the "Silenced Topics" list) has
-never applied to server push — it's a local-only concept and remains one.
+is excluded from bucketing (gets no alerts) until the registration is
+resubmitted — there's no automatic re-registration trigger, so a stale entry
+stays excluded until whoever registered it opens `web-push/` and submits the
+form again.
 
 ## Filed separately
 

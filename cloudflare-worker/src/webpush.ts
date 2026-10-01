@@ -10,8 +10,8 @@ export interface WebPushResult {
   gone: boolean;
 }
 
-// Encrypts and signs one message for one subscriber. Web Push has no bulk-send endpoint, unlike
-// Expo's push API. This is a protocol constraint, not a choice made here.
+// Encrypts and signs one message for one subscriber. The Web Push protocol has no bulk-send
+// endpoint — every subscriber requires its own encrypted payload and its own request.
 export async function sendWebPush(subscription: PushSubscription, message: PushMessage, vapid: VapidKeys): Promise<WebPushResult> {
   const payload = await buildPushPayload(message, subscription, vapid);
   const res = await fetch(subscription.endpoint, payload);

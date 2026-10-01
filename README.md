@@ -1,56 +1,19 @@
 # LogicalInvestor
 
-A React Native (Expo) iOS/Android app that serves as a full replacement for visiting logicalinvestor.net. Aggregates paywalled WordPress/bbPress forum content using per-user feed token authentication.
+Push notification backend for logicalinvestor.net, a paywalled WordPress/bbPress site.
+No app, no backend server beyond a single Cloudflare Worker — it polls the site's RSS feeds on a cron schedule and pushes alerts to registered browsers.
 
 ## What This Is
 
-- Full-featured RSS feed aggregator for logicalinvestor.net
-- Cross-platform (iOS, Android, Web) via React Native
-- Secure token-based authentication
-- iCloud sync on iOS, local storage on other platforms
-- Collapsible feed sections with unread badges
-- WebView post viewer with authenticated links
-
-## Quick Start
-
-### First-time setup
-
-Run the automated setup script:
-
-```bash
-./setup.sh
-```
-
-This installs all dependencies and configures your environment. See `SETUP.md` for manual setup or troubleshooting.
-
-### Run the app
-
-After setup:
-
-```bash
-npm run ios       # Build and run on iOS simulator
-npm run android   # Build and run on Android emulator
-npm run web       # Run web version
-npm start         # Start Metro bundler (choose platform when prompted)
-```
+- **`cloudflare-worker/`** — the Worker: polls feeds per channel, classifies posts (member-only / actionable trade call / by length), and delivers Web Push notifications
+- **`packages/core/`** — shared, framework-free TypeScript: feed parsing, filter tiers, actionable-post classification
+- **`web-push/`** — a static page (no build step) that registers a browser for push notifications, served by the Worker itself via Workers Static Assets
+- **`docs/`** — design notes for the notification filtering system
 
 ## Development
 
-- **CLAUDE.md** — Architecture overview, tech stack, codebase structure, and known issues
-- **SETUP.md** — Detailed setup instructions and troubleshooting
+See **CLAUDE.md** for architecture, commands, and deployment details.
 
 ## Authentication
 
-Uses WordPress login via logicalinvestor.net. Credentials are stored securely on device. Feed token is never synced to iCloud.
-
-## Project Structure
-
-```
-app/                 — Navigation and screens (file-based routing via Expo Router)
-services/            — Business logic (auth, feeds, storage, state)
-components/          — UI components
-constants/           — Theme and configuration
-hooks/               — Custom React hooks
-```
-
-See CLAUDE.md for detailed architecture.
+Registration requires a valid per-user `feed_token` from logicalinvestor.net, verified against the site before the Worker stores a registration.

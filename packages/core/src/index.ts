@@ -28,11 +28,10 @@ export const ChannelNames = {
 
 export type Channel = typeof ChannelNames[keyof typeof ChannelNames];
 
-// Single source of truth for which push channel a feed belongs to. Used directly by the app's
-// pushService.ts; the Worker's CHANNEL_FEEDS carries additional per-feed data (URL,
-// discoverTopics) this map doesn't, and its per-channel array order is load-bearing (see the
-// comment on CHANNEL_FEEDS in cloudflare-worker/src/index.ts), so the Worker keeps its own
-// structure but is tested against this map for drift (index.test.ts).
+// Single source of truth for which push channel a feed belongs to. The Worker's own CHANNEL_FEEDS
+// (cloudflare-worker/src/config.ts) carries additional per-feed data (URL) this map doesn't, and
+// its per-channel array order is load-bearing (see the comment there), so the Worker keeps its
+// own structure but is tested against this map for drift (index.test.ts).
 export const FEEDKEY_TO_CHANNEL: Record<FeedKey, Channel> = {
   [FeedKeys.membersArea]:     ChannelNames.members,
   [FeedKeys.membersForum]:    ChannelNames.members,
