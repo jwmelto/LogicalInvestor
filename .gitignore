@@ -1,6 +1,26 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
 # dependencies
 package-lock.json
 node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
 
 # debug
 npm-debug.*
@@ -11,19 +31,18 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# signing keys/certs — never commit these regardless of what produced them
-*.orig.*
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
-
 # local env files
 .env*.local
 
 # typescript
 *.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+scripts/fonts/
 
 # editor
 .vscode/
